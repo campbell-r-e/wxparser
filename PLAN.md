@@ -41,9 +41,7 @@ Implications baked into the design:
 - **STT models are bundled** — downloaded once at build/install time and shipped/cached
   locally. The running service never fetches a model.
 - **No cloud STT / no APIs.** Transcription is fully local (whisper.cpp or Vosk).
-- **No `api.weather.gov`.** The online-enrichment idea (§8) is explicitly *not* part of the
-  product; if ever added it must be an optional, off-by-default mode that the offline build
-  never reaches.
+- **No external web APIs** (e.g. `api.weather.gov`). All weather data comes over the radio.
 - **Any lookup tables ship locally** — e.g. a future FIPS→county map is a bundled data
   file, not a service call.
 - **Dependencies vendored/pinned** so a build doesn't require network at runtime (install
@@ -240,11 +238,8 @@ wxparser/
   (MIT/Apache) subprocess stage for structured alerts + FIPS targeting.
 - **Meshtastic** — isolated optional module; talk to the node via CLI/serial across a
   process boundary so the MIT core never imports GPL `meshtastic-python`.
-- **Live feed / API** — MQTT or HTTP/SSE publisher behind the same report stream.
-- **Online enrich (conflicts with §2.1 — would NOT ship in the offline build)** — on a SAME
-  hit, fetch authoritative public-domain text from `api.weather.gov` for perfect text +
-  transcript verification. Only viable as an optional, off-by-default mode for an
-  internet-connected deployment; the offline build never enables it.
+- **Live feed / API** — MQTT or HTTP/SSE publisher behind the same report stream (local
+  network only; honors §2.1).
 
 ## 9. Open questions
 
