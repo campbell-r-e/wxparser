@@ -1,0 +1,14 @@
+# transcripts / captured audio output
+transcripts/
+*.wav
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
