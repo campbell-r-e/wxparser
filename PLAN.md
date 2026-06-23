@@ -353,6 +353,39 @@ counties, each with its own FIPS code. With a **bundled local FIPS→county look
 county names and can **filter alerts to only the areas we care about**. This is what lets the
 server answer "is there an active warning *for my county*?" purely from the radio.
 
+### Worked example: tornado warning for Delaware County
+
+A SAME header decodes to fields like this — **no transcription involved**, this is straight
+from the digital burst:
+
+```
+ZCZC-WXR-TOR-018035-018057+0045-1741830-KJY93-
+        │    │    │       │      │       │
+        │    │    │       │      │       └─ originating station = KJY93 (Muncie)
+        │    │    │       │      └───────── issued: day 174, 18:30 UTC
+        │    │    │       └──────────────── valid for 00 hr 45 min
+        │    │    └──────────────────────── FIPS areas: 018035, 018057
+        │    └───────────────────────────── event = TOR (Tornado Warning)
+        └────────────────────────────────── originator = WXR (National Weather Service)
+```
+
+Two local lookups finish the job:
+
+- **Event code** `TOR` → "Tornado Warning" (small built-in code→label table).
+- **FIPS** `018035` → state `18` = Indiana, county `035` = **Delaware County**; `018057` →
+  Hamilton County (bundled FIPS→county table).
+
+Yielding, fully offline and with zero STT:
+
+> **Tornado Warning** — Delaware County, IN — until 19:15 UTC (issued 18:30, KJY93)
+
+Because we also have the affected-FIPS list, we can **filter to just our county** (drop the
+alert if `018035` isn't present). The voice transcript then layers descriptive detail on top
+(e.g. "…spotted near Yorktown moving northeast at 30 mph…").
+
+Caveat: SAME only fires for **alert-class products** (warnings, watches, tests). Routine
+forecasts and current conditions carry no SAME header and come from the transcript side.
+
 ## 10. Open questions
 
 1. Old PC specs (CPU model, RAM) → pick whisper.cpp vs. Vosk and model size.
