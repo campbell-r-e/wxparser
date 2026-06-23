@@ -29,7 +29,30 @@ phasing until code supersedes it.
 These are intentionally cut to keep v1 tight. The architecture leaves clean seams to add
 them later (see §8).
 
-## 2. Hard constraint: licensing
+## 2. Hard constraints
+
+### 2.1 Offline operation — no internet, ever
+
+Once built/installed, the app **must run with no internet connection**. All data comes over
+the radio; there are **no runtime network calls** of any kind. This is a non-negotiable
+requirement (the whole point is a station that works when the internet is down).
+
+Implications baked into the design:
+- **STT models are bundled** — downloaded once at build/install time and shipped/cached
+  locally. The running service never fetches a model.
+- **No cloud STT / no APIs.** Transcription is fully local (whisper.cpp or Vosk).
+- **No `api.weather.gov`.** The online-enrichment idea (§8) is explicitly *not* part of the
+  product; if ever added it must be an optional, off-by-default mode that the offline build
+  never reaches.
+- **Any lookup tables ship locally** — e.g. a future FIPS→county map is a bundled data
+  file, not a service call.
+- **Dependencies vendored/pinned** so a build doesn't require network at runtime (install
+  time may use a package index; runtime must not).
+
+A simple acceptance test: unplug the network and the app must capture, transcribe, dedup,
+and save reports with no degradation.
+
+### 2.2 Licensing — MIT-distributable
 
 The app must be **MIT-licensable**, so every bundled/linked dependency must be
 permissively licensed. Anything copyleft (GPL/LGPL) may only be used **across a process
@@ -218,8 +241,10 @@ wxparser/
 - **Meshtastic** — isolated optional module; talk to the node via CLI/serial across a
   process boundary so the MIT core never imports GPL `meshtastic-python`.
 - **Live feed / API** — MQTT or HTTP/SSE publisher behind the same report stream.
-- **Online enrich** — on a SAME hit, fetch authoritative public-domain text from
-  `api.weather.gov` for perfect text + transcript verification.
+- **Online enrich (conflicts with §2.1 — would NOT ship in the offline build)** — on a SAME
+  hit, fetch authoritative public-domain text from `api.weather.gov` for perfect text +
+  transcript verification. Only viable as an optional, off-by-default mode for an
+  internet-connected deployment; the offline build never enables it.
 
 ## 9. Open questions
 

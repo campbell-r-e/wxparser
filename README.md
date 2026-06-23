@@ -8,6 +8,9 @@ Audio is tapped from the line-out of a dedicated weather radio (a Reecom R-1630)
 reception is handled in hardware and the entire software stack stays permissively licensed
 and MIT-distributable.
 
+**Fully offline:** once installed, wxparser requires no internet — all data comes over the
+radio and transcription is local. It keeps working when the internet is down.
+
 > **Status:** planning. See [PLAN.md](PLAN.md) for scope, architecture, and phased
 > milestones.
 
