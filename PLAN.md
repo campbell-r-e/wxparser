@@ -16,6 +16,8 @@ phasing until code supersedes it.
 - Transcribe the spoken broadcast to text.
 - Detect when broadcast content is **genuinely new** vs. the repeating loop, and save only
   new reports (deduplicated), each timestamped.
+- Emit every saved report as **structured JSON** (one JSON object per report, written as
+  JSONL) so other apps can consume it directly — see §5.1.
 - Run continuously as an always-on service.
 
 **Out of scope (deferred / possible later):**
@@ -127,19 +129,51 @@ continuous audio capture (ring buffer)
 - **Store** — write each new report as a timestamped record. v1: append JSONL and/or one
   file per report under `transcripts/`. Optional SQLite later.
 
-### Data: a "report" record
+### 5.1 Structured JSON output
+
+Every saved report is a self-contained JSON object so downstream apps can process it
+without re-parsing free text. Reports are appended to a **JSONL** file
+(`transcripts/reports.jsonl`) — one object per line — which is trivial to stream, tail, or
+ingest. Optionally mirrored one-file-per-report and/or into SQLite later.
 
 ```json
 {
+  "schema_version": 1,
   "id": "2026-06-23T14:05:11Z-a1b2c3",
-  "captured_at": "2026-06-23T14:05:11Z",
   "station": "KJY93",
-  "text": "…transcribed text of the new report…",
+  "frequency_mhz": 162.425,
+  "captured_at": "2026-06-23T14:05:11Z",
   "duration_s": 47.2,
+  "product_type": "zone_forecast",
+  "text": "…full transcribed text of the new report…",
+  "segments": [
+    { "start_s": 0.0,  "end_s": 6.4,  "text": "…sentence…" },
+    { "start_s": 6.4,  "end_s": 12.1, "text": "…sentence…" }
+  ],
+  "stt": { "engine": "whisper.cpp", "model": "base.en", "avg_confidence": 0.0 },
   "fingerprint": "…",
-  "confidence": 0.0
+  "supersedes": null
 }
 ```
+
+Field notes / feasibility:
+
+- **Core fields are free** — they fall straight out of the capture/STT/dedup pipeline:
+  `id`, `captured_at`, `duration_s`, `text`, `segments` (whisper.cpp/Vosk already emit
+  per-segment timestamps), `fingerprint`, `stt`.
+- **`product_type`** is best-effort classification via cheap keyword matching on the text
+  (e.g. "zone forecast", "hazardous weather outlook", "current conditions", "tornado
+  warning"). It's a hint, not authoritative — defaults to `"unknown"`. Authoritative typing
+  comes later from SAME decoding (§8).
+- **`supersedes`** links a report to the `id` of the previous report it replaces (set when
+  text-dedup finds a near-match that changed), giving consumers an update chain for free.
+- **`schema_version`** lets the JSON evolve without breaking consumers.
+
+Deep field extraction (parsing temperatures, wind, valid times, affected counties into typed
+fields) is **deliberately out of v1** — it's brittle off raw TTS transcription. The clean
+path to that is SAME headers + the `api.weather.gov` source text (§8). v1 gives consumers
+well-structured *envelopes* around reliable transcript text, which is the feasible and
+genuinely useful 80%.
 
 ## 6. Phases & milestones
 
