@@ -211,6 +211,23 @@ genuinely useful 80%.
   restart-safe `systemd` service. *Done when:* it runs unattended for days, saving only
   real updates.
 
+v1 ends at Phase 3 (the transcript MVP). The phases below evolve wxparser into a **radio-only
+local weather server** (see §8) and are additive — they consume the same novel-segment
+stream and do not change v1.
+
+- **Phase 4 — SAME → structured alerts.** Add a `samedec` (MIT/Apache) subprocess stage on
+  the captured audio; emit structured alert records (event, areas, valid/expire). *Done
+  when:* a Required Weekly Test and any real alert produce correct typed alert records. See
+  §9 for what SAME/FIPS give us.
+- **Phase 5 — Structured current conditions.** Segment the loop into products; extract typed
+  fields (temp, wind, humidity, pressure) from the current-conditions product via
+  grammar/regex + **repeat-voting** (§8). *Done when:* current conditions are queryable and
+  numbers are stable across the loop.
+- **Phase 6 — Structured forecast + query API.** Extract zone-forecast periods (highs/lows,
+  sky, precip %); persist observations/forecasts/alerts to local **SQLite**; expose a
+  **LAN-only HTTP/JSON query API** (FastAPI, MIT — honors §2.1). *Done when:* other services
+  can query `/current`, `/forecast`, `/alerts/active`.
+
 ## 7. Repo layout (proposed)
 
 ```
@@ -232,18 +249,115 @@ wxparser/
 └── tests/             # tests against recorded WAVs
 ```
 
-## 8. Future hooks (designed-for, not built)
+## 8. Vision: a radio-only local weather server
 
-- **SAME/EAS** — the continuous audio already carries SAME bursts; add a `samedec`
-  (MIT/Apache) subprocess stage for structured alerts + FIPS targeting.
-- **Meshtastic** — isolated optional module; talk to the node via CLI/serial across a
-  process boundary so the MIT core never imports GPL `meshtastic-python`.
-- **Live feed / API** — MQTT or HTTP/SSE publisher behind the same report stream (local
-  network only; honors §2.1).
+The longer-term goal is to turn the transcript stream into **structured, queryable weather
+data** that other services can ask factual questions of ("what's the current temperature?",
+"today's high?", "any active warnings?") — sourced entirely from the radio, fully offline.
 
-## 9. Open questions
+This is an **evolution of the v1 pipeline, not a rewrite**: structuring is a new stage that
+consumes the same novel-segment stream, and the raw transcript is always kept as a fallback
+so no data is lost when an extractor misses.
+
+### Two structured-ish channels arrive over the one radio feed
+
+1. **SAME/EAS digital headers** — *already structured data on the wire* (see §9). `samedec`
+   decodes them into typed fields. This is the easy, highly reliable half of the server —
+   but it only fires for **alerts/watches/warnings/tests**, not routine forecasts.
+2. **The voice transcript** — carries the **routine** data (current conditions, zone
+   forecast). Free text that must be parsed into fields. This is where the real work is.
+
+### The repetition trick (key enabler)
+
+NWR replays the same TTS audio every few minutes until NWS updates content, so we get **many
+transcriptions of the same sentence per hour**. Numbers — where STT is weakest ("72°" vs
+"70 two") — are **majority-voted across repeats** and range-checked, turning flaky
+single-pass extraction into something reliable, for free, from the dedup buffer we already
+keep. Combined with grammar-constrained recognition (Vosk FST grammars) or prompt biasing
+(Whisper), number accuracy stops being the dealbreaker it normally is.
+
+### Difficulty by product type
+
+| Data | Source | Difficulty | Why |
+|---|---|---|---|
+| Alerts / warnings (event, areas, valid time) | SAME digital | **Easy** | Already structured; `samedec` parses it. |
+| Current conditions (temp, wind, humidity, pressure) | voice | **Moderate** | Highly templated; regex/grammar extractable; numbers de-risked by repeat-voting. |
+| Zone forecast periods (highs/lows, sky, precip %) | voice | **Moderate–Hard** | More phrasing variety, ranges, multiple periods to segment. |
+| Discussion / outlook prose | voice | **Skip** | Free-form narrative — keep as text. |
+
+What makes the moderate tiers tractable: NWR text is **formulaic**, and we target **one
+station** (KJY93 / the Indianapolis WFO's phrasing), so templates are tuned to a narrow,
+stable target rather than "all of English."
+
+### Server shape
+
+```
+radio → transcript pipeline (v1)
+  ├─ SAME stage (samedec) ──────────► structured alerts
+  └─ product segmenter → per-type extractors (grammar/regex + repeat-voting)
+        → typed records: observations / forecast periods / alerts
+  → local store (SQLite — offline, public-domain license)
+  → LAN-only HTTP/JSON query API (FastAPI, MIT — honors §2.1)
+       GET /current        → {temp_f, wind, humidity, pressure, as_of}
+       GET /forecast       → [{period, high_f, low_f, sky, precip_pct}, …]
+       GET /alerts/active  → [{event, areas, expires}, …]
+```
+
+Every typed field carries **provenance + confidence + raw text** (voice vs SAME, vote
+count), so consumers know what is authoritative vs. best-effort.
+
+### Other future hooks (designed-for, not built)
+
+- **Meshtastic** — isolated optional module; talk to the node via CLI/serial across a process
+  boundary so the MIT core never imports GPL `meshtastic-python`.
+- **Live push feed** — MQTT or HTTP/SSE publisher behind the same report stream (LAN only;
+  honors §2.1).
+
+## 9. Reference: SAME and FIPS codes
+
+### SAME (Specific Area Message Encoding)
+
+SAME is the digital signaling EAS/NWR uses to mark alerts. Before the spoken alert, the
+station transmits short AFSK data bursts (the "duck" tones) that encode the alert as
+machine-readable fields — and because they ride in the **same continuous audio** we already
+capture, `samedec` (MIT/Apache) can decode them with no extra hardware.
+
+A SAME header decodes to:
+
+- **Originator** — who issued it (e.g. `WXR` = National Weather Service, `EAS`, `CIV`).
+- **Event code** — a 3-letter type, e.g. `TOR` (Tornado Warning), `SVR` (Severe
+  Thunderstorm Warning), `FFW` (Flash Flood Warning), `TOA` (Tornado Watch), `RWT`
+  (Required Weekly Test), `RMT` (Required Monthly Test).
+- **Location codes** — one or more 6-digit **FIPS area codes** (see below) naming exactly
+  which counties/areas the alert applies to.
+- **Valid duration** — purge time / how long the alert is in effect.
+- **Issue time** — day-of-year + time (UTC) the message was sent.
+- **Station ID** — the originating transmitter callsign (e.g. `KJY93`).
+
+What this gives us: **instant, reliable, pre-transcription detection and typing of alerts**,
+with exact area targeting and timing — no NLP, no STT errors. It's the trustworthy backbone
+of the alert side of the weather server. (SAME does *not* cover routine forecasts/obs; those
+come from the voice transcript.)
+
+### FIPS codes (area targeting)
+
+Each SAME location is a 6-digit code `PSSCCC`:
+
+- **P** — part-of-county indicator (`0` = entire county/area; `1`–`9` = a specific portion).
+- **SS** — 2-digit **state** FIPS code (Indiana = `18`).
+- **CCC** — 3-digit **county** FIPS code (e.g. Delaware County, IN = `035`).
+
+So `018035` = all of Delaware County, Indiana. KJY93 covers a set of east-central Indiana
+counties, each with its own FIPS code. With a **bundled local FIPS→county lookup table**
+(shipped with the app — no network, per §2.1) we translate those codes into human-readable
+county names and can **filter alerts to only the areas we care about**. This is what lets the
+server answer "is there an active warning *for my county*?" purely from the radio.
+
+## 10. Open questions
 
 1. Old PC specs (CPU model, RAM) → pick whisper.cpp vs. Vosk and model size.
 2. R-1630 external audio output level (line vs. speaker) → capture wiring.
 3. Report granularity: dedup per **segment/product**, or per **whole loop**? (Leaning
    per-segment for robustness to partial updates.)
+4. Structured-server scope: how far into forecast structuring is worth it vs. keeping prose
+   products as plain text?
