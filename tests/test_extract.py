@@ -36,6 +36,13 @@ def test_extract_real():
     assert o["sky"] == "clear"
 
 
+def test_forecast_sky_does_not_pollute_conditions():
+    # forecast phrasing must NOT register as a current-conditions sky reading
+    assert "sky" not in extract_observation("Saturday, partly cloudy. Highs around 80.")
+    # but real current-conditions framing must
+    assert extract_observation("At Muncie, it was clear.")["sky"] == "clear"
+
+
 def test_range_check_rejects_garbage():
     o = extract_observation("The temperature was 999 degrees.")
     assert "temperature_f" not in o

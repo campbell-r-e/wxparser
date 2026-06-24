@@ -52,9 +52,14 @@ _RE_WIND_CALM = re.compile(r"wind (?:was|is) calm", re.I)
 _RE_WIND = re.compile(
     rf"wind (?:was|is) (?:from the )?(north|south|east|west|northeast|northwest|"
     rf"southeast|southwest)(?:erly)? (?:at|around) {_NUM}", re.I)
-_RE_SKY = re.compile(
-    r"\b(clear|sunny|fair|partly cloudy|mostly cloudy|cloudy|overcast|"
-    r"partly sunny|mostly sunny|fog|foggy)\b", re.I)
+_SKY_WORDS = (
+    r"clear|sunny|fair|partly cloudy|mostly cloudy|cloudy|overcast|"
+    r"partly sunny|mostly sunny|fog|foggy")
+_RE_SKY = re.compile(rf"\b({_SKY_WORDS})\b", re.I)
+# Current-conditions sky requires the observation framing ("it was clear"), so
+# forecast sky phrases ("Saturday, partly cloudy") don't pollute /current.
+_RE_COND_SKY = re.compile(
+    rf"(?:it (?:was|is)|currently|skies? (?:were|was|are|is)) ({_SKY_WORDS})\b", re.I)
 
 _FIELD_RANGE = {
     "temperature_f": (-60, 130),
@@ -90,7 +95,7 @@ def extract_observation(text: str) -> dict:
         out["wind"] = f"{m.group(1).lower()} at {spd}" if spd is not None else m.group(1).lower()
         if spd is not None:
             out["wind_speed_mph"] = spd
-    if m := _RE_SKY.search(text):
+    if m := _RE_COND_SKY.search(text):
         out["sky"] = m.group(1).lower()
     # range-check numeric fields
     for k, (lo, hi) in _FIELD_RANGE.items():
