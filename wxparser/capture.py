@@ -17,6 +17,8 @@ import wave
 from collections.abc import Iterator
 from pathlib import Path
 
+import numpy as np
+
 from .config import Config
 
 
@@ -67,6 +69,41 @@ def stream_windows(cfg: Config, work_dir: Path) -> Iterator[Path]:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:  # pragma: no cover
             proc.kill()
+
+
+def stream_frames(cfg: Config) -> Iterator[tuple[np.ndarray, float]]:
+    """Yield (int16 mono frame, frame_start_seconds) continuously from the radio.
+
+    Frames are `cfg.frame_seconds` long and feed the streaming segmenter. The
+    monotonically increasing timestamp lets the segmenter assign wall-clock-ish
+    offsets to detected speech segments.
+    """
+    frame_samples = max(1, int(cfg.frame_seconds * cfg.sample_rate))
+    frame_bytes = frame_samples * 2 * cfg.channels
+
+    proc = subprocess.Popen(_arecord_cmd(cfg), stdout=subprocess.PIPE)
+    if proc.stdout is None:  # pragma: no cover - defensive
+        raise RuntimeError("arecord produced no stdout pipe")
+    sample_index = 0
+    try:
+        while True:
+            raw = _read_exact(proc.stdout, frame_bytes)
+            if raw is None:
+                raise RuntimeError(f"arecord stream ended (returncode={proc.poll()})")
+            frame = np.frombuffer(raw, dtype="<i2")
+            yield frame, sample_index / cfg.sample_rate
+            sample_index += frame_samples
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:  # pragma: no cover
+            proc.kill()
+
+
+def write_wav(path: Path, pcm_int16: np.ndarray, cfg: Config) -> None:
+    """Write an int16 numpy array to a WAV file (used to hand segments to STT)."""
+    _write_wav(path, np.asarray(pcm_int16, dtype="<i2").tobytes(), cfg)
 
 
 def _read_exact(stream, n: int) -> bytes | None:
