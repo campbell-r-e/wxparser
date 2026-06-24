@@ -42,10 +42,14 @@ class Config:
 
     # --- Phase 2: segmentation (energy VAD) ---
     frame_seconds: float = 0.02  # 20 ms analysis frames
-    vad_threshold_dbfs: float = float(_env("WX_VAD_DBFS", "-40"))
-    vad_min_silence_s: float = float(_env("WX_VAD_MIN_SILENCE", "0.5"))
+    # Threshold sits between speech (~-22 dBFS) and the inter-sentence gaps, which
+    # vary by product (~-37 to -40 dBFS) — -35 catches both. Max-segment is kept
+    # low so any genuinely gap-less stretch still transcribes fast and the gate
+    # isn't fed un-dedupable 30s blocks.
+    vad_threshold_dbfs: float = float(_env("WX_VAD_DBFS", "-35"))
+    vad_min_silence_s: float = float(_env("WX_VAD_MIN_SILENCE", "0.4"))
     vad_min_speech_s: float = float(_env("WX_VAD_MIN_SPEECH", "1.0"))
-    vad_max_segment_s: float = float(_env("WX_VAD_MAX_SEGMENT", "30"))
+    vad_max_segment_s: float = float(_env("WX_VAD_MAX_SEGMENT", "12"))
     vad_pad_s: float = 0.2  # keep a little audio either side of speech
 
     # --- Phase 2: audio fingerprint + novelty gate ---

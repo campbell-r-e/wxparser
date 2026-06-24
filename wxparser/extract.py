@@ -230,9 +230,7 @@ class CityConditionsAggregator:
 
     def __init__(self, maxlen: int = 15, primary_city: str = "Muncie"):
         self.maxlen = maxlen
-        # default to the station's home city so primary-city conditions attach even
-        # when the (gated) "At <City>, it was ..." header isn't re-transcribed.
-        self.current_city: str | None = primary_city
+        self.primary_city = primary_city
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
 
     def update(self, text: str) -> list[dict]:
@@ -241,16 +239,16 @@ class CityConditionsAggregator:
         readings: list[dict] = []
         nearby = [(int(v), _norm_city(c)) for v, c in _RE_NEARBY.findall(text)]
         if nearby:
-            # a nearby list: the temps belong to the named cities, not current_city
+            # a nearby list: the temps belong to the named cities
             for val, city in nearby:
                 if -60 <= val <= 130:
                     readings.append(self._reading(city, "temperature_f", val))
             return readings
-        if m := _RE_CITY_HEADER.search(text):
-            self.current_city = _norm_city(m.group(1))
-        if self.current_city:
-            for cond, val in extract_observation(text).items():
-                readings.append(self._reading(self.current_city, cond, val))
+        # standalone conditions ("the temperature was N", no "at <City>") are always
+        # the station's home city; attribute them there rather than to a possibly
+        # mis-heard header city ("At Monthsy ...").
+        for cond, val in extract_observation(text).items():
+            readings.append(self._reading(self.primary_city, cond, val))
         return readings
 
     def _reading(self, city: str, condition: str, value) -> dict:
