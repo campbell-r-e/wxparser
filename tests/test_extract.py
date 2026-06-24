@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from wxparser.extract import ConditionsAggregator, extract_observation, words_to_int
+from wxparser.extract import (
+    ConditionsAggregator,
+    ForecastAggregator,
+    extract_observation,
+    parse_temp_value,
+    period_header,
+    words_to_int,
+)
 
 # Real transcript captured from KJY93 (current-conditions product).
 REAL = (
@@ -43,6 +50,38 @@ def test_repeat_voting_stabilizes_numbers():
     snap = agg.snapshot()
     assert snap["temperature_f"]["value"] == 61
     assert snap["temperature_f"]["votes"] == 3 and snap["temperature_f"]["total"] == 4
+
+
+def test_parse_temp_value():
+    assert parse_temp_value("around 80") == 80
+    assert parse_temp_value("in the mid 60s") == 65
+    assert parse_temp_value("in the lower 80s") == 81
+    assert parse_temp_value("near 75") == 75
+
+
+def test_period_header():
+    assert period_header("Tonight, partly cloudy.") == "Tonight"
+    assert period_header("Saturday night, clear.") == "Saturday Night"
+    assert period_header("Lows in the 60s.") is None
+
+
+def test_forecast_aggregator_builds_periods():
+    fc = ForecastAggregator()
+    for seg in [
+        "Tonight, partly cloudy with a chance of showers.",
+        "Lows in the lower 60s.",
+        "Chance of rain 70 percent.",
+        "Saturday, mostly sunny.",
+        "Highs around 80.",
+    ]:
+        fc.update(seg)
+    periods = {p["period"]: p for p in fc.snapshot()}
+    assert periods["Tonight"]["low_f"] == 61
+    assert periods["Tonight"]["precip_pct"] == 70
+    assert periods["Saturday"]["high_f"] == 80
+    assert periods["Saturday"]["sky"] == "mostly sunny"
+    # a high mentioned under Tonight must not leak into Saturday and vice-versa
+    assert "high_f" not in periods["Tonight"]
 
 
 def _run():

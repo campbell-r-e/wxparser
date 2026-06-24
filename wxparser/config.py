@@ -77,6 +77,10 @@ class Config:
     text_update_threshold: float = float(_env("WX_TEXT_UPDATE", "0.75"))  # >= same-type -> update
     text_history: int = int(_env("WX_TEXT_HISTORY", "100"))
 
+    # --- Phase 6: LAN query API ---
+    api_host: str = _env("WX_API_HOST", "0.0.0.0")
+    api_port: int = int(_env("WX_API_PORT", "8080"))
+
     # --- Phase 4: SAME alert decoding ---
     same_enabled: bool = _env("WX_SAME", "1") == "1"
     same_buffer_s: float = 13.0      # spans the 3 repeated header bursts
@@ -90,6 +94,10 @@ class Config:
     @property
     def reports_jsonl(self) -> Path:
         return self.out_dir / "reports.jsonl"
+
+    @property
+    def db_path(self) -> Path:
+        return Path(_env("WX_DB", str(self.out_dir / "wxparser.db")))
 
     @property
     def model_name(self) -> str:

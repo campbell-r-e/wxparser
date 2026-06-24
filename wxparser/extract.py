@@ -99,6 +99,87 @@ def extract_observation(text: str) -> dict:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Zone-forecast extraction (Phase 6)
+# --------------------------------------------------------------------------- #
+_DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+_RE_PERIOD = re.compile(
+    rf"^\s*(today|tonight|this afternoon|this evening|this morning|overnight|"
+    rf"(?:{_DAYS})(?: night)?|rest of (?:today|tonight))\b", re.I)
+_RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
+_RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
+_RE_PRECIP = re.compile(
+    r"chance of (?:rain|precipitation|showers|snow)\s+(\d{1,3})\s*percent", re.I)
+_TEMP_OFFSET = {"lower": 1, "low": 1, "mid": 5, "middle": 5, "upper": 8}
+
+
+def parse_temp_value(phrase: str) -> int | None:
+    phrase = phrase.lower()[:30]
+    if m := re.search(r"(?:around|near|of)\s+(\d{1,3})", phrase):
+        return int(m.group(1))
+    if m := re.search(r"(lower|low|mid|middle|upper)\s+(\d{1,3})s", phrase):
+        return int(m.group(2)) + _TEMP_OFFSET[m.group(1)]
+    if m := re.search(r"\b(\d{1,3})s\b", phrase):
+        return int(m.group(1)) + 5  # bare "80s" -> mid
+    if m := re.search(r"\b(\d{1,3})\b", phrase):
+        return int(m.group(1))
+    return None
+
+
+def extract_forecast_fields(text: str) -> dict:
+    """Highs/lows/precip/sky found in a single forecast sentence/segment."""
+    out: dict = {}
+    if m := _RE_HIGH.search(text):
+        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 130:
+            out["high_f"] = v
+    if m := _RE_LOW.search(text):
+        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 100:
+            out["low_f"] = v
+    if m := _RE_PRECIP.search(text):
+        p = int(m.group(1))
+        if 0 <= p <= 100:
+            out["precip_pct"] = p
+    if m := _RE_SKY.search(text):
+        out["sky"] = m.group(1).lower()
+    return out
+
+
+def period_header(text: str) -> str | None:
+    m = _RE_PERIOD.search(text)
+    return m.group(1).strip().title() if m else None
+
+
+class ForecastAggregator:
+    """Builds ordered forecast periods from the in-order segment stream.
+
+    A segment that starts with a period name ("Tonight", "Saturday") opens a
+    period; subsequent segments attach highs/lows/precip/sky to the open period
+    until the next header. Periods are keyed by name so a fresh airing updates in
+    place rather than duplicating.
+    """
+
+    def __init__(self):
+        self.periods: dict[str, dict] = {}
+        self._current: str | None = None
+
+    def update(self, text: str) -> bool:
+        changed = False
+        if (hdr := period_header(text)) is not None:
+            self._current = hdr
+            self.periods.setdefault(hdr, {"period": hdr})
+            changed = True
+        if self._current is None:
+            return changed
+        fields = extract_forecast_fields(text)
+        if fields:
+            self.periods[self._current].update(fields)
+            changed = True
+        return changed
+
+    def snapshot(self) -> list[dict]:
+        return list(self.periods.values())
+
+
 @dataclass
 class Voted:
     value: object

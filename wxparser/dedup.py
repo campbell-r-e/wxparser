@@ -53,8 +53,10 @@ class TextDeduper:
         self.history: deque[tuple[str, str, str]] = deque(maxlen=cfg.text_history)
 
     def prime(self, reports: list[dict]) -> None:
-        """Seed history from already-saved reports (so restarts don't re-save)."""
+        """Seed history from already-saved transcript reports (skip obs/alerts)."""
         for r in reports:
+            if "text" not in r:  # observation / same_alert records have no transcript
+                continue
             self.history.append((r["id"], r.get("product_type", "unknown"), normalize(r["text"])))
 
     def consider(self, report: dict) -> DedupResult:

@@ -1,0 +1,19 @@
+[Unit]
+Description=wxparser LAN query API (reads the SQLite store)
+After=network-online.target wxparser.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=creed
+Group=creed
+WorkingDirectory=/home/creed/wxparser
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m wxparser.api
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -16,6 +16,7 @@ dependencies = ["numpy>=1.24"]
 
 [project.scripts]
 wxparser = "wxparser.main:main"
+wxparser-api = "wxparser.api:main"
 
 [tool.setuptools]
 packages = ["wxparser"]

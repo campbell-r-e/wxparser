@@ -30,8 +30,9 @@ from collections.abc import Iterator
 
 from .capture import stream_frames
 from .config import CONFIG, Config
+from .db import Database
 from .dedup import TextDeduper
-from .extract import ConditionsAggregator
+from .extract import ConditionsAggregator, ForecastAggregator
 from .fingerprint import Fingerprinter, NoveltyGate
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
@@ -93,9 +94,11 @@ def _tee_to_same(
         yield frame, t
 
 
-def _emit_alert(msg: SAMEMessage, cfg: Config) -> None:
+def _emit_alert(msg: SAMEMessage, cfg: Config, db: Database | None) -> None:
     record = build_alert(msg.to_record(), cfg)
     append_report(record, cfg)
+    if db is not None:
+        db.write_alert(record)
     areas = ", ".join(msg.counties) if msg.counties else ", ".join(msg.areas)
     print(
         f"[{record['captured_at']}] ALERT {msg.event_label} ({msg.event}) "
@@ -119,6 +122,8 @@ def _stt_worker(
     once: bool,
     deduper: TextDeduper,
     aggregator: ConditionsAggregator,
+    forecast: ForecastAggregator,
+    db: Database | None,
 ) -> None:
     while not _STOP.is_set():
         try:
@@ -137,14 +142,18 @@ def _stt_worker(
         if is_blank(transcript):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
+            text = transcript.text
             # vote BEFORE dedup so boundary-shifted repeats still contribute readings
-            if aggregator.update(transcript.text):
+            if aggregator.update(text):
                 obs = build_observation(aggregator.snapshot(), cfg)
                 append_report(obs, cfg)
-                summary = " ".join(
-                    f"{k}={v['value']}" for k, v in obs["fields"].items()
-                )
+                if db is not None:
+                    db.write_observation(obs)
+                summary = " ".join(f"{k}={v['value']}" for k, v in obs["fields"].items())
                 print(f"[{obs['captured_at']}] OBS  current conditions: {summary}", flush=True)
+            if forecast.update(text) and db is not None:
+                from .store import _utc_now_iso
+                db.write_forecast(forecast.snapshot(), _utc_now_iso())
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if once and saved:
                 _STOP.set()
@@ -168,13 +177,16 @@ def run_live(cfg: Config, once: bool = False) -> int:
     if recent:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     aggregator = ConditionsAggregator()
+    forecast = ForecastAggregator()
+    db = Database(cfg.db_path)
+    print(f"  (sqlite store: {cfg.db_path})", flush=True)
     q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
     worker = threading.Thread(
-        target=_stt_worker, args=(q, cfg, once, deduper, aggregator), daemon=True
+        target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db), daemon=True
     )
     worker.start()
 
-    monitor = SAMEMonitor(cfg, lambda m: _emit_alert(m, cfg)) if cfg.same_enabled else None
+    monitor = SAMEMonitor(cfg, lambda m: _emit_alert(m, cfg, db)) if cfg.same_enabled else None
     if monitor is not None:
         print("  (SAME alert decoding enabled)", flush=True)
 
