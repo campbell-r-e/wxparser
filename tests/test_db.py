@@ -21,7 +21,8 @@ def test_observation_roundtrip():
         "fields": {"temperature_f": {"value": 61, "votes": 3, "total": 4, "source": "voice"}},
     })
     cur = db.get_current()
-    assert cur["fields"]["temperature_f"]["value"] == 61
+    assert cur["conditions"]["temperature_f"] == 61   # promoted typed column
+    assert cur["fields"]["temperature_f"]["value"] == 61  # jsonb provenance
     assert cur["station"] == "KJY93"
 
 

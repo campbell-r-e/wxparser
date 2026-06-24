@@ -2,10 +2,12 @@
 
 PostgreSQL (permissive PostgreSQL License) via pg8000 — a pure-Python BSD driver,
 so nothing copyleft is imported (§2.2). Runs locally on the box, so the offline
-constraint (§2.1) still holds. Append-only history of observations, forecast
-issuances, and alerts; forecast rows carry valid_from/valid_to so "predicted vs.
-what actually happened" is a join. The capture service writes; the API service
-opens its own connection — Postgres handles the concurrency natively.
+constraint (§2.1) still holds.
+
+Native typing: timestamps are `timestamptz`, the voted-field detail and SAME area
+lists are `jsonb`, and the hot current-conditions fields are promoted to typed
+columns so `/current` is a plain typed query. Append-only history; forecast rows
+carry valid_from/valid_to so "predicted vs. what actually happened" is a join.
 """
 
 from __future__ import annotations
@@ -18,19 +20,29 @@ import pg8000.native
 
 from .config import CONFIG, Config
 
+# current-conditions fields promoted from the voted snapshot into typed columns
+_PROMOTED = {
+    "temperature_f": "integer",
+    "dewpoint_f": "integer",
+    "humidity_pct": "integer",
+    "pressure_in": "double precision",
+    "pressure_trend": "text",
+    "wind": "text",
+    "wind_speed_mph": "integer",
+    "sky": "text",
+}
+
 _SCHEMA = [
-    """CREATE TABLE IF NOT EXISTS observations (
-        id TEXT PRIMARY KEY,
-        captured_at TEXT NOT NULL,
-        station TEXT,
-        fields TEXT NOT NULL
-    )""",
+    "CREATE TABLE IF NOT EXISTS observations ("
+    "id TEXT PRIMARY KEY, captured_at TIMESTAMPTZ NOT NULL, station TEXT, "
+    + ", ".join(f"{c} {t}" for c, t in _PROMOTED.items())
+    + ", fields JSONB NOT NULL)",
     "CREATE INDEX IF NOT EXISTS ix_obs_time ON observations(captured_at)",
     """CREATE TABLE IF NOT EXISTS forecasts (
-        issued_at TEXT NOT NULL,
+        issued_at TIMESTAMPTZ NOT NULL,
         period TEXT NOT NULL,
-        valid_from TEXT,
-        valid_to TEXT,
+        valid_from TIMESTAMPTZ,
+        valid_to TIMESTAMPTZ,
         high_f INTEGER,
         low_f INTEGER,
         precip_pct INTEGER,
@@ -41,16 +53,16 @@ _SCHEMA = [
     "CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at)",
     """CREATE TABLE IF NOT EXISTS alerts (
         id TEXT PRIMARY KEY,
-        captured_at TEXT NOT NULL,
+        captured_at TIMESTAMPTZ NOT NULL,
         event TEXT,
         event_label TEXT,
-        areas TEXT,
-        counties TEXT,
+        areas JSONB,
+        counties JSONB,
         purge_minutes INTEGER,
         issued_raw TEXT,
         station TEXT,
         raw TEXT,
-        expires_at TEXT
+        expires_at TIMESTAMPTZ
     )""",
     "CREATE INDEX IF NOT EXISTS ix_alert_exp ON alerts(expires_at)",
 ]
@@ -62,8 +74,26 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_iso(s: str) -> datetime:
+def _parse_iso(s: str | datetime | None) -> datetime | None:
+    if s is None or isinstance(s, datetime):
+        return s
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _ts(v) -> str | None:
+    """Render a DB timestamptz (datetime) back to ISO-Z for JSON."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return _iso(v.astimezone(timezone.utc))
+    return v
+
+
+def _as_obj(v):
+    """jsonb may come back already-parsed or as text depending on the driver."""
+    if v is None or isinstance(v, (dict, list)):
+        return v
+    return json.loads(v)
 
 
 def period_window(period: str, issued: datetime) -> tuple[str | None, str | None]:
@@ -85,6 +115,11 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
     return None, None
 
 
+def _field_value(fields: dict, key: str):
+    v = fields.get(key)
+    return v.get("value") if isinstance(v, dict) else v
+
+
 class Database:
     def __init__(self, cfg: Config = CONFIG, database: str | None = None):
         self._cfg = cfg
@@ -96,15 +131,11 @@ class Database:
 
     def _connect(self) -> pg8000.native.Connection:
         return pg8000.native.Connection(
-            user=self._cfg.pg_user,
-            host=self._cfg.pg_host,
-            port=self._cfg.pg_port,
-            database=self._database,
-            password=self._cfg.pg_password or None,
+            user=self._cfg.pg_user, host=self._cfg.pg_host, port=self._cfg.pg_port,
+            database=self._database, password=self._cfg.pg_password or None,
         )
 
     def _run(self, sql: str, **params):
-        """Execute with a single reconnect retry (long-lived service)."""
         with self._lock:
             try:
                 return self._conn.run(sql, **params)
@@ -125,12 +156,21 @@ class Database:
 
     # --- writers ---------------------------------------------------------- #
     def write_observation(self, record: dict) -> None:
+        fields = record["fields"]
+        cols = ["id", "captured_at", "station", *_PROMOTED, "fields"]
+        ph = ["CAST(:fields AS jsonb)" if c == "fields" else f":{c}" for c in cols]
+        updates = ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c != "id")
+        params = {
+            "id": record["id"],
+            "captured_at": _parse_iso(record["captured_at"]),
+            "station": record.get("station"),
+            "fields": json.dumps(fields),
+            **{c: _field_value(fields, c) for c in _PROMOTED},
+        }
         self._run(
-            "INSERT INTO observations(id,captured_at,station,fields) "
-            "VALUES(:id,:ca,:st,:f) ON CONFLICT (id) DO UPDATE SET "
-            "captured_at=EXCLUDED.captured_at, station=EXCLUDED.station, fields=EXCLUDED.fields",
-            id=record["id"], ca=record["captured_at"],
-            st=record.get("station"), f=json.dumps(record["fields"]),
+            f"INSERT INTO observations({', '.join(cols)}) VALUES({', '.join(ph)}) "
+            f"ON CONFLICT (id) DO UPDATE SET {updates}",
+            **params,
         )
 
     def write_forecast(self, periods: list[dict], issued_at: str) -> None:
@@ -145,20 +185,20 @@ class Database:
                 "valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, "
                 "high_f=EXCLUDED.high_f, low_f=EXCLUDED.low_f, "
                 "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source",
-                ia=issued_at, pd=p["period"], vf=vf, vt=vt, hi=p.get("high_f"),
-                lo=p.get("low_f"), pp=p.get("precip_pct"), sky=p.get("sky"),
-                src=p.get("source", "voice"),
+                ia=issued_dt, pd=p["period"], vf=_parse_iso(vf), vt=_parse_iso(vt),
+                hi=p.get("high_f"), lo=p.get("low_f"), pp=p.get("precip_pct"),
+                sky=p.get("sky"), src=p.get("source", "voice"),
             )
 
     def write_alert(self, record: dict) -> None:
         a = record["alert"]
-        captured = record["captured_at"]
-        expires = _iso(_parse_iso(captured) + timedelta(minutes=a.get("purge_minutes", 0)))
+        captured = _parse_iso(record["captured_at"])
+        expires = captured + timedelta(minutes=a.get("purge_minutes", 0))
         self._run(
             "INSERT INTO alerts"
             "(id,captured_at,event,event_label,areas,counties,purge_minutes,"
             "issued_raw,station,raw,expires_at) "
-            "VALUES(:id,:ca,:ev,:el,:ar,:co,:pm,:ir,:st,:rw,:ex) "
+            "VALUES(:id,:ca,:ev,:el,CAST(:ar AS jsonb),CAST(:co AS jsonb),:pm,:ir,:st,:rw,:ex) "
             "ON CONFLICT (id) DO UPDATE SET expires_at=EXCLUDED.expires_at",
             id=record["id"], ca=captured, ev=a.get("event"), el=a.get("event_label"),
             ar=json.dumps(a.get("areas", [])), co=json.dumps(a.get("counties", [])),
@@ -168,16 +208,26 @@ class Database:
 
     # --- readers ---------------------------------------------------------- #
     def get_current(self, n: int = 12) -> dict | None:
+        cols = ", ".join(_PROMOTED)
         rows = self._query(
-            "SELECT captured_at, station, fields FROM observations "
+            f"SELECT captured_at, station, {cols}, fields FROM observations "
             "ORDER BY captured_at DESC LIMIT :n", n=n,
         )
         if not rows:
             return None
-        merged: dict = {}
-        for r in reversed(rows):  # oldest -> newest, so newer overwrites
-            merged.update(json.loads(r["fields"]))
-        return {"captured_at": rows[0]["captured_at"], "station": rows[0]["station"], "fields": merged}
+        conditions: dict = {}
+        detail: dict = {}
+        for r in reversed(rows):  # oldest -> newest, newer wins
+            for c in _PROMOTED:
+                if r[c] is not None:
+                    conditions[c] = r[c]
+            detail.update(_as_obj(r["fields"]) or {})
+        return {
+            "captured_at": _ts(rows[0]["captured_at"]),
+            "station": rows[0]["station"],
+            "conditions": conditions,
+            "fields": detail,
+        }
 
     def get_forecast(self) -> dict:
         latest = self._query("SELECT MAX(issued_at) AS m FROM forecasts")
@@ -187,16 +237,21 @@ class Database:
         rows = self._query(
             "SELECT * FROM forecasts WHERE issued_at=:ia ORDER BY period", ia=issued,
         )
-        return {"issued_at": issued, "periods": rows}
+        for r in rows:
+            for k in ("issued_at", "valid_from", "valid_to"):
+                r[k] = _ts(r[k])
+        return {"issued_at": _ts(issued), "periods": rows}
 
     def get_active_alerts(self, now: str | None = None) -> list[dict]:
-        now = now or _iso(datetime.now(timezone.utc))
+        now_dt = _parse_iso(now) or datetime.now(timezone.utc)
         rows = self._query(
-            "SELECT * FROM alerts WHERE expires_at > :now ORDER BY captured_at DESC", now=now,
+            "SELECT * FROM alerts WHERE expires_at > :now ORDER BY captured_at DESC", now=now_dt,
         )
         for d in rows:
-            d["areas"] = json.loads(d["areas"] or "[]")
-            d["counties"] = json.loads(d["counties"] or "[]")
+            d["areas"] = _as_obj(d["areas"]) or []
+            d["counties"] = _as_obj(d["counties"]) or []
+            for k in ("captured_at", "expires_at"):
+                d[k] = _ts(d[k])
         return rows
 
     # --- test helper ------------------------------------------------------ #

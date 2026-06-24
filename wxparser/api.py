@@ -23,12 +23,11 @@ def _current_payload(db: Database) -> dict:
     obs = db.get_current()
     if obs is None:
         return {"captured_at": None, "conditions": {}, "detail": {}}
-    conditions = {k: v["value"] for k, v in obs["fields"].items()}
     return {
         "captured_at": obs["captured_at"],
         "station": obs["station"],
-        "conditions": conditions,
-        "detail": obs["fields"],  # includes vote counts / provenance
+        "conditions": obs["conditions"],  # typed values from promoted columns
+        "detail": obs["fields"],          # vote counts / provenance (jsonb)
     }
 
 
