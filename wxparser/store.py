@@ -101,6 +101,22 @@ def build_alert(alert: dict, cfg: Config, captured_at: str | None = None) -> dic
     }
 
 
+def build_observation(fields: dict, cfg: Config, captured_at: str | None = None) -> dict:
+    """Wrap a voted current-conditions snapshot (extract.ConditionsAggregator)."""
+    captured_at = captured_at or _utc_now_iso()
+    key = "|".join(f"{k}={v.get('value')}" for k, v in sorted(fields.items()))
+    short = hashlib.sha1(key.encode("utf-8")).hexdigest()[:6]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "type": "observation",
+        "id": f"{captured_at}-obs-{short}",
+        "station": cfg.station,
+        "frequency_mhz": cfg.frequency_mhz,
+        "captured_at": captured_at,
+        "fields": fields,
+    }
+
+
 def load_recent_reports(cfg: Config, n: int) -> list[dict]:
     """Return the last n saved reports (oldest-first) for dedup priming."""
     path = cfg.reports_jsonl

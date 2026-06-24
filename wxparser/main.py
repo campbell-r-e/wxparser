@@ -31,10 +31,17 @@ from collections.abc import Iterator
 from .capture import stream_frames
 from .config import CONFIG, Config
 from .dedup import TextDeduper
+from .extract import ConditionsAggregator
 from .fingerprint import Fingerprinter, NoveltyGate
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
-from .store import append_report, build_alert, build_report, load_recent_reports
+from .store import (
+    append_report,
+    build_alert,
+    build_observation,
+    build_report,
+    load_recent_reports,
+)
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 
 _STOP = threading.Event()
@@ -111,6 +118,7 @@ def _stt_worker(
     cfg: Config,
     once: bool,
     deduper: TextDeduper,
+    aggregator: ConditionsAggregator,
 ) -> None:
     while not _STOP.is_set():
         try:
@@ -129,6 +137,14 @@ def _stt_worker(
         if is_blank(transcript):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
+            # vote BEFORE dedup so boundary-shifted repeats still contribute readings
+            if aggregator.update(transcript.text):
+                obs = build_observation(aggregator.snapshot(), cfg)
+                append_report(obs, cfg)
+                summary = " ".join(
+                    f"{k}={v['value']}" for k, v in obs["fields"].items()
+                )
+                print(f"[{obs['captured_at']}] OBS  current conditions: {summary}", flush=True)
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if once and saved:
                 _STOP.set()
@@ -151,8 +167,11 @@ def run_live(cfg: Config, once: bool = False) -> int:
     deduper.prime(recent)
     if recent:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
+    aggregator = ConditionsAggregator()
     q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
-    worker = threading.Thread(target=_stt_worker, args=(q, cfg, once, deduper), daemon=True)
+    worker = threading.Thread(
+        target=_stt_worker, args=(q, cfg, once, deduper, aggregator), daemon=True
+    )
     worker.start()
 
     monitor = SAMEMonitor(cfg, lambda m: _emit_alert(m, cfg)) if cfg.same_enabled else None
