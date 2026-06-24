@@ -7,6 +7,13 @@ duplicates from the repeating broadcast loop.
 This document is the working plan. It is the source of truth for scope, architecture, and
 phasing until code supersedes it.
 
+> **Implementation status (Phases 0–6 built):** capture → novelty-gated whisper.cpp STT →
+> text dedup → timestamped JSONL is running as a restart-safe `systemd` service on the
+> deployment host; SAME alert decoding, typed current-conditions + forecast extraction with
+> repeat-voting, a local SQLite store, and a LAN-only HTTP/JSON query API
+> (`/current`, `/forecast`, `/alerts/active`) are all in place. See `wxparser/`, `deploy/`,
+> and `tests/`. The phase notes below are kept as the design record.
+
 ---
 
 ## 1. Goal & scope
@@ -305,6 +312,15 @@ radio → transcript pipeline (v1)
 
 Every typed field carries **provenance + confidence + raw text** (voice vs SAME, vote
 count), so consumers know what is authoritative vs. best-effort.
+
+### Forecast vs. actual (history is the point)
+
+Because the store is **append-only and timestamped**, and forecast periods carry
+`valid_from`/`valid_to` while observations carry `captured_at`, the data model supports
+asking **"what did we forecast for a given day, and what actually happened?"** as a join
+between the forecast rows valid for that window and the observations recorded during it. This
+retrospective ("how good were the forecasts?") falls straight out of the schema — the
+forecast table reserves the valid-window columns specifically so the comparison is possible.
 
 ### Other future hooks (designed-for, not built)
 
