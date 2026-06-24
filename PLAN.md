@@ -10,8 +10,9 @@ phasing until code supersedes it.
 > **Implementation status (Phases 0–6 built):** capture → novelty-gated whisper.cpp STT →
 > text dedup → timestamped JSONL is running as a restart-safe `systemd` service on the
 > deployment host; SAME alert decoding, typed current-conditions + forecast extraction with
-> repeat-voting, a local **PostgreSQL** store (via the BSD `pg8000` driver), and a LAN-only
-> HTTP/JSON query API (`/current`, `/forecast`, `/alerts/active`) are all in place. See
+> repeat-voting (per-city, multi-city), a local **PostgreSQL** store (via the BSD `pg8000`
+> driver), and a generic city-agnostic LAN-only HTTP/JSON query API (`/conditions/{condition}`,
+> `/forecast`, `/conditions/history`, `/forecast/history`, `/alerts/active`) are all in place. See
 > `wxparser/`, `deploy/`, and `tests/`. The phase notes below are kept as the design record.
 >
 > **Storage note:** the plan below describes SQLite (its original zero-admin choice). The

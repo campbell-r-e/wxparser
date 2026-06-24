@@ -32,18 +32,13 @@ from .capture import stream_frames
 from .config import CONFIG, Config
 from .db import Database
 from .dedup import TextDeduper
-from .extract import ConditionsAggregator, ForecastAggregator
+from .extract import CityConditionsAggregator, ForecastAggregator
 from .fingerprint import Fingerprinter, NoveltyGate
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
-from .store import (
-    append_report,
-    build_alert,
-    build_observation,
-    build_report,
-    load_recent_reports,
-)
+from .store import append_report, build_alert, build_report, load_recent_reports
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
+from .store import _utc_now_iso
 
 _STOP = threading.Event()
 
@@ -121,7 +116,7 @@ def _stt_worker(
     cfg: Config,
     once: bool,
     deduper: TextDeduper,
-    aggregator: ConditionsAggregator,
+    aggregator: CityConditionsAggregator,
     forecast: ForecastAggregator,
     db: Database | None,
 ) -> None:
@@ -143,17 +138,14 @@ def _stt_worker(
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
             text = transcript.text
+            now = _utc_now_iso()
             # vote BEFORE dedup so boundary-shifted repeats still contribute readings
-            if aggregator.update(text):
-                obs = build_observation(aggregator.snapshot(), cfg)
-                append_report(obs, cfg)
+            for r in aggregator.update(text):
                 if db is not None:
-                    db.write_observation(obs)
-                summary = " ".join(f"{k}={v['value']}" for k, v in obs["fields"].items())
-                print(f"[{obs['captured_at']}] OBS  current conditions: {summary}", flush=True)
+                    db.write_city_observation(r, now)
+                print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
             if forecast.update(text) and db is not None:
-                from .store import _utc_now_iso
-                db.write_forecast(forecast.snapshot(), _utc_now_iso())
+                db.write_forecast(forecast.snapshot(), now, city=forecast.city)
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if once and saved:
                 _STOP.set()
@@ -176,21 +168,21 @@ def run_live(cfg: Config, once: bool = False) -> int:
     deduper.prime(recent)
     if recent:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
-    aggregator = ConditionsAggregator()
+    aggregator = CityConditionsAggregator()
     forecast = ForecastAggregator()
     db = Database(cfg)
     print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)
-    # prime aggregators from the store so a restart keeps /current and /forecast
-    if (cur := db.get_current()) is not None:
-        aggregator.prime(cur["fields"])
-    if (periods := db.get_forecast()["periods"]):
-        forecast.prime(periods)
-    if cur or periods:
-        print(
-            f"  (primed: {len(cur['fields']) if cur else 0} conditions fields, "
-            f"{len(periods)} forecast periods)",
-            flush=True,
-        )
+    # prime aggregators from the store so a restart keeps state
+    readings = db.latest_readings()
+    if readings:
+        aggregator.prime(readings)
+    fcs = db.latest_forecasts()
+    for fc in fcs:
+        if fc["city"] == forecast.city:
+            forecast.prime(fc["periods"])
+            break
+    if readings or fcs:
+        print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas)", flush=True)
     q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
     worker = threading.Thread(
         target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db), daemon=True

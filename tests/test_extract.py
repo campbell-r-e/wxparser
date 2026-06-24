@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from wxparser.extract import (
+    CityConditionsAggregator,
     ConditionsAggregator,
     ForecastAggregator,
     extract_observation,
@@ -106,6 +107,26 @@ def test_prime_forecast_from_periods():
     fc.prime([{"period": "Tonight", "low_f": 61, "precip_pct": 70, "sky": "partly cloudy"}])
     periods = {p["period"]: p for p in fc.snapshot()}
     assert periods["Tonight"]["low_f"] == 61 and periods["Tonight"]["precip_pct"] == 70
+
+
+def test_city_conditions_primary_and_nearby():
+    agg = CityConditionsAggregator()
+    agg.update("At Muncie, it was clear.")                 # sets active city
+    changed = agg.update("The temperature was 61 degrees.")  # attaches to Muncie
+    m = {(r["city"], r["condition"]): r["value"] for r in changed}
+    assert m[("Muncie", "temperature_f")] == 61
+    near = agg.update("Nearby, with a temperature of 56 at Anderson, 63 at Portland.")
+    nm = {(r["city"], r["condition"]): r["value"] for r in near}
+    assert nm[("Anderson", "temperature_f")] == 56
+    assert nm[("Portland", "temperature_f")] == 63
+    # a nearby temp must NOT be attributed to the primary city
+    assert ("Muncie", "temperature_f") not in nm
+
+
+def test_forecast_area_detection():
+    fc = ForecastAggregator()
+    fc.update("Here is the forecast for the Indianapolis area.")
+    assert fc.city == "Indianapolis"
 
 
 def _run():

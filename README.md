@@ -31,7 +31,9 @@ radio line-out → mic-in → capture (arecord) ─┬→ VAD → audio-fingerpr
 - **Transcripts** — timestamped JSON reports (`transcripts/reports.jsonl`), deduped against
   the repeating loop; updates link to what they supersede.
 - **Current conditions** — temp / dewpoint / humidity / pressure / wind / sky, extracted from
-  the voice and majority-voted across repeats to harden numbers against STT slips.
+  the voice and majority-voted across repeats to harden numbers against STT slips. Stored
+  per-city: the primary city gets the full set; cities named in the "Nearby …" list get
+  temperature.
 - **Forecast** — zone-forecast periods (highs/lows, precip %, sky) with computed valid
   windows.
 - **Alerts** — SAME headers decoded straight from the audio (event, FIPS→county areas, valid
@@ -39,15 +41,25 @@ radio line-out → mic-in → capture (arecord) ─┬→ VAD → audio-fingerpr
 
 ## Query API (LAN-only)
 
+Generic and city-agnostic — one endpoint per condition, returning every city that has it:
+
 ```
-GET /current        → latest voted current conditions
-GET /forecast       → zone-forecast periods (with valid_from/valid_to)
-GET /alerts/active  → SAME alerts not yet expired
-GET /health         → liveness + counts
+GET /conditions                  → available conditions (index)
+GET /conditions/{condition}      → every city's latest value (temperature, humidity,
+                                   pressure, dewpoint, wind, sky, ...)
+GET /conditions/history?condition=&city=&from=&to=&limit=
+                                 → historical readings between two times
+GET /forecast                    → latest forecast for all heard cities/areas
+GET /forecast/history?from=&to=&city=
+                                 → historical forecast predictions between dates
+GET /alerts/active               → SAME alerts not yet expired
+GET /health                      → liveness + counts
 ```
 
-Because forecasts store `valid_from`/`valid_to` and observations are timestamped, the history
-supports **"what did we forecast for a day vs. what actually happened?"** as a simple join.
+`from`/`to` are ISO-8601 (`2026-06-24T12:00:00Z`), inclusive. Conditions are stored
+long-format per `(city, condition)` with timestamps and vote provenance. Because forecasts
+store `valid_from`/`valid_to` and readings are timestamped, the history supports **"what did
+we forecast for a day vs. what actually happened?"** as a simple join.
 
 ## Run
 

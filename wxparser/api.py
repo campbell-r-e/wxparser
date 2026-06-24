@@ -1,41 +1,49 @@
-"""LAN-only HTTP/JSON query API (PLAN §6).
+"""LAN-only HTTP/JSON query API (PLAN §6) — generic, condition-centric.
 
-Serves the structured weather data other services ask for — sourced entirely from
-the radio, fully offline. Stdlib http.server only (no FastAPI/uvicorn dependency,
-honours §2.1). Read-only: it opens the SQLite store the capture service writes.
+Serves structured weather data sourced entirely from the radio, fully offline.
+Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
 
-    GET /current        -> latest voted current conditions
-    GET /forecast       -> latest zone-forecast periods (with valid windows)
-    GET /alerts/active  -> SAME alerts not yet expired
-    GET /health         -> liveness + counts
+    GET /conditions                       -> available conditions (index)
+    GET /conditions/{condition}           -> every city's latest value for it
+    GET /conditions/history?condition=&city=&from=&to=&limit=
+                                          -> historical readings between times
+    GET /forecast                         -> latest forecast for all heard cities
+    GET /forecast/history?from=&to=&city= -> historical forecast predictions
+    GET /alerts/active                    -> SAME alerts not yet expired
+    GET /health                           -> liveness + counts
+
+`from`/`to` are ISO-8601 (e.g. 2026-06-24T12:00:00Z), inclusive.
+`{condition}` accepts friendly names (temperature, humidity, pressure, dewpoint,
+wind, sky) or the stored keys (temperature_f, humidity_pct, ...).
 """
 
 from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 from .config import CONFIG, Config
 from .db import Database
 
+# friendly condition name -> stored key
+_CONDITION_ALIASES = {
+    "temperature": "temperature_f", "temp": "temperature_f",
+    "dewpoint": "dewpoint_f", "humidity": "humidity_pct",
+    "pressure": "pressure_in", "wind_speed": "wind_speed_mph",
+}
 
-def _current_payload(db: Database) -> dict:
-    obs = db.get_current()
-    if obs is None:
-        return {"captured_at": None, "conditions": {}, "detail": {}}
-    return {
-        "captured_at": obs["captured_at"],
-        "station": obs["station"],
-        "conditions": obs["conditions"],  # typed values from promoted columns
-        "detail": obs["fields"],          # vote counts / provenance (jsonb)
-    }
+
+def _canon(condition: str) -> str:
+    c = condition.lower()
+    return _CONDITION_ALIASES.get(c, c)
 
 
 class _Handler(BaseHTTPRequestHandler):
-    db: Database = None  # set on the server class
+    db: Database = None
     protocol_version = "HTTP/1.1"
 
-    def _send(self, payload: dict, status: int = 200) -> None:
+    def _send(self, payload, status: int = 200) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -44,29 +52,49 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        u = urlsplit(self.path)
+        path = u.path.rstrip("/") or "/"
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        parts = [p for p in path.split("/") if p]
         try:
-            if path == "/current":
-                self._send(_current_payload(self.db))
+            if path == "/":
+                self._send({"endpoints": [
+                    "/conditions", "/conditions/{condition}", "/conditions/history",
+                    "/forecast", "/forecast/history", "/alerts/active", "/health"]})
+            elif path == "/conditions":
+                self._send({"conditions": self.db.list_conditions()})
+            elif parts[:2] == ["conditions", "history"]:
+                cond = _canon(q.get("condition", ""))
+                if not cond:
+                    self._send({"error": "condition= query param required"}, 400)
+                    return
+                self._send({"condition": cond, "city": q.get("city"),
+                            "from": q.get("from"), "to": q.get("to"),
+                            "readings": self.db.condition_history(
+                                cond, q.get("city"), q.get("from"), q.get("to"),
+                                int(q.get("limit", 1000)))})
+            elif parts[0] == "conditions" and len(parts) == 2:
+                cond = _canon(parts[1])
+                self._send({"condition": cond, "cities": self.db.latest_for_condition(cond)})
             elif path == "/forecast":
-                self._send(self.db.get_forecast())
+                self._send({"forecasts": self.db.latest_forecasts()})
+            elif parts[:2] == ["forecast", "history"]:
+                self._send({"from": q.get("from"), "to": q.get("to"), "city": q.get("city"),
+                            "forecasts": self.db.forecast_history(
+                                q.get("from"), q.get("to"), q.get("city"))})
             elif path == "/alerts/active":
                 self._send({"alerts": self.db.get_active_alerts()})
             elif path == "/health":
-                self._send({
-                    "status": "ok",
-                    "has_current": self.db.get_current() is not None,
-                    "active_alerts": len(self.db.get_active_alerts()),
-                    "forecast_periods": len(self.db.get_forecast()["periods"]),
-                })
-            elif path == "/":
-                self._send({"endpoints": ["/current", "/forecast", "/alerts/active", "/health"]})
+                self._send({"status": "ok",
+                            "conditions": len(self.db.list_conditions()),
+                            "active_alerts": len(self.db.get_active_alerts()),
+                            "forecast_cities": len(self.db.latest_forecasts())})
             else:
-                self._send({"error": "not found", "path": path}, status=404)
-        except Exception as e:  # never crash the server on a bad read
-            self._send({"error": str(e)}, status=500)
+                self._send({"error": "not found", "path": path}, 404)
+        except Exception as e:  # never crash on a bad read
+            self._send({"error": str(e)}, 500)
 
-    def log_message(self, *args) -> None:  # quiet; journal handles logging
+    def log_message(self, *args) -> None:
         return
 
 

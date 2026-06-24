@@ -1,13 +1,12 @@
-"""PostgreSQL store (PLAN §6, §8).
+"""PostgreSQL store (PLAN §6, §8) — generic, city-agnostic.
 
-PostgreSQL (permissive PostgreSQL License) via pg8000 — a pure-Python BSD driver,
-so nothing copyleft is imported (§2.2). Runs locally on the box, so the offline
-constraint (§2.1) still holds.
+PostgreSQL (permissive license) via pg8000 (pure-Python, BSD — nothing copyleft
+imported, §2.2); runs locally so §2.1 (offline) holds.
 
-Native typing: timestamps are `timestamptz`, the voted-field detail and SAME area
-lists are `jsonb`, and the hot current-conditions fields are promoted to typed
-columns so `/current` is a plain typed query. Append-only history; forecast rows
-carry valid_from/valid_to so "predicted vs. what actually happened" is a join.
+Conditions are stored long-format: one row per (city, condition) reading with a
+timestamp and the vote provenance, so the same store answers "every city's latest
+temperature", "this city's history between two times", etc. Forecasts are tagged
+with the area/city they cover. Everything is append-only history.
 """
 
 from __future__ import annotations
@@ -20,26 +19,26 @@ import pg8000.native
 
 from .config import CONFIG, Config
 
-# current-conditions fields promoted from the voted snapshot into typed columns
-_PROMOTED = {
-    "temperature_f": "integer",
-    "dewpoint_f": "integer",
-    "humidity_pct": "integer",
-    "pressure_in": "double precision",
-    "pressure_trend": "text",
-    "wind": "text",
-    "wind_speed_mph": "integer",
-    "sky": "text",
+_NUMERIC_CONDITIONS = {
+    "temperature_f", "dewpoint_f", "humidity_pct", "pressure_in", "wind_speed_mph",
 }
 
 _SCHEMA = [
-    "CREATE TABLE IF NOT EXISTS observations ("
-    "id TEXT PRIMARY KEY, captured_at TIMESTAMPTZ NOT NULL, station TEXT, "
-    + ", ".join(f"{c} {t}" for c, t in _PROMOTED.items())
-    + ", fields JSONB NOT NULL)",
-    "CREATE INDEX IF NOT EXISTS ix_obs_time ON observations(captured_at)",
+    """CREATE TABLE IF NOT EXISTS city_observations (
+        captured_at TIMESTAMPTZ NOT NULL,
+        city TEXT NOT NULL,
+        condition TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        votes INTEGER,
+        total INTEGER,
+        PRIMARY KEY (captured_at, city, condition)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_cobs_cond ON city_observations(condition, captured_at)",
+    "CREATE INDEX IF NOT EXISTS ix_cobs_city ON city_observations(city, captured_at)",
     """CREATE TABLE IF NOT EXISTS forecasts (
         issued_at TIMESTAMPTZ NOT NULL,
+        city TEXT NOT NULL,
         period TEXT NOT NULL,
         valid_from TIMESTAMPTZ,
         valid_to TIMESTAMPTZ,
@@ -48,20 +47,16 @@ _SCHEMA = [
         precip_pct INTEGER,
         sky TEXT,
         source TEXT DEFAULT 'voice',
-        PRIMARY KEY (issued_at, period)
+        PRIMARY KEY (issued_at, city, period)
     )""",
     "CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at)",
+    "CREATE INDEX IF NOT EXISTS ix_fc_city ON forecasts(city, issued_at)",
     """CREATE TABLE IF NOT EXISTS alerts (
         id TEXT PRIMARY KEY,
         captured_at TIMESTAMPTZ NOT NULL,
-        event TEXT,
-        event_label TEXT,
-        areas JSONB,
-        counties JSONB,
-        purge_minutes INTEGER,
-        issued_raw TEXT,
-        station TEXT,
-        raw TEXT,
+        event TEXT, event_label TEXT,
+        areas JSONB, counties JSONB,
+        purge_minutes INTEGER, issued_raw TEXT, station TEXT, raw TEXT,
         expires_at TIMESTAMPTZ
     )""",
     "CREATE INDEX IF NOT EXISTS ix_alert_exp ON alerts(expires_at)",
@@ -74,30 +69,32 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_iso(s: str | datetime | None) -> datetime | None:
+def _parse_iso(s):
     if s is None or isinstance(s, datetime):
         return s
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def _ts(v) -> str | None:
-    """Render a DB timestamptz (datetime) back to ISO-Z for JSON."""
-    if v is None:
-        return None
+def _ts(v):
     if isinstance(v, datetime):
         return _iso(v.astimezone(timezone.utc))
     return v
 
 
 def _as_obj(v):
-    """jsonb may come back already-parsed or as text depending on the driver."""
     if v is None or isinstance(v, (dict, list)):
         return v
     return json.loads(v)
 
 
+def _value(row: dict):
+    if row.get("value_num") is not None:
+        n = row["value_num"]
+        return int(n) if float(n).is_integer() else n
+    return row.get("value_text")
+
+
 def period_window(period: str, issued: datetime) -> tuple[str | None, str | None]:
-    """Best-effort absolute valid window for a relative forecast period name."""
     p = period.lower().strip()
     day = issued.replace(hour=0, minute=0, second=0, microsecond=0)
     if p in ("today", "this afternoon", "this morning", "rest of today"):
@@ -113,11 +110,6 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
             return _iso(target.replace(hour=18)), _iso((target + timedelta(days=1)).replace(hour=6))
         return _iso(target.replace(hour=6)), _iso(target.replace(hour=18))
     return None, None
-
-
-def _field_value(fields: dict, key: str):
-    v = fields.get(key)
-    return v.get("value") if isinstance(v, dict) else v
 
 
 class Database:
@@ -155,37 +147,34 @@ class Database:
         return [dict(zip(cols, r)) for r in rows]
 
     # --- writers ---------------------------------------------------------- #
-    def write_observation(self, record: dict) -> None:
-        fields = record["fields"]
-        cols = ["id", "captured_at", "station", *_PROMOTED, "fields"]
-        ph = ["CAST(:fields AS jsonb)" if c == "fields" else f":{c}" for c in cols]
-        updates = ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c != "id")
-        params = {
-            "id": record["id"],
-            "captured_at": _parse_iso(record["captured_at"]),
-            "station": record.get("station"),
-            "fields": json.dumps(fields),
-            **{c: _field_value(fields, c) for c in _PROMOTED},
-        }
+    def write_city_observation(self, reading: dict, captured_at: str) -> None:
+        num = reading["value"] if reading["condition"] in _NUMERIC_CONDITIONS else None
+        txt = None if reading["condition"] in _NUMERIC_CONDITIONS else str(reading["value"])
         self._run(
-            f"INSERT INTO observations({', '.join(cols)}) VALUES({', '.join(ph)}) "
-            f"ON CONFLICT (id) DO UPDATE SET {updates}",
-            **params,
+            "INSERT INTO city_observations"
+            "(captured_at,city,condition,value_num,value_text,votes,total) "
+            "VALUES(:ca,:city,:cond,:num,:txt,:votes,:total) "
+            "ON CONFLICT (captured_at,city,condition) DO UPDATE SET "
+            "value_num=EXCLUDED.value_num, value_text=EXCLUDED.value_text, "
+            "votes=EXCLUDED.votes, total=EXCLUDED.total",
+            ca=_parse_iso(captured_at), city=reading["city"], cond=reading["condition"],
+            num=(float(num) if num is not None else None), txt=txt,
+            votes=reading.get("votes"), total=reading.get("total"),
         )
 
-    def write_forecast(self, periods: list[dict], issued_at: str) -> None:
+    def write_forecast(self, periods: list[dict], issued_at: str, city: str = "Muncie") -> None:
         issued_dt = _parse_iso(issued_at)
         for p in periods:
             vf, vt = period_window(p["period"], issued_dt)
             self._run(
                 "INSERT INTO forecasts"
-                "(issued_at,period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source) "
-                "VALUES(:ia,:pd,:vf,:vt,:hi,:lo,:pp,:sky,:src) "
-                "ON CONFLICT (issued_at,period) DO UPDATE SET "
+                "(issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source) "
+                "VALUES(:ia,:city,:pd,:vf,:vt,:hi,:lo,:pp,:sky,:src) "
+                "ON CONFLICT (issued_at,city,period) DO UPDATE SET "
                 "valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, "
                 "high_f=EXCLUDED.high_f, low_f=EXCLUDED.low_f, "
                 "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source",
-                ia=issued_dt, pd=p["period"], vf=_parse_iso(vf), vt=_parse_iso(vt),
+                ia=issued_dt, city=city, pd=p["period"], vf=_parse_iso(vf), vt=_parse_iso(vt),
                 hi=p.get("high_f"), lo=p.get("low_f"), pp=p.get("precip_pct"),
                 sky=p.get("sky"), src=p.get("source", "voice"),
             )
@@ -195,9 +184,8 @@ class Database:
         captured = _parse_iso(record["captured_at"])
         expires = captured + timedelta(minutes=a.get("purge_minutes", 0))
         self._run(
-            "INSERT INTO alerts"
-            "(id,captured_at,event,event_label,areas,counties,purge_minutes,"
-            "issued_raw,station,raw,expires_at) "
+            "INSERT INTO alerts(id,captured_at,event,event_label,areas,counties,"
+            "purge_minutes,issued_raw,station,raw,expires_at) "
             "VALUES(:id,:ca,:ev,:el,CAST(:ar AS jsonb),CAST(:co AS jsonb),:pm,:ir,:st,:rw,:ex) "
             "ON CONFLICT (id) DO UPDATE SET expires_at=EXCLUDED.expires_at",
             id=record["id"], ca=captured, ev=a.get("event"), el=a.get("event_label"),
@@ -206,42 +194,74 @@ class Database:
             rw=a.get("raw"), ex=expires,
         )
 
-    # --- readers ---------------------------------------------------------- #
-    def get_current(self, n: int = 12) -> dict | None:
-        cols = ", ".join(_PROMOTED)
+    # --- readers: conditions --------------------------------------------- #
+    def list_conditions(self) -> list[dict]:
         rows = self._query(
-            f"SELECT captured_at, station, {cols}, fields FROM observations "
-            "ORDER BY captured_at DESC LIMIT :n", n=n,
+            "SELECT condition, COUNT(DISTINCT city) AS cities, MAX(captured_at) AS latest "
+            "FROM city_observations GROUP BY condition ORDER BY condition"
         )
-        if not rows:
-            return None
-        conditions: dict = {}
-        detail: dict = {}
-        for r in reversed(rows):  # oldest -> newest, newer wins
-            for c in _PROMOTED:
-                if r[c] is not None:
-                    conditions[c] = r[c]
-            detail.update(_as_obj(r["fields"]) or {})
-        return {
-            "captured_at": _ts(rows[0]["captured_at"]),
-            "station": rows[0]["station"],
-            "conditions": conditions,
-            "fields": detail,
-        }
+        return [{"condition": r["condition"], "cities": r["cities"], "latest": _ts(r["latest"])}
+                for r in rows]
 
-    def get_forecast(self) -> dict:
-        latest = self._query("SELECT MAX(issued_at) AS m FROM forecasts")
-        if not latest or latest[0]["m"] is None:
-            return {"issued_at": None, "periods": []}
-        issued = latest[0]["m"]
+    def latest_for_condition(self, condition: str) -> list[dict]:
         rows = self._query(
-            "SELECT * FROM forecasts WHERE issued_at=:ia ORDER BY period", ia=issued,
+            "SELECT DISTINCT ON (city) city, value_num, value_text, captured_at, votes, total "
+            "FROM city_observations WHERE condition=:c ORDER BY city, captured_at DESC", c=condition,
         )
+        return [{"city": r["city"], "value": _value(r), "captured_at": _ts(r["captured_at"]),
+                 "votes": r["votes"], "total": r["total"]} for r in rows]
+
+    def condition_history(self, condition: str, city: str | None,
+                          frm: str | None, to: str | None, limit: int = 1000) -> list[dict]:
+        sql = "SELECT city,condition,value_num,value_text,captured_at,votes,total FROM city_observations WHERE condition=:c"
+        params = {"c": condition, "lim": limit}
+        if city:
+            sql += " AND city=:city"; params["city"] = city
+        if frm:
+            sql += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
+        if to:
+            sql += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
+        sql += " ORDER BY captured_at DESC LIMIT :lim"
+        rows = self._query(sql, **params)
+        return [{"city": r["city"], "condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["captured_at"]), "votes": r["votes"], "total": r["total"]}
+                for r in rows]
+
+    # --- readers: forecast ----------------------------------------------- #
+    def latest_forecasts(self) -> list[dict]:
+        cities = self._query("SELECT DISTINCT city FROM forecasts")
+        out = []
+        for c in cities:
+            city = c["city"]
+            mx = self._query("SELECT MAX(issued_at) AS m FROM forecasts WHERE city=:city", city=city)
+            issued = mx[0]["m"]
+            rows = self._query(
+                "SELECT period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source "
+                "FROM forecasts WHERE city=:city AND issued_at=:ia ORDER BY valid_from NULLS LAST, period",
+                city=city, ia=issued,
+            )
+            for r in rows:
+                r["valid_from"] = _ts(r["valid_from"]); r["valid_to"] = _ts(r["valid_to"])
+            out.append({"city": city, "issued_at": _ts(issued), "periods": rows})
+        return out
+
+    def forecast_history(self, frm: str | None, to: str | None, city: str | None) -> list[dict]:
+        sql = "SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky FROM forecasts WHERE 1=1"
+        params: dict = {}
+        if city:
+            sql += " AND city=:city"; params["city"] = city
+        if frm:
+            sql += " AND issued_at >= :frm"; params["frm"] = _parse_iso(frm)
+        if to:
+            sql += " AND issued_at <= :to"; params["to"] = _parse_iso(to)
+        sql += " ORDER BY issued_at DESC, city, period LIMIT 5000"
+        rows = self._query(sql, **params)
         for r in rows:
             for k in ("issued_at", "valid_from", "valid_to"):
                 r[k] = _ts(r[k])
-        return {"issued_at": _ts(issued), "periods": rows}
+        return rows
 
+    # --- readers: alerts -------------------------------------------------- #
     def get_active_alerts(self, now: str | None = None) -> list[dict]:
         now_dt = _parse_iso(now) or datetime.now(timezone.utc)
         rows = self._query(
@@ -254,9 +274,16 @@ class Database:
                 d[k] = _ts(d[k])
         return rows
 
-    # --- test helper ------------------------------------------------------ #
+    def latest_readings(self) -> list[dict]:
+        """All latest (city, condition) readings — used to prime the aggregator."""
+        rows = self._query(
+            "SELECT DISTINCT ON (city, condition) city, condition, value_num, value_text "
+            "FROM city_observations ORDER BY city, condition, captured_at DESC"
+        )
+        return [{"city": r["city"], "condition": r["condition"], "value": _value(r)} for r in rows]
+
     def clear(self) -> None:
-        self._run("TRUNCATE observations, forecasts, alerts")
+        self._run("TRUNCATE city_observations, forecasts, alerts")
 
     def close(self) -> None:
         with self._lock:

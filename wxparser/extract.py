@@ -163,9 +163,10 @@ class ForecastAggregator:
     place rather than duplicating.
     """
 
-    def __init__(self):
+    def __init__(self, area: str = "Muncie"):
         self.periods: dict[str, dict] = {}
         self._current: str | None = None
+        self.city: str = area  # area the current forecast covers ("...for the X area")
 
     def prime(self, periods: list[dict]) -> None:
         """Restore periods from a stored forecast so a restart keeps /forecast."""
@@ -181,6 +182,8 @@ class ForecastAggregator:
 
     def update(self, text: str) -> bool:
         changed = False
+        if m := _RE_FC_AREA.search(text):
+            self.city = _norm_city(m.group(1))
         if (hdr := period_header(text)) is not None:
             self._current = hdr
             self.periods.setdefault(hdr, {"period": hdr})
@@ -195,6 +198,77 @@ class ForecastAggregator:
 
     def snapshot(self) -> list[dict]:
         return list(self.periods.values())
+
+
+# --------------------------------------------------------------------------- #
+# Generic multi-city extraction (Phase 6+, city-agnostic)
+# --------------------------------------------------------------------------- #
+_CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
+# "At Muncie, it was clear." / "At Muncie, the temperature was ..." -> primary city
+_RE_CITY_HEADER = re.compile(
+    rf"\bat ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
+    rf"barometric|wind|dew))", re.I)
+# "... 56 at Anderson, 63 at Portland ..." -> per-city temperatures
+_RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")
+# "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
+# literal " area" suffix so the city group can't swallow the word "area")
+_RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
+
+
+def _norm_city(name: str) -> str:
+    return name.strip().title()
+
+
+class CityConditionsAggregator:
+    """City-agnostic current-conditions extraction with per-(city,condition) voting.
+
+    A "At <City>, it was ..." header sets the active city; the condition sentences
+    that follow (temperature/humidity/pressure/wind/sky) attach to it. A "Nearby
+    ... <temp> at <City>" list yields a temperature per named city. Each
+    (city, condition) is majority-voted independently.
+    """
+
+    def __init__(self, maxlen: int = 15):
+        self.maxlen = maxlen
+        self.current_city: str | None = None
+        self.voters: dict[tuple[str, str], _FieldVoter] = {}
+        self._last: dict[tuple[str, str], object] = {}
+
+    def update(self, text: str) -> list[dict]:
+        """Returns the list of (city, condition) readings whose voted value changed."""
+        changed: list[dict] = []
+        nearby = [(int(v), _norm_city(c)) for v, c in _RE_NEARBY.findall(text)]
+        if nearby:
+            # a nearby list: the temps belong to the named cities, not current_city
+            for val, city in nearby:
+                if -60 <= val <= 130:
+                    self._vote(city, "temperature_f", val, changed)
+            return changed
+        if m := _RE_CITY_HEADER.search(text):
+            self.current_city = _norm_city(m.group(1))
+        if self.current_city:
+            for cond, val in extract_observation(text).items():
+                self._vote(self.current_city, cond, val, changed)
+        return changed
+
+    def _vote(self, city: str, condition: str, value, changed: list) -> None:
+        key = (city, condition)
+        voter = self.voters.setdefault(key, _FieldVoter(self.maxlen))
+        voter.add(value)
+        best = voter.best()
+        if self._last.get(key) != best.value:
+            self._last[key] = best.value
+            changed.append({
+                "city": city, "condition": condition,
+                "value": best.value, "votes": best.votes, "total": best.total,
+            })
+
+    def prime(self, readings: list[dict]) -> None:
+        """Seed voters from stored latest readings so a restart keeps state."""
+        for r in readings:
+            key = (r["city"], r["condition"])
+            self.voters.setdefault(key, _FieldVoter(self.maxlen)).add(r["value"])
+            self._last[key] = r["value"]
 
 
 @dataclass
