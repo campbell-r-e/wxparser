@@ -178,8 +178,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     aggregator = ConditionsAggregator()
     forecast = ForecastAggregator()
-    db = Database(cfg.db_path)
-    print(f"  (sqlite store: {cfg.db_path})", flush=True)
+    db = Database(cfg)
+    print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)
     # prime aggregators from the store so a restart keeps /current and /forecast
     if (cur := db.get_current()) is not None:
         aggregator.prime(cur["fields"])

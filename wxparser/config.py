@@ -97,13 +97,16 @@ class Config:
     # --- Output ---
     out_dir: Path = Path(_env("WX_OUT_DIR", "transcripts"))
 
+    # --- PostgreSQL store (pg8000 / BSD driver; local trust auth) ---
+    pg_host: str = _env("WX_PG_HOST", "127.0.0.1")
+    pg_port: int = int(_env("WX_PG_PORT", "5432"))
+    pg_database: str = _env("WX_PG_DATABASE", "wxparser")
+    pg_user: str = _env("WX_PG_USER", "wxparser")
+    pg_password: str = _env("WX_PG_PASSWORD", "")  # empty -> trust auth (no password)
+
     @property
     def reports_jsonl(self) -> Path:
         return self.out_dir / "reports.jsonl"
-
-    @property
-    def db_path(self) -> Path:
-        return Path(_env("WX_DB", str(self.out_dir / "wxparser.db")))
 
     @property
     def model_name(self) -> str:

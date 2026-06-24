@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
-from wxparser.db import Database, period_window
 from datetime import datetime, timezone
+
+from wxparser.config import CONFIG
+from wxparser.db import Database, period_window
 
 
 def _db() -> Database:
-    tmp = Path(tempfile.mkdtemp()) / "t.db"
-    return Database(tmp)
+    db = Database(CONFIG, database="wxparser_test")
+    db.clear()  # isolate each test
+    return db
 
 
 def test_observation_roundtrip():

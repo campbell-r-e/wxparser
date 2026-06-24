@@ -1,60 +1,59 @@
-"""Local SQLite store (PLAN §6, §8).
+"""PostgreSQL store (PLAN §6, §8).
 
-Public-domain SQLite (stdlib), fully offline. Append-only history of observations,
-forecast issuances, and alerts — so consumers can ask "what's current?" and also,
-later, "what did we forecast for Tuesday vs. what actually happened?" (forecast
-rows carry valid_from/valid_to; observations carry captured_at).
-
-Writers run in the capture service; the API service opens its own read connection.
-WAL mode lets the reader and writer coexist across processes.
+PostgreSQL (permissive PostgreSQL License) via pg8000 — a pure-Python BSD driver,
+so nothing copyleft is imported (§2.2). Runs locally on the box, so the offline
+constraint (§2.1) still holds. Append-only history of observations, forecast
+issuances, and alerts; forecast rows carry valid_from/valid_to so "predicted vs.
+what actually happened" is a join. The capture service writes; the API service
+opens its own connection — Postgres handles the concurrency natively.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS observations (
-    id TEXT PRIMARY KEY,
-    captured_at TEXT NOT NULL,
-    station TEXT,
-    fields TEXT NOT NULL          -- json: field -> {value,votes,total,source}
-);
-CREATE INDEX IF NOT EXISTS ix_obs_time ON observations(captured_at);
+import pg8000.native
 
-CREATE TABLE IF NOT EXISTS forecasts (
-    issued_at TEXT NOT NULL,
-    period TEXT NOT NULL,
-    valid_from TEXT,
-    valid_to TEXT,
-    high_f INTEGER,
-    low_f INTEGER,
-    precip_pct INTEGER,
-    sky TEXT,
-    source TEXT DEFAULT 'voice',
-    PRIMARY KEY (issued_at, period)
-);
-CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at);
+from .config import CONFIG, Config
 
-CREATE TABLE IF NOT EXISTS alerts (
-    id TEXT PRIMARY KEY,
-    captured_at TEXT NOT NULL,
-    event TEXT,
-    event_label TEXT,
-    areas TEXT,                   -- json list
-    counties TEXT,                -- json list
-    purge_minutes INTEGER,
-    issued_raw TEXT,
-    station TEXT,
-    raw TEXT,
-    expires_at TEXT
-);
-CREATE INDEX IF NOT EXISTS ix_alert_exp ON alerts(expires_at);
-"""
+_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS observations (
+        id TEXT PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        station TEXT,
+        fields TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_obs_time ON observations(captured_at)",
+    """CREATE TABLE IF NOT EXISTS forecasts (
+        issued_at TEXT NOT NULL,
+        period TEXT NOT NULL,
+        valid_from TEXT,
+        valid_to TEXT,
+        high_f INTEGER,
+        low_f INTEGER,
+        precip_pct INTEGER,
+        sky TEXT,
+        source TEXT DEFAULT 'voice',
+        PRIMARY KEY (issued_at, period)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at)",
+    """CREATE TABLE IF NOT EXISTS alerts (
+        id TEXT PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        event TEXT,
+        event_label TEXT,
+        areas TEXT,
+        counties TEXT,
+        purge_minutes INTEGER,
+        issued_raw TEXT,
+        station TEXT,
+        raw TEXT,
+        expires_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_alert_exp ON alerts(expires_at)",
+]
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
@@ -87,100 +86,123 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
 
 
 class Database:
-    def __init__(self, path: Path | str):
-        self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, cfg: Config = CONFIG, database: str | None = None):
+        self._cfg = cfg
+        self._database = database or cfg.pg_database
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
-        self._conn.commit()
+        self._conn = self._connect()
+        for stmt in _SCHEMA:
+            self._conn.run(stmt)
+
+    def _connect(self) -> pg8000.native.Connection:
+        return pg8000.native.Connection(
+            user=self._cfg.pg_user,
+            host=self._cfg.pg_host,
+            port=self._cfg.pg_port,
+            database=self._database,
+            password=self._cfg.pg_password or None,
+        )
+
+    def _run(self, sql: str, **params):
+        """Execute with a single reconnect retry (long-lived service)."""
+        with self._lock:
+            try:
+                return self._conn.run(sql, **params)
+            except Exception:
+                self._conn = self._connect()
+                return self._conn.run(sql, **params)
+
+    def _query(self, sql: str, **params) -> list[dict]:
+        with self._lock:
+            try:
+                rows = self._conn.run(sql, **params)
+                cols = [c["name"] for c in self._conn.columns]
+            except Exception:
+                self._conn = self._connect()
+                rows = self._conn.run(sql, **params)
+                cols = [c["name"] for c in self._conn.columns]
+        return [dict(zip(cols, r)) for r in rows]
 
     # --- writers ---------------------------------------------------------- #
     def write_observation(self, record: dict) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO observations(id,captured_at,station,fields) VALUES(?,?,?,?)",
-                (record["id"], record["captured_at"], record.get("station"),
-                 json.dumps(record["fields"])),
-            )
-            self._conn.commit()
+        self._run(
+            "INSERT INTO observations(id,captured_at,station,fields) "
+            "VALUES(:id,:ca,:st,:f) ON CONFLICT (id) DO UPDATE SET "
+            "captured_at=EXCLUDED.captured_at, station=EXCLUDED.station, fields=EXCLUDED.fields",
+            id=record["id"], ca=record["captured_at"],
+            st=record.get("station"), f=json.dumps(record["fields"]),
+        )
 
     def write_forecast(self, periods: list[dict], issued_at: str) -> None:
         issued_dt = _parse_iso(issued_at)
-        with self._lock:
-            for p in periods:
-                vf, vt = period_window(p["period"], issued_dt)
-                self._conn.execute(
-                    "INSERT OR REPLACE INTO forecasts"
-                    "(issued_at,period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source)"
-                    " VALUES(?,?,?,?,?,?,?,?,?)",
-                    (issued_at, p["period"], vf, vt, p.get("high_f"), p.get("low_f"),
-                     p.get("precip_pct"), p.get("sky"), p.get("source", "voice")),
-                )
-            self._conn.commit()
+        for p in periods:
+            vf, vt = period_window(p["period"], issued_dt)
+            self._run(
+                "INSERT INTO forecasts"
+                "(issued_at,period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source) "
+                "VALUES(:ia,:pd,:vf,:vt,:hi,:lo,:pp,:sky,:src) "
+                "ON CONFLICT (issued_at,period) DO UPDATE SET "
+                "valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, "
+                "high_f=EXCLUDED.high_f, low_f=EXCLUDED.low_f, "
+                "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source",
+                ia=issued_at, pd=p["period"], vf=vf, vt=vt, hi=p.get("high_f"),
+                lo=p.get("low_f"), pp=p.get("precip_pct"), sky=p.get("sky"),
+                src=p.get("source", "voice"),
+            )
 
     def write_alert(self, record: dict) -> None:
         a = record["alert"]
         captured = record["captured_at"]
         expires = _iso(_parse_iso(captured) + timedelta(minutes=a.get("purge_minutes", 0)))
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO alerts"
-                "(id,captured_at,event,event_label,areas,counties,purge_minutes,"
-                "issued_raw,station,raw,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (record["id"], captured, a.get("event"), a.get("event_label"),
-                 json.dumps(a.get("areas", [])), json.dumps(a.get("counties", [])),
-                 a.get("purge_minutes"), a.get("issued_raw"), a.get("station"),
-                 a.get("raw"), expires),
-            )
-            self._conn.commit()
+        self._run(
+            "INSERT INTO alerts"
+            "(id,captured_at,event,event_label,areas,counties,purge_minutes,"
+            "issued_raw,station,raw,expires_at) "
+            "VALUES(:id,:ca,:ev,:el,:ar,:co,:pm,:ir,:st,:rw,:ex) "
+            "ON CONFLICT (id) DO UPDATE SET expires_at=EXCLUDED.expires_at",
+            id=record["id"], ca=captured, ev=a.get("event"), el=a.get("event_label"),
+            ar=json.dumps(a.get("areas", [])), co=json.dumps(a.get("counties", [])),
+            pm=a.get("purge_minutes"), ir=a.get("issued_raw"), st=a.get("station"),
+            rw=a.get("raw"), ex=expires,
+        )
 
     # --- readers ---------------------------------------------------------- #
     def get_current(self, n: int = 12) -> dict | None:
-        """Latest value of each field, merged across the last n observations.
-
-        Fields can be reported in different observations (and a restart can emit a
-        sparse one), so the freshest reading of each field wins rather than the
-        last single snapshot.
-        """
-        rows = self._conn.execute(
+        rows = self._query(
             "SELECT captured_at, station, fields FROM observations "
-            "ORDER BY captured_at DESC LIMIT ?", (n,)
-        ).fetchall()
+            "ORDER BY captured_at DESC LIMIT :n", n=n,
+        )
         if not rows:
             return None
         merged: dict = {}
         for r in reversed(rows):  # oldest -> newest, so newer overwrites
             merged.update(json.loads(r["fields"]))
-        return {
-            "captured_at": rows[0]["captured_at"],
-            "station": rows[0]["station"],
-            "fields": merged,
-        }
+        return {"captured_at": rows[0]["captured_at"], "station": rows[0]["station"], "fields": merged}
 
     def get_forecast(self) -> dict:
-        latest = self._conn.execute("SELECT MAX(issued_at) AS m FROM forecasts").fetchone()
-        if not latest or latest["m"] is None:
+        latest = self._query("SELECT MAX(issued_at) AS m FROM forecasts")
+        if not latest or latest[0]["m"] is None:
             return {"issued_at": None, "periods": []}
-        rows = self._conn.execute(
-            "SELECT * FROM forecasts WHERE issued_at=? ORDER BY rowid", (latest["m"],)
-        ).fetchall()
-        return {"issued_at": latest["m"], "periods": [dict(r) for r in rows]}
+        issued = latest[0]["m"]
+        rows = self._query(
+            "SELECT * FROM forecasts WHERE issued_at=:ia ORDER BY period", ia=issued,
+        )
+        return {"issued_at": issued, "periods": rows}
 
     def get_active_alerts(self, now: str | None = None) -> list[dict]:
         now = now or _iso(datetime.now(timezone.utc))
-        rows = self._conn.execute(
-            "SELECT * FROM alerts WHERE expires_at > ? ORDER BY captured_at DESC", (now,)
-        ).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
+        rows = self._query(
+            "SELECT * FROM alerts WHERE expires_at > :now ORDER BY captured_at DESC", now=now,
+        )
+        for d in rows:
             d["areas"] = json.loads(d["areas"] or "[]")
             d["counties"] = json.loads(d["counties"] or "[]")
-            out.append(d)
-        return out
+        return rows
+
+    # --- test helper ------------------------------------------------------ #
+    def clear(self) -> None:
+        self._run("TRUNCATE observations, forecasts, alerts")
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

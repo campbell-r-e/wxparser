@@ -1,7 +1,8 @@
 [Unit]
 Description=wxparser — offline NOAA Weather Radio capture, transcribe, dedup
 Documentation=https://github.com/campbell-r-e/wxparser
-After=sound.target
+After=sound.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple

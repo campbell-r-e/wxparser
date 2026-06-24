@@ -9,7 +9,9 @@ Audio is tapped from a dedicated weather radio (a Reecom R-1630), so RF receptio
 in hardware and the entire software stack stays MIT-licensed and permissive.
 
 **Fully offline:** no runtime network calls of any kind. Transcription (whisper.cpp) and SAME
-decoding run locally; lookup tables (FIPS→county) are bundled.
+decoding run locally; lookup tables (FIPS→county) are bundled; the data store (PostgreSQL)
+runs on the same box. Every dependency is permissively licensed — the Postgres driver is
+`pg8000` (pure-Python, BSD) rather than the LGPL `psycopg`.
 
 ## How it works
 
@@ -23,7 +25,7 @@ radio line-out → mic-in → capture (arecord) ─┬→ VAD → audio-fingerpr
                                               │     → text dedup → reports + observations + forecast
                                               └→ SAME monitor → decode AFSK burst → typed alerts
                                                             ↓
-                                              SQLite store ──→ LAN-only HTTP/JSON query API
+                                          PostgreSQL store ──→ LAN-only HTTP/JSON query API
 ```
 
 - **Transcripts** — timestamped JSON reports (`transcripts/reports.jsonl`), deduped against
@@ -50,6 +52,7 @@ supports **"what did we forecast for a day vs. what actually happened?"** as a s
 ## Run
 
 ```bash
+deploy/setup-postgres.sh      # one-time: install + init PostgreSQL, create role/dbs
 python3 -m wxparser.main      # capture → transcribe → dedup → store
 python3 -m wxparser.api       # serve the LAN query API
 ```

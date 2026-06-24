@@ -10,9 +10,11 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
 # Audio capture is the `arecord` subprocess (process boundary, honours PLAN §2.2)
-# and STT is the whisper.cpp `whisper-cli` subprocess. The only in-process dep is
-# numpy (BSD), for the Phase 2 VAD + spectral fingerprint / novelty gate.
-dependencies = ["numpy>=1.24"]
+# and STT is the whisper.cpp `whisper-cli` subprocess. In-process deps:
+#  - numpy (BSD): Phase 2 VAD + spectral fingerprint / novelty gate
+#  - pg8000 (BSD): pure-Python PostgreSQL driver — chosen over psycopg (LGPL) so
+#    nothing copyleft is imported (§2.2). PostgreSQL itself runs locally (§2.1).
+dependencies = ["numpy>=1.24", "pg8000>=1.31"]
 
 [project.scripts]
 wxparser = "wxparser.main:main"

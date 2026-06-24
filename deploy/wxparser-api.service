@@ -1,7 +1,7 @@
 [Unit]
 Description=wxparser LAN query API (reads the SQLite store)
-After=network-online.target wxparser.service
-Wants=network-online.target
+After=network-online.target postgresql.service wxparser.service
+Wants=network-online.target postgresql.service
 
 [Service]
 Type=simple

@@ -72,9 +72,13 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def serve(cfg: Config = CONFIG) -> None:
-    _Handler.db = Database(cfg.db_path)
+    _Handler.db = Database(cfg)
     server = ThreadingHTTPServer((cfg.api_host, cfg.api_port), _Handler)
-    print(f"wxparser-api: serving on {cfg.api_host}:{cfg.api_port} from {cfg.db_path}", flush=True)
+    print(
+        f"wxparser-api: serving on {cfg.api_host}:{cfg.api_port} "
+        f"from {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database}",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover
