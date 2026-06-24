@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,3 +79,23 @@ def append_report(report: dict, cfg: Config) -> Path:
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(report, ensure_ascii=False) + "\n")
     return path
+
+
+def load_recent_reports(cfg: Config, n: int) -> list[dict]:
+    """Return the last n saved reports (oldest-first) for dedup priming."""
+    path = cfg.reports_jsonl
+    if not path.exists():
+        return []
+    tail: deque[str] = deque(maxlen=n)
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tail.append(line)
+    out: list[dict] = []
+    for line in tail:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out

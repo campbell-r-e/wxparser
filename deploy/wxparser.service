@@ -1,0 +1,21 @@
+[Unit]
+Description=wxparser — offline NOAA Weather Radio capture, transcribe, dedup
+Documentation=https://github.com/campbell-r-e/wxparser
+After=sound.target
+
+[Service]
+Type=simple
+User=creed
+Group=creed
+SupplementaryGroups=audio
+WorkingDirectory=/home/creed/wxparser
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m wxparser.main
+Restart=always
+RestartSec=5
+# Resource guard rails for the old host
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

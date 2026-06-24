@@ -28,9 +28,10 @@ from pathlib import Path
 
 from .capture import stream_frames
 from .config import CONFIG, Config
+from .dedup import TextDeduper
 from .fingerprint import Fingerprinter, NoveltyGate
 from .segment import Segment, segment_stream
-from .store import append_report, build_report
+from .store import append_report, build_report, load_recent_reports
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 
 _STOP = threading.Event()
@@ -40,15 +41,36 @@ def _handle_signal(signum, frame):  # pragma: no cover
     _STOP.set()
 
 
-def _save(transcript: Transcript, cfg: Config, duration_s: float, fingerprint: str) -> None:
+def _save(
+    transcript: Transcript,
+    cfg: Config,
+    duration_s: float,
+    fingerprint: str,
+    deduper: TextDeduper | None = None,
+) -> bool:
+    """Build, text-dedup, and persist a report. Returns True if it was saved."""
     report = build_report(transcript, cfg, duration_s=duration_s, fingerprint=fingerprint)
+    tag = "NEW"
+    if deduper is not None:
+        res = deduper.consider(report)
+        if res.kind == "duplicate":
+            print(
+                f"  . text-dup skip {duration_s:5.1f}s ({report['product_type']})",
+                flush=True,
+            )
+            return False
+        report["supersedes"] = res.supersedes
+        tag = "UPD" if res.kind == "update" else "NEW"
     path = append_report(report, cfg)
     print(
-        f"[{report['captured_at']}] NEW  {report['product_type']:<28} "
+        f"[{report['captured_at']}] {tag}  {report['product_type']:<28} "
         f"{duration_s:5.1f}s {len(transcript.segments):>2} seg -> {path}",
         flush=True,
     )
+    if report.get("supersedes"):
+        print(f"    (supersedes {report['supersedes']})", flush=True)
     print(f"    {transcript.text}", flush=True)
+    return True
 
 
 def run_file(wav_path: Path, cfg: Config) -> int:
@@ -60,7 +82,12 @@ def run_file(wav_path: Path, cfg: Config) -> int:
     return 0
 
 
-def _stt_worker(q: "queue.Queue[tuple[Segment, str] | None]", cfg: Config, once: bool) -> None:
+def _stt_worker(
+    q: "queue.Queue[tuple[Segment, str] | None]",
+    cfg: Config,
+    once: bool,
+    deduper: TextDeduper,
+) -> None:
     while not _STOP.is_set():
         try:
             item = q.get(timeout=0.5)
@@ -78,8 +105,8 @@ def _stt_worker(q: "queue.Queue[tuple[Segment, str] | None]", cfg: Config, once:
         if is_blank(transcript):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
-            _save(transcript, cfg, duration_s=seg.duration_s, fingerprint=digest)
-            if once:
+            saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
+            if once and saved:
                 _STOP.set()
         q.task_done()
 
@@ -95,8 +122,13 @@ def run_live(cfg: Config, once: bool = False) -> int:
     )
     fp = Fingerprinter(cfg)
     gate = NoveltyGate(cfg)
+    deduper = TextDeduper(cfg)
+    recent = load_recent_reports(cfg, cfg.text_history)
+    deduper.prime(recent)
+    if recent:
+        print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
-    worker = threading.Thread(target=_stt_worker, args=(q, cfg, once), daemon=True)
+    worker = threading.Thread(target=_stt_worker, args=(q, cfg, once, deduper), daemon=True)
     worker.start()
 
     n_seg = n_new = n_repeat = 0

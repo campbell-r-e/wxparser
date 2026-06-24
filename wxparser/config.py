@@ -69,6 +69,14 @@ class Config:
     # for minutes. Per-segment STT errors are cleaned up by repeat-voting (§8).
     whisper_fast_decode: bool = _env("WX_FAST_DECODE", "1") == "1"
 
+    # --- Phase 3: text dedup (second-line guard) ---
+    # High, so only near-exact repeats are dropped. On short templated forecasts a
+    # changed number ("80"->"82") only drops similarity to ~0.95, and must survive
+    # as an update rather than being swallowed as a duplicate.
+    text_dup_threshold: float = float(_env("WX_TEXT_DUP", "0.97"))     # >= -> duplicate, drop
+    text_update_threshold: float = float(_env("WX_TEXT_UPDATE", "0.75"))  # >= same-type -> update
+    text_history: int = int(_env("WX_TEXT_HISTORY", "100"))
+
     # --- Output ---
     out_dir: Path = Path(_env("WX_OUT_DIR", "transcripts"))
 
