@@ -284,8 +284,11 @@ class _FieldVoter:
         if not self.samples:
             return None
         counts = Counter(self.samples)
-        value, votes = counts.most_common(1)[0]
-        return Voted(value=value, votes=votes, total=len(self.samples))
+        top = max(counts.values())
+        tied = {v for v, c in counts.items() if c == top}
+        # break ties toward the most recent reading (conditions change over time)
+        value = next(v for v in reversed(self.samples) if v in tied)
+        return Voted(value=value, votes=top, total=len(self.samples))
 
 
 class ConditionsAggregator:
