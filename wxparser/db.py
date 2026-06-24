@@ -138,16 +138,26 @@ class Database:
             self._conn.commit()
 
     # --- readers ---------------------------------------------------------- #
-    def get_current(self) -> dict | None:
-        row = self._conn.execute(
-            "SELECT * FROM observations ORDER BY captured_at DESC LIMIT 1"
-        ).fetchone()
-        if row is None:
+    def get_current(self, n: int = 12) -> dict | None:
+        """Latest value of each field, merged across the last n observations.
+
+        Fields can be reported in different observations (and a restart can emit a
+        sparse one), so the freshest reading of each field wins rather than the
+        last single snapshot.
+        """
+        rows = self._conn.execute(
+            "SELECT captured_at, station, fields FROM observations "
+            "ORDER BY captured_at DESC LIMIT ?", (n,)
+        ).fetchall()
+        if not rows:
             return None
+        merged: dict = {}
+        for r in reversed(rows):  # oldest -> newest, so newer overwrites
+            merged.update(json.loads(r["fields"]))
         return {
-            "captured_at": row["captured_at"],
-            "station": row["station"],
-            "fields": json.loads(row["fields"]),
+            "captured_at": rows[0]["captured_at"],
+            "station": rows[0]["station"],
+            "fields": merged,
         }
 
     def get_forecast(self) -> dict:

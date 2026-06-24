@@ -180,6 +180,17 @@ def run_live(cfg: Config, once: bool = False) -> int:
     forecast = ForecastAggregator()
     db = Database(cfg.db_path)
     print(f"  (sqlite store: {cfg.db_path})", flush=True)
+    # prime aggregators from the store so a restart keeps /current and /forecast
+    if (cur := db.get_current()) is not None:
+        aggregator.prime(cur["fields"])
+    if (periods := db.get_forecast()["periods"]):
+        forecast.prime(periods)
+    if cur or periods:
+        print(
+            f"  (primed: {len(cur['fields']) if cur else 0} conditions fields, "
+            f"{len(periods)} forecast periods)",
+            flush=True,
+        )
     q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
     worker = threading.Thread(
         target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db), daemon=True

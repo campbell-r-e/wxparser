@@ -167,6 +167,18 @@ class ForecastAggregator:
         self.periods: dict[str, dict] = {}
         self._current: str | None = None
 
+    def prime(self, periods: list[dict]) -> None:
+        """Restore periods from a stored forecast so a restart keeps /forecast."""
+        for p in periods:
+            name = p.get("period")
+            if not name:
+                continue
+            entry = {"period": name}
+            for k in ("high_f", "low_f", "precip_pct", "sky"):
+                if p.get(k) is not None:
+                    entry[k] = p[k]
+            self.periods[name] = entry
+
     def update(self, text: str) -> bool:
         changed = False
         if (hdr := period_header(text)) is not None:
@@ -214,6 +226,18 @@ class ConditionsAggregator:
         self.voters: dict[str, _FieldVoter] = {}
         self.maxlen = maxlen
         self._last_snapshot: dict = {}
+
+    def prime(self, fields: dict) -> None:
+        """Seed voters from a stored observation snapshot (field -> {value,...}).
+
+        Lets a restart keep showing last-known conditions until fresh readings
+        arrive; live readings then vote on top and age the primed value out.
+        """
+        for field, info in fields.items():
+            val = info.get("value") if isinstance(info, dict) else info
+            if val is not None:
+                self.voters.setdefault(field, _FieldVoter(self.maxlen)).add(val)
+        self._last_snapshot = self.snapshot()
 
     def update(self, text: str) -> bool:
         """Feed a transcript; returns True if the voted snapshot changed."""

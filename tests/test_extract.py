@@ -91,6 +91,23 @@ def test_forecast_aggregator_builds_periods():
     assert "high_f" not in periods["Tonight"]
 
 
+def test_prime_conditions_from_snapshot():
+    agg = ConditionsAggregator()
+    agg.prime({"temperature_f": {"value": 59}, "humidity_pct": {"value": 67}})
+    snap = agg.snapshot()
+    assert snap["temperature_f"]["value"] == 59 and snap["humidity_pct"]["value"] == 67
+    # a fresh live reading still votes on top
+    agg.update("The temperature was 60 degrees.")
+    assert agg.snapshot()["temperature_f"]["value"] in (59, 60)
+
+
+def test_prime_forecast_from_periods():
+    fc = ForecastAggregator()
+    fc.prime([{"period": "Tonight", "low_f": 61, "precip_pct": 70, "sky": "partly cloudy"}])
+    periods = {p["period"]: p for p in fc.snapshot()}
+    assert periods["Tonight"]["low_f"] == 61 and periods["Tonight"]["precip_pct"] == 70
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
