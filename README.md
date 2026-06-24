@@ -57,7 +57,10 @@ GET /health                      → liveness + counts
 ```
 
 `from`/`to` are ISO-8601 (`2026-06-24T12:00:00Z`), inclusive. Conditions are stored
-long-format per `(city, condition)` with timestamps and vote provenance. Because forecasts
+long-format per `(city, condition)` with timestamps and vote provenance. The condition
+endpoints only surface a city once it's been **heard ≥2 times** (configurable via `?min=`,
+default `WX_MIN_SIGHTINGS`) so one-off STT-garbage city names are suppressed; the raw history
+(`/conditions/history`) keeps everything. Because forecasts
 store `valid_from`/`valid_to` and readings are timestamped, the history supports **"what did
 we forecast for a day vs. what actually happened?"** as a simple join.
 

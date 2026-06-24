@@ -16,28 +16,42 @@ def _db() -> Database:
 
 def test_city_conditions_latest():
     db = _db()
-    db.write_city_observation({"city": "Muncie", "condition": "temperature_f", "value": 61,
-                               "votes": 3, "total": 4}, "2026-06-24T06:00:00Z")
-    db.write_city_observation({"city": "Anderson", "condition": "temperature_f", "value": 56,
-                               "votes": 1, "total": 1}, "2026-06-24T06:01:00Z")
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 61,
+                       "votes": 3, "total": 4}, "2026-06-24T06:00:00Z")
+    db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 56,
+                       "votes": 1, "total": 1}, "2026-06-24T06:01:00Z")
     by = {r["city"]: r["value"] for r in db.latest_for_condition("temperature_f")}
     assert by["Muncie"] == 61 and by["Anderson"] == 56
 
 
+def test_min_sightings_filter():
+    db = _db()
+    db.record_reading({"city": "Lulule", "condition": "temperature_f", "value": 72},
+                      "2026-06-24T06:00:00Z")  # heard once -> garbage
+    db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 56},
+                      "2026-06-24T06:00:00Z")
+    db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 57},
+                      "2026-06-24T06:05:00Z")  # heard twice
+    surfaced = {r["city"] for r in db.latest_for_condition("temperature_f", min_sightings=2)}
+    assert "Anderson" in surfaced and "Lulule" not in surfaced
+    # raw history still has both
+    assert any(h["city"] == "Lulule" for h in db.condition_history("temperature_f", None, None, None))
+
+
 def test_text_condition_roundtrip():
     db = _db()
-    db.write_city_observation({"city": "Muncie", "condition": "sky", "value": "clear"},
-                              "2026-06-24T06:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "sky", "value": "clear"},
+                      "2026-06-24T06:00:00Z")
     rows = db.latest_for_condition("sky")
     assert rows[0]["city"] == "Muncie" and rows[0]["value"] == "clear"
 
 
 def test_condition_history_between_times():
     db = _db()
-    db.write_city_observation({"city": "Muncie", "condition": "temperature_f", "value": 61},
-                              "2026-06-24T06:00:00Z")
-    db.write_city_observation({"city": "Muncie", "condition": "temperature_f", "value": 63},
-                              "2026-06-24T07:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 61},
+                      "2026-06-24T06:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 63},
+                      "2026-06-24T07:00:00Z")
     h = db.condition_history("temperature_f", "Muncie",
                              "2026-06-24T06:30:00Z", "2026-06-24T07:30:00Z")
     assert len(h) == 1 and h[0]["value"] == 63

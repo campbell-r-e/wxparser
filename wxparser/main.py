@@ -142,7 +142,7 @@ def _stt_worker(
             # vote BEFORE dedup so boundary-shifted repeats still contribute readings
             for r in aggregator.update(text):
                 if db is not None:
-                    db.write_city_observation(r, now)
+                    db.record_reading(r, now)
                 print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
             if forecast.update(text) and db is not None:
                 db.write_forecast(forecast.snapshot(), now, city=forecast.city)

@@ -232,43 +232,36 @@ class CityConditionsAggregator:
         self.maxlen = maxlen
         self.current_city: str | None = None
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
-        self._last: dict[tuple[str, str], object] = {}
 
     def update(self, text: str) -> list[dict]:
-        """Returns the list of (city, condition) readings whose voted value changed."""
-        changed: list[dict] = []
+        """Returns every (city, condition) reading heard in this text, with the
+        current voted value/votes/total. Each is a 'sighting' the store counts."""
+        readings: list[dict] = []
         nearby = [(int(v), _norm_city(c)) for v, c in _RE_NEARBY.findall(text)]
         if nearby:
             # a nearby list: the temps belong to the named cities, not current_city
             for val, city in nearby:
                 if -60 <= val <= 130:
-                    self._vote(city, "temperature_f", val, changed)
-            return changed
+                    readings.append(self._reading(city, "temperature_f", val))
+            return readings
         if m := _RE_CITY_HEADER.search(text):
             self.current_city = _norm_city(m.group(1))
         if self.current_city:
             for cond, val in extract_observation(text).items():
-                self._vote(self.current_city, cond, val, changed)
-        return changed
+                readings.append(self._reading(self.current_city, cond, val))
+        return readings
 
-    def _vote(self, city: str, condition: str, value, changed: list) -> None:
-        key = (city, condition)
-        voter = self.voters.setdefault(key, _FieldVoter(self.maxlen))
+    def _reading(self, city: str, condition: str, value) -> dict:
+        voter = self.voters.setdefault((city, condition), _FieldVoter(self.maxlen))
         voter.add(value)
         best = voter.best()
-        if self._last.get(key) != best.value:
-            self._last[key] = best.value
-            changed.append({
-                "city": city, "condition": condition,
-                "value": best.value, "votes": best.votes, "total": best.total,
-            })
+        return {"city": city, "condition": condition,
+                "value": best.value, "votes": best.votes, "total": best.total}
 
     def prime(self, readings: list[dict]) -> None:
         """Seed voters from stored latest readings so a restart keeps state."""
         for r in readings:
-            key = (r["city"], r["condition"])
-            self.voters.setdefault(key, _FieldVoter(self.maxlen)).add(r["value"])
-            self._last[key] = r["value"]
+            self.voters.setdefault((r["city"], r["condition"]), _FieldVoter(self.maxlen)).add(r["value"])
 
 
 @dataclass

@@ -41,7 +41,14 @@ def _canon(condition: str) -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     db: Database = None
+    min_sightings: int = 2
     protocol_version = "HTTP/1.1"
+
+    def _min(self, q: dict) -> int:
+        try:
+            return max(1, int(q.get("min", self.min_sightings)))
+        except ValueError:
+            return self.min_sightings
 
     def _send(self, payload, status: int = 200) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
@@ -62,7 +69,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "/conditions", "/conditions/{condition}", "/conditions/history",
                     "/forecast", "/forecast/history", "/alerts/active", "/health"]})
             elif path == "/conditions":
-                self._send({"conditions": self.db.list_conditions()})
+                self._send({"min_sightings": self._min(q),
+                            "conditions": self.db.list_conditions(self._min(q))})
             elif parts[:2] == ["conditions", "history"]:
                 cond = _canon(q.get("condition", ""))
                 if not cond:
@@ -75,7 +83,9 @@ class _Handler(BaseHTTPRequestHandler):
                                 int(q.get("limit", 1000)))})
             elif parts[0] == "conditions" and len(parts) == 2:
                 cond = _canon(parts[1])
-                self._send({"condition": cond, "cities": self.db.latest_for_condition(cond)})
+                m = self._min(q)
+                self._send({"condition": cond, "min_sightings": m,
+                            "cities": self.db.latest_for_condition(cond, m)})
             elif path == "/forecast":
                 self._send({"forecasts": self.db.latest_forecasts()})
             elif parts[:2] == ["forecast", "history"]:
@@ -100,6 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 def serve(cfg: Config = CONFIG) -> None:
     _Handler.db = Database(cfg)
+    _Handler.min_sightings = cfg.api_min_sightings
     server = ThreadingHTTPServer((cfg.api_host, cfg.api_port), _Handler)
     print(
         f"wxparser-api: serving on {cfg.api_host}:{cfg.api_port} "

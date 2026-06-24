@@ -86,6 +86,9 @@ class Config:
     # --- Phase 6: LAN query API ---
     api_host: str = _env("WX_API_HOST", "0.0.0.0")
     api_port: int = int(_env("WX_API_PORT", "8080"))
+    # only surface a city once heard this many times (filters one-off STT garbage);
+    # clients can override per request with ?min=
+    api_min_sightings: int = int(_env("WX_MIN_SIGHTINGS", "2"))
 
     # --- Phase 4: SAME alert decoding ---
     same_enabled: bool = _env("WX_SAME", "1") == "1"

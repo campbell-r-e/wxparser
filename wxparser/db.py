@@ -36,6 +36,21 @@ _SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS ix_cobs_cond ON city_observations(condition, captured_at)",
     "CREATE INDEX IF NOT EXISTS ix_cobs_city ON city_observations(city, captured_at)",
+    # latest value + cumulative sightings per (city, condition); sightings gates
+    # STT-garbage one-off city names out of the public endpoints.
+    """CREATE TABLE IF NOT EXISTS city_conditions (
+        city TEXT NOT NULL,
+        condition TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        votes INTEGER,
+        total INTEGER,
+        sightings INTEGER NOT NULL DEFAULT 0,
+        first_seen TIMESTAMPTZ,
+        last_seen TIMESTAMPTZ,
+        PRIMARY KEY (city, condition)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_cc_cond ON city_conditions(condition)",
     """CREATE TABLE IF NOT EXISTS forecasts (
         issued_at TIMESTAMPTZ NOT NULL,
         city TEXT NOT NULL,
@@ -147,19 +162,31 @@ class Database:
         return [dict(zip(cols, r)) for r in rows]
 
     # --- writers ---------------------------------------------------------- #
-    def write_city_observation(self, reading: dict, captured_at: str) -> None:
-        num = reading["value"] if reading["condition"] in _NUMERIC_CONDITIONS else None
-        txt = None if reading["condition"] in _NUMERIC_CONDITIONS else str(reading["value"])
+    def record_reading(self, reading: dict, captured_at: str) -> None:
+        """Record one heard reading: bump the (city,condition) sightings counter and
+        append a history row. Sightings let the read endpoints suppress one-off
+        STT-garbage city names."""
+        ca = _parse_iso(captured_at)
+        cond = reading["condition"]
+        num = float(reading["value"]) if cond in _NUMERIC_CONDITIONS else None
+        txt = None if cond in _NUMERIC_CONDITIONS else str(reading["value"])
+        votes, total = reading.get("votes"), reading.get("total")
+        self._run(
+            "INSERT INTO city_conditions"
+            "(city,condition,value_num,value_text,votes,total,sightings,first_seen,last_seen) "
+            "VALUES(:city,:cond,:num,:txt,:votes,:total,1,:ca,:ca) "
+            "ON CONFLICT (city,condition) DO UPDATE SET "
+            "value_num=EXCLUDED.value_num, value_text=EXCLUDED.value_text, "
+            "votes=EXCLUDED.votes, total=EXCLUDED.total, "
+            "sightings=city_conditions.sightings+1, last_seen=EXCLUDED.last_seen",
+            city=reading["city"], cond=cond, num=num, txt=txt, votes=votes, total=total, ca=ca,
+        )
         self._run(
             "INSERT INTO city_observations"
             "(captured_at,city,condition,value_num,value_text,votes,total) "
             "VALUES(:ca,:city,:cond,:num,:txt,:votes,:total) "
-            "ON CONFLICT (captured_at,city,condition) DO UPDATE SET "
-            "value_num=EXCLUDED.value_num, value_text=EXCLUDED.value_text, "
-            "votes=EXCLUDED.votes, total=EXCLUDED.total",
-            ca=_parse_iso(captured_at), city=reading["city"], cond=reading["condition"],
-            num=(float(num) if num is not None else None), txt=txt,
-            votes=reading.get("votes"), total=reading.get("total"),
+            "ON CONFLICT (captured_at,city,condition) DO NOTHING",
+            ca=ca, city=reading["city"], cond=cond, num=num, txt=txt, votes=votes, total=total,
         )
 
     def write_forecast(self, periods: list[dict], issued_at: str, city: str = "Muncie") -> None:
@@ -195,21 +222,24 @@ class Database:
         )
 
     # --- readers: conditions --------------------------------------------- #
-    def list_conditions(self) -> list[dict]:
+    def list_conditions(self, min_sightings: int = 1) -> list[dict]:
         rows = self._query(
-            "SELECT condition, COUNT(DISTINCT city) AS cities, MAX(captured_at) AS latest "
-            "FROM city_observations GROUP BY condition ORDER BY condition"
+            "SELECT condition, COUNT(*) AS cities, MAX(last_seen) AS latest "
+            "FROM city_conditions WHERE sightings >= :m GROUP BY condition ORDER BY condition",
+            m=min_sightings,
         )
         return [{"condition": r["condition"], "cities": r["cities"], "latest": _ts(r["latest"])}
                 for r in rows]
 
-    def latest_for_condition(self, condition: str) -> list[dict]:
+    def latest_for_condition(self, condition: str, min_sightings: int = 1) -> list[dict]:
         rows = self._query(
-            "SELECT DISTINCT ON (city) city, value_num, value_text, captured_at, votes, total "
-            "FROM city_observations WHERE condition=:c ORDER BY city, captured_at DESC", c=condition,
+            "SELECT city, value_num, value_text, last_seen, votes, total, sightings "
+            "FROM city_conditions WHERE condition=:c AND sightings >= :m "
+            "ORDER BY city", c=condition, m=min_sightings,
         )
-        return [{"city": r["city"], "value": _value(r), "captured_at": _ts(r["captured_at"]),
-                 "votes": r["votes"], "total": r["total"]} for r in rows]
+        return [{"city": r["city"], "value": _value(r), "captured_at": _ts(r["last_seen"]),
+                 "votes": r["votes"], "total": r["total"], "sightings": r["sightings"]}
+                for r in rows]
 
     def condition_history(self, condition: str, city: str | None,
                           frm: str | None, to: str | None, limit: int = 1000) -> list[dict]:
@@ -276,14 +306,11 @@ class Database:
 
     def latest_readings(self) -> list[dict]:
         """All latest (city, condition) readings — used to prime the aggregator."""
-        rows = self._query(
-            "SELECT DISTINCT ON (city, condition) city, condition, value_num, value_text "
-            "FROM city_observations ORDER BY city, condition, captured_at DESC"
-        )
+        rows = self._query("SELECT city, condition, value_num, value_text FROM city_conditions")
         return [{"city": r["city"], "condition": r["condition"], "value": _value(r)} for r in rows]
 
     def clear(self) -> None:
-        self._run("TRUNCATE city_observations, forecasts, alerts")
+        self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts")
 
     def close(self) -> None:
         with self._lock:
