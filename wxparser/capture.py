@@ -13,6 +13,8 @@ introduce between windows.
 from __future__ import annotations
 
 import subprocess
+import sys
+import time
 import wave
 from collections.abc import Iterator
 from pathlib import Path
@@ -80,25 +82,40 @@ def stream_frames(cfg: Config) -> Iterator[tuple[np.ndarray, float]]:
     """
     frame_samples = max(1, int(cfg.frame_seconds * cfg.sample_rate))
     frame_bytes = frame_samples * 2 * cfg.channels
-
-    proc = subprocess.Popen(_arecord_cmd(cfg), stdout=subprocess.PIPE)
-    if proc.stdout is None:  # pragma: no cover - defensive
-        raise RuntimeError("arecord produced no stdout pipe")
     sample_index = 0
-    try:
-        while True:
-            raw = _read_exact(proc.stdout, frame_bytes)
-            if raw is None:
-                raise RuntimeError(f"arecord stream ended (returncode={proc.poll()})")
-            frame = np.frombuffer(raw, dtype="<i2")
-            yield frame, sample_index / cfg.sample_rate
-            sample_index += frame_samples
-    finally:
-        proc.terminate()
+    failures = 0
+
+    while True:
+        proc = subprocess.Popen(_arecord_cmd(cfg), stdout=subprocess.PIPE)
+        if proc.stdout is None:  # pragma: no cover - defensive
+            raise RuntimeError("arecord produced no stdout pipe")
         try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:  # pragma: no cover
-            proc.kill()
+            while True:
+                raw = _read_exact(proc.stdout, frame_bytes)
+                if raw is None:
+                    break  # arecord exited; fall through to retry
+                failures = 0  # a healthy read resets the failure budget
+                frame = np.frombuffer(raw, dtype="<i2")
+                yield frame, sample_index / cfg.sample_rate
+                sample_index += frame_samples
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:  # pragma: no cover
+                proc.kill()
+
+        failures += 1
+        if failures > cfg.capture_max_retries:
+            raise RuntimeError(
+                f"arecord failed {failures} times (last returncode={proc.poll()})"
+            )
+        print(
+            f"  ! arecord ended (rc={proc.poll()}); retry {failures}/{cfg.capture_max_retries}"
+            f" in {cfg.capture_retry_backoff_s}s",
+            file=sys.stderr, flush=True,
+        )
+        time.sleep(cfg.capture_retry_backoff_s)
 
 
 def write_wav(path: Path, pcm_int16: np.ndarray, cfg: Config) -> None:

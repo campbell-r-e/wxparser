@@ -30,6 +30,12 @@ class Config:
     # Phase 1 fixed-window length (seconds). Phase 2 replaces this with VAD.
     window_seconds: float = float(_env("WX_WINDOW_SECONDS", "30"))
 
+    # Capture resilience: arecord can briefly fail to open the device (e.g. a
+    # restart race where the prior process hasn't released it). Retry instead of
+    # crashing the service.
+    capture_max_retries: int = int(_env("WX_CAPTURE_RETRIES", "12"))
+    capture_retry_backoff_s: float = float(_env("WX_CAPTURE_BACKOFF", "1.5"))
+
     # --- Phase 2: segmentation (energy VAD) ---
     frame_seconds: float = 0.02  # 20 ms analysis frames
     vad_threshold_dbfs: float = float(_env("WX_VAD_DBFS", "-40"))
