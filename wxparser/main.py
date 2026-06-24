@@ -26,12 +26,15 @@ import sys
 import threading
 from pathlib import Path
 
+from collections.abc import Iterator
+
 from .capture import stream_frames
 from .config import CONFIG, Config
 from .dedup import TextDeduper
 from .fingerprint import Fingerprinter, NoveltyGate
+from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
-from .store import append_report, build_report, load_recent_reports
+from .store import append_report, build_alert, build_report, load_recent_reports
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 
 _STOP = threading.Event()
@@ -71,6 +74,27 @@ def _save(
         print(f"    (supersedes {report['supersedes']})", flush=True)
     print(f"    {transcript.text}", flush=True)
     return True
+
+
+def _tee_to_same(
+    frames: Iterator[tuple], monitor: SAMEMonitor | None
+) -> Iterator[tuple]:
+    """Pass frames through to the segmenter while also feeding the SAME monitor."""
+    for frame, t in frames:
+        if monitor is not None:
+            monitor.feed(frame, t)
+        yield frame, t
+
+
+def _emit_alert(msg: SAMEMessage, cfg: Config) -> None:
+    record = build_alert(msg.to_record(), cfg)
+    append_report(record, cfg)
+    areas = ", ".join(msg.counties) if msg.counties else ", ".join(msg.areas)
+    print(
+        f"[{record['captured_at']}] ALERT {msg.event_label} ({msg.event}) "
+        f"— {areas} — {msg.purge_minutes}min — {msg.station.strip()}",
+        flush=True,
+    )
 
 
 def run_file(wav_path: Path, cfg: Config) -> int:
@@ -131,9 +155,13 @@ def run_live(cfg: Config, once: bool = False) -> int:
     worker = threading.Thread(target=_stt_worker, args=(q, cfg, once, deduper), daemon=True)
     worker.start()
 
+    monitor = SAMEMonitor(cfg, lambda m: _emit_alert(m, cfg)) if cfg.same_enabled else None
+    if monitor is not None:
+        print("  (SAME alert decoding enabled)", flush=True)
+
     n_seg = n_new = n_repeat = 0
     try:
-        for seg in segment_stream(stream_frames(cfg), cfg):
+        for seg in segment_stream(_tee_to_same(stream_frames(cfg), monitor), cfg):
             if _STOP.is_set():
                 break
             n_seg += 1

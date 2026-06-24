@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -17,6 +18,9 @@ from .config import Config
 from .stt import Transcript
 
 SCHEMA_VERSION = 1
+
+# Reports and SAME alerts are appended from different threads; serialize writes.
+_append_lock = threading.Lock()
 
 # Best-effort product typing via cheap keyword matching (a hint, not authoritative;
 # authoritative typing comes later from SAME decoding — PLAN §5.1, §8).
@@ -76,9 +80,25 @@ def build_report(
 def append_report(report: dict, cfg: Config) -> Path:
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     path = cfg.reports_jsonl
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(report, ensure_ascii=False) + "\n")
+    with _append_lock:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(report, ensure_ascii=False) + "\n")
     return path
+
+
+def build_alert(alert: dict, cfg: Config, captured_at: str | None = None) -> dict:
+    """Wrap a decoded SAME alert (same.SAMEMessage.to_record()) in an envelope."""
+    captured_at = captured_at or _utc_now_iso()
+    short = hashlib.sha1(alert.get("raw", "").encode("utf-8")).hexdigest()[:6]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "type": "same_alert",
+        "id": f"{captured_at}-{alert.get('event', 'XXX')}-{short}",
+        "station": cfg.station,
+        "frequency_mhz": cfg.frequency_mhz,
+        "captured_at": captured_at,
+        "alert": alert,
+    }
 
 
 def load_recent_reports(cfg: Config, n: int) -> list[dict]:

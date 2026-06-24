@@ -77,6 +77,13 @@ class Config:
     text_update_threshold: float = float(_env("WX_TEXT_UPDATE", "0.75"))  # >= same-type -> update
     text_history: int = int(_env("WX_TEXT_HISTORY", "100"))
 
+    # --- Phase 4: SAME alert decoding ---
+    same_enabled: bool = _env("WX_SAME", "1") == "1"
+    same_buffer_s: float = 13.0      # spans the 3 repeated header bursts
+    same_detect_s: float = 0.4       # window for the tone-concentration check
+    same_silence_s: float = 1.5      # quiet after a burst before we decode
+    same_band_ratio: float = 0.35    # min in-band energy fraction to call it SAME
+
     # --- Output ---
     out_dir: Path = Path(_env("WX_OUT_DIR", "transcripts"))
 
