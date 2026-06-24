@@ -228,9 +228,11 @@ class CityConditionsAggregator:
     (city, condition) is majority-voted independently.
     """
 
-    def __init__(self, maxlen: int = 15):
+    def __init__(self, maxlen: int = 15, primary_city: str = "Muncie"):
         self.maxlen = maxlen
-        self.current_city: str | None = None
+        # default to the station's home city so primary-city conditions attach even
+        # when the (gated) "At <City>, it was ..." header isn't re-transcribed.
+        self.current_city: str | None = primary_city
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
 
     def update(self, text: str) -> list[dict]:

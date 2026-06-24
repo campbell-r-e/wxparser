@@ -168,7 +168,7 @@ def run_live(cfg: Config, once: bool = False) -> int:
     deduper.prime(recent)
     if recent:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
-    aggregator = CityConditionsAggregator()
+    aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
     forecast = ForecastAggregator()
     db = Database(cfg)
     print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)

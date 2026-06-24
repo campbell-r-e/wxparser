@@ -21,6 +21,10 @@ class Config:
     # --- Station (KJY93 Muncie, IN) ---
     station: str = _env("WX_STATION", "KJY93")
     frequency_mhz: float = float(_env("WX_FREQ_MHZ", "162.425"))
+    # the station's home city — standalone "the temperature was N" sentences (no
+    # "at <City>") attach here, even when the spectrally-identical city header
+    # ("At Muncie, it was ...") gets skipped by the novelty gate.
+    primary_city: str = _env("WX_PRIMARY_CITY", "Muncie")
 
     # --- Audio capture (ALSA via arecord subprocess) ---
     alsa_device: str = _env("WX_ALSA_DEVICE", "plughw:0,0")
