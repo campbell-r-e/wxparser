@@ -41,6 +41,7 @@ from .db import Database
 from .dedup import TextDeduper
 from .extract import CityConditionsAggregator, ForecastAggregator, extract_alert_details
 from .fingerprint import Fingerprinter, NoveltyGate
+from .health import Heartbeat
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
 from .store import (
@@ -133,6 +134,7 @@ def _stt_worker(
     aggregator: CityConditionsAggregator,
     forecast: ForecastAggregator,
     db: Database | None,
+    hb: Heartbeat | None = None,
 ) -> None:
     while not _STOP.is_set():
         try:
@@ -148,8 +150,12 @@ def _stt_worker(
             transcript = transcribe_samples(seg.samples, cfg)
         except Exception as e:  # keep the service alive on a single bad segment
             print(f"  ! STT error: {e}", file=sys.stderr, flush=True)
+            if hb is not None:
+                hb.incr("stt_errors"); hb.set(queue_depth=q.qsize()); hb.flush()
             q.task_done()
             continue
+        if hb is not None:
+            hb.touch("last_stt_ok_at")
         if is_blank(transcript):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
@@ -159,9 +165,13 @@ def _stt_worker(
             for r in aggregator.update(text):
                 if db is not None:
                     db.record_reading(r, now)
+                if hb is not None:
+                    hb.touch("last_extraction_at")
                 print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
             if forecast.update(text) and db is not None:
                 db.write_forecast(forecast.snapshot(), now, city=forecast.city)
+                if hb is not None:
+                    hb.touch("last_extraction_at")
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if saved is not None and db is not None:
                 # structure the spoken narrative of warnings/statements so it can
@@ -175,6 +185,8 @@ def _stt_worker(
                               flush=True)
             if once and saved is not None:
                 _STOP.set()
+        if hb is not None:
+            hb.set(queue_depth=q.qsize()); hb.flush()
         q.task_done()
 
 
@@ -209,10 +221,12 @@ def run_live(cfg: Config, once: bool = False) -> int:
             break
     if readings or fcs:
         print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas)", flush=True)
+    hb = Heartbeat(cfg)
+    hb.flush()  # publish "starting" immediately so /health isn't down on boot
     q: "queue.PriorityQueue" = queue.PriorityQueue()
     seq = itertools.count()  # tie-breaker so PriorityQueue never compares payloads
     worker = threading.Thread(
-        target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db), daemon=True
+        target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db, hb), daemon=True
     )
     worker.start()
 
@@ -229,16 +243,20 @@ def run_live(cfg: Config, once: bool = False) -> int:
     if monitor is not None:
         print("  (SAME alert decoding enabled)", flush=True)
 
+    frames = stream_frames(cfg, on_retry=lambda: hb.incr("capture_restarts"))
     n_seg = n_new = n_repeat = 0
     try:
-        for seg in segment_stream(_tee_to_same(stream_frames(cfg), monitor), cfg):
+        for seg in segment_stream(_tee_to_same(frames, monitor), cfg):
             if _STOP.is_set():
                 break
             n_seg += 1
+            hb.touch("last_segment_at")  # a segment means the radio/capture is alive
             vec, digest = fp.compute(seg.samples)
             sim = gate.best_similarity(vec)
             if sim >= cfg.fp_similarity_threshold:
                 n_repeat += 1
+                hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
+                hb.flush()
                 print(
                     f"  . repeat {seg.duration_s:5.1f}s sim={sim:.3f} "
                     f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]",
@@ -247,8 +265,11 @@ def run_live(cfg: Config, once: bool = False) -> int:
                 continue
             gate.add(vec)
             n_new += 1
+            hb.touch("last_novel_at")
             prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL
             q.put((prio, next(seq), (seg, digest)))
+            hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
+            hb.flush()
             print(
                 f"  + novel  {seg.duration_s:5.1f}s sim={sim:.3f} -> queued"
                 f"{' PRIORITY' if prio == _PRIO_ALERT else ''} "

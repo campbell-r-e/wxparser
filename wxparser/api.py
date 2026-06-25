@@ -42,6 +42,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import CONFIG, Config
 from .db import Database
+from .health import Heartbeat, assess
 from .store import count_reports, query_reports, reports_since
 
 
@@ -281,12 +282,16 @@ class _Handler(BaseHTTPRequestHandler):
                             "details": self.db.alert_details_between(frm, to)})
             elif path == "/health":
                 total_alerts, _ = self.db.alerts_history(None, None, None, 1, 0)
-                self._send({"status": "ok", "generated_at": _now_iso(),
-                            "conditions": len(self.db.list_conditions()),
-                            "cities": len(self.db.cities()),
-                            "active_alerts": len(self.db.get_active_alerts()),
-                            "total_alerts": total_alerts,
-                            "forecast_cities": len(self.db.latest_forecasts())})
+                health = assess(Heartbeat.read(self.cfg), self.cfg)
+                health.update({"generated_at": _now_iso(),
+                               "conditions": len(self.db.list_conditions()),
+                               "cities": len(self.db.cities()),
+                               "active_alerts": len(self.db.get_active_alerts()),
+                               "total_alerts": total_alerts,
+                               "forecast_cities": len(self.db.latest_forecasts())})
+                # fail loud: non-200 so a monitor can alarm on HTTP status alone.
+                code = 200 if health["status"] == "ok" else 503
+                self._send(health, code)
             else:
                 self._send({"error": "not found", "path": path}, 404)
         except Exception as e:  # never crash on a bad read

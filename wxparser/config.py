@@ -128,6 +128,12 @@ class Config:
     # only surface a city once heard this many times (filters one-off STT garbage);
     # clients can override per request with ?min=
     api_min_sightings: int = int(_env("WX_MIN_SIGHTINGS", "2"))
+    # fail-loud health thresholds (roadmap: watchdog). Segments arrive every
+    # ~20-30s, so minutes of silence means the radio/capture has gone deaf; the
+    # heartbeat file is rewritten each segment, so a stale one means the capture
+    # process itself is down.
+    health_audio_silent_min: int = int(_env("WX_HEALTH_AUDIO_SILENT_MIN", "5"))
+    health_heartbeat_stale_min: int = int(_env("WX_HEALTH_HEARTBEAT_STALE_MIN", "3"))
     # a current-conditions reading older than this is flagged stale: it's a radio
     # transcriber, so a value is only as fresh as the last time the broadcast
     # aired it (infrequently-named cities/fields drift from reality between

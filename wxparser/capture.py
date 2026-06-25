@@ -73,12 +73,13 @@ def stream_windows(cfg: Config, work_dir: Path) -> Iterator[Path]:
             proc.kill()
 
 
-def stream_frames(cfg: Config) -> Iterator[tuple[np.ndarray, float]]:
+def stream_frames(cfg: Config, on_retry=None) -> Iterator[tuple[np.ndarray, float]]:
     """Yield (int16 mono frame, frame_start_seconds) continuously from the radio.
 
     Frames are `cfg.frame_seconds` long and feed the streaming segmenter. The
     monotonically increasing timestamp lets the segmenter assign wall-clock-ish
-    offsets to detected speech segments.
+    offsets to detected speech segments. `on_retry` (if given) is called once per
+    arecord re-spawn so the watchdog can count capture restarts.
     """
     frame_samples = max(1, int(cfg.frame_seconds * cfg.sample_rate))
     frame_bytes = frame_samples * 2 * cfg.channels
@@ -106,6 +107,8 @@ def stream_frames(cfg: Config) -> Iterator[tuple[np.ndarray, float]]:
                 proc.kill()
 
         failures += 1
+        if on_retry is not None:
+            on_retry()
         if failures > cfg.capture_max_retries:
             raise RuntimeError(
                 f"arecord failed {failures} times (last returncode={proc.poll()})"
