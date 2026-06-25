@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import Config
+from .data.stt_terms import correct_terms
 
 
 @dataclass
@@ -79,7 +80,9 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
 
     segments: list[Segment] = []
     for seg in data.get("transcription", []):
-        text = seg.get("text", "").strip()
+        # correct known STT word mis-hearings (e.g. "Pies"->"Highs") so stored
+        # transcripts and downstream extraction both see the right terms
+        text = correct_terms(seg.get("text", "").strip())
         if not text:
             continue
         off = seg.get("offsets", {})

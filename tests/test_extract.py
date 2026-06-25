@@ -185,3 +185,14 @@ def test_nearby_list_corrected_before_store():
     out = agg.update("Nearby, 64 at Deepan, 73 at Terrell, 55 at Monthsy.")
     cities = {r["city"] for r in out}
     assert cities == {"Dayton", "Terre Haute", "Muncie"}
+
+
+def test_correct_terms_pies_to_highs():
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Pies around 80.") == "Highs around 80."
+    assert correct_terms("with pies in the lower 90s") == "with highs in the lower 90s"
+    # forecast high is extracted only after the correction
+    fc = ForecastAggregator()
+    fc.update("Saturday, mostly sunny.")
+    fc.update(correct_terms("Pies around 80."))
+    assert {p["period"]: p for p in fc.snapshot()}["Saturday"]["high_f"] == 80
