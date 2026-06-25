@@ -42,6 +42,7 @@ from .dedup import TextDeduper
 from .extract import CityConditionsAggregator, ForecastAggregator, extract_alert_details
 from .fingerprint import Fingerprinter, NoveltyGate
 from .health import Heartbeat
+from .notify import post_webhook
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
 from .store import (
@@ -109,6 +110,10 @@ def _emit_alert(msg: SAMEMessage, cfg: Config, db: Database | None) -> None:
     append_report(record, cfg)
     if db is not None:
         db.write_alert(record)
+    # opt-in outbound push: tell a configured endpoint immediately (no-op if unset)
+    post_webhook(cfg, "alert", {"id": record.get("id"),
+                                "captured_at": record.get("captured_at"),
+                                **record.get("alert", {})})
     areas = ", ".join(msg.counties) if msg.counties else ", ".join(msg.areas)
     print(
         f"[{record['captured_at']}] ALERT {msg.event_label} ({msg.event}) "

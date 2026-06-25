@@ -36,6 +36,7 @@ wind, sky) or the stored keys (temperature_f, humidity_pct, ...).
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -118,6 +119,37 @@ class _Handler(BaseHTTPRequestHandler):
         return {"total": total, "count": returned, "limit": limit, "offset": offset,
                 "next_offset": nxt if nxt < total else None}
 
+    def _serve_sse(self, since: str | None) -> None:
+        """Server-Sent Events live feed (LAN-safe push — consumers connect *in*,
+        nothing is sent outbound). Polls the since-readers and emits new alerts,
+        observations, and forecasts as they land, ordered by capture time."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        watermark = since or _now_iso()
+        try:
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            while True:
+                events = (
+                    [("alert", a, a["captured_at"]) for a in self.db.alerts_since(watermark, 50)]
+                    + [("observation", o, o["captured_at"])
+                       for o in self.db.observations_since(watermark, 200)]
+                    + [("forecast", f, f["issued_at"])
+                       for f in self.db.forecasts_since(watermark, 200)])
+                for name, data, ts in sorted(events, key=lambda e: e[2]):
+                    self.wfile.write(
+                        f"event: {name}\ndata: {json.dumps(data)}\n\n".encode("utf-8"))
+                    if ts > watermark:
+                        watermark = ts
+                self.wfile.write(b": ping\n\n")  # keepalive + disconnect detection
+                self.wfile.flush()
+                time.sleep(self.cfg.stream_poll_s)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return  # client went away
+
     def _annotate_forecast_age(self, forecasts: list, q: dict) -> list:
         """Add age_minutes + stale to each forecast issuance (by issued_at)."""
         threshold = self._stale_after(q)
@@ -164,8 +196,10 @@ class _Handler(BaseHTTPRequestHandler):
                     "/now", "/cities", "/city/{city}",
                     "/conditions", "/conditions/{condition}", "/conditions/history",
                     "/forecast", "/forecast/history",
-                    "/transcripts", "/export?since=",
+                    "/transcripts", "/export?since=", "/stream",
                     "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
+            elif path == "/stream":
+                self._serve_sse(q.get("since"))
             elif path == "/now":
                 city = q.get("city", self.cfg.primary_city)
                 conds = self._annotate_age(

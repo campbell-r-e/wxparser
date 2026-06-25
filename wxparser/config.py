@@ -134,6 +134,12 @@ class Config:
     # process itself is down.
     health_audio_silent_min: int = int(_env("WX_HEALTH_AUDIO_SILENT_MIN", "5"))
     health_heartbeat_stale_min: int = int(_env("WX_HEALTH_HEARTBEAT_STALE_MIN", "3"))
+    # Outbound push (roadmap). OFF by default so the box stays fully offline; set a
+    # URL (e.g. a LAN mesh gateway) to POST each new SAME alert as JSON. The SSE
+    # /stream endpoint needs nothing here — consumers connect inbound.
+    webhook_url: str = _env("WX_WEBHOOK_URL", "")
+    webhook_timeout_s: float = float(_env("WX_WEBHOOK_TIMEOUT", "5"))
+    stream_poll_s: float = float(_env("WX_STREAM_POLL_S", "3"))
     # a current-conditions reading older than this is flagged stale: it's a radio
     # transcriber, so a value is only as fresh as the last time the broadcast
     # aired it (infrequently-named cities/fields drift from reality between
