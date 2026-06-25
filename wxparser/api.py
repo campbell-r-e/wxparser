@@ -219,7 +219,8 @@ class _Handler(BaseHTTPRequestHandler):
                      if r["city"].lower() != city.lower()], dict(q, fresh="")))
                 forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
                 alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
-                self._send({"generated_at": _now_iso(), "city": city,
+                self._send({"generated_at": _now_iso(),
+                            "station": self.cfg.station, "city": city,
                             "conditions": conds, "roundup": roundup,
                             "forecast": forecast, "alerts": alerts})
             elif path == "/cities":
@@ -331,6 +332,7 @@ class _Handler(BaseHTTPRequestHandler):
                 total_alerts, _ = self.db.alerts_history(None, None, None, 1, 0)
                 health = assess(Heartbeat.read(self.cfg), self.cfg)
                 health.update({"generated_at": _now_iso(),
+                               "station": self.cfg.station,
                                "conditions": len(self.db.list_conditions()),
                                "cities": len(self.db.cities()),
                                "active_alerts": len(self.db.get_active_alerts()),

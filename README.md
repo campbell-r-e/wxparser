@@ -9,9 +9,11 @@ Audio is tapped from a dedicated weather radio (a Reecom R-1630) into the PC's m
 RF reception is handled in hardware and the entire software stack stays MIT-licensed and
 permissive.
 
-**Fully offline at runtime:** no network calls of any kind. Transcription (whisper.cpp) and
-SAME decoding run locally, lookup tables (FIPS→county) are bundled, and the data store
-(PostgreSQL) runs on the same box. Every dependency is permissively licensed — notably the
+**Fully offline at runtime:** no network calls of any kind out of the box. Transcription
+(whisper.cpp) and SAME decoding run locally, lookup tables (FIPS→county) are bundled, and the
+data store (PostgreSQL) runs on the same box. (The only way out is opt-in: setting
+`WX_WEBHOOK_URL` enables outbound alert POSTs; the inbound SSE `/stream` and the query API make
+no outbound calls.) Every dependency is permissively licensed — notably the
 Postgres driver is `pg8000` (pure-Python, **BSD**) rather than the LGPL `psycopg`, and audio
 capture is the `arecord` subprocess (a GPL tool used across a process boundary, never linked).
 
@@ -199,6 +201,34 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
 | `WX_PG_HOST/PORT/DATABASE/USER` | `127.0.0.1/5432/wxparser/wxparser` | Postgres (local trust) |
 | `WX_API_HOST` / `WX_API_PORT` | `0.0.0.0` / `8080` | API bind |
+| `WX_HEALTH_AUDIO_SILENT_MIN` | `5` | `/health` flags `degraded` after this many minutes of no audio (deaf radio) |
+| `WX_HEALTH_HEARTBEAT_STALE_MIN` | `3` | `/health` flags `down` if the pipeline heartbeat is older than this |
+| `WX_WEBHOOK_URL` | `""` (off) | when set, POST each new SAME alert here (opt-in outbound push) |
+| `WX_STREAM_POLL_S` | `3` | `/stream` (SSE) poll interval |
+| `WX_STALE_PRUNE_HOURS` | `24` | nightly prune drops non-home cities not heard in this long |
+
+## Multi-transmitter (run N instances + aggregate)
+
+One instance = one transmitter. To cover several NWR stations, run **one instance per
+transmitter**, each fully isolated by env vars, and aggregate at the API layer (every `/now`
+and `/health` response carries its `station` so a fan-out consumer can label them):
+
+```bash
+# instance A — KJY93 (Muncie)
+WX_STATION=KJY93 WX_PRIMARY_CITY=Muncie WX_ALSA_DEVICE=plughw:0,0 \
+  WX_PG_DATABASE=wxparser_kjy93 WX_OUT_DIR=transcripts/kjy93 WX_API_PORT=8080 \
+  python3 -m wxparser.main   # + a matching wxparser.api on :8080
+
+# instance B — a second station on a second radio/sound card
+WX_STATION=WXK42 WX_PRIMARY_CITY=Anderson WX_ALSA_DEVICE=plughw:1,0 \
+  WX_PG_DATABASE=wxparser_wxk42 WX_OUT_DIR=transcripts/wxk42 WX_API_PORT=8081 \
+  python3 -m wxparser.main   # + a matching wxparser.api on :8081
+```
+
+Each instance has its own capture device, Postgres database, transcript log, and API port —
+no shared state, no contention. A consumer (dashboard, mesh publisher) fans out to each
+`:PORT/now` (or pages `/export?since=` per instance) and merges by `station`. Template the
+systemd units per instance (`wxparser@.service`) or just set the env block per unit.
 
 ## Tests
 
@@ -206,8 +236,11 @@ Run against the `wxparser_test` PostgreSQL database (created by `setup-postgres.
 
 ```bash
 python3 -m tests.test_same      # SAME encode/decode round-trip (clean + noisy)
-python3 -m tests.test_extract   # multi-city extraction + repeat-voting
-python3 -m tests.test_db        # PostgreSQL store + history + sightings filter
+python3 -m tests.test_extract   # multi-city extraction + repeat-voting + forecast
+python3 -m tests.test_db        # PostgreSQL store, history, pagination, export readers
+python3 -m tests.test_health    # fail-loud pipeline health assessment
+python3 -m tests.test_trust     # STT trust scoring
+python3 -m tests.test_notify    # opt-in webhook push
 ```
 
 ## License
