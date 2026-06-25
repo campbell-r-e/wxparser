@@ -135,3 +135,50 @@ def load_recent_reports(cfg: Config, n: int) -> list[dict]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def query_reports(
+    cfg: Config,
+    limit: int = 100,
+    frm: str | None = None,
+    to: str | None = None,
+    q: str | None = None,
+    product: str | None = None,
+    max_scan: int = 20000,
+) -> list[dict]:
+    """Raw transcript records from reports.jsonl, most-recent-first.
+
+    Scans at most the last `max_scan` lines (the file is append-only and may grow
+    unbounded), then filters. `frm`/`to` are inclusive ISO-8601 strings compared
+    lexically — safe because every captured_at uses the same fixed Z format.
+    `q` is a case-insensitive substring match on the transcript text; `product`
+    matches product_type exactly.
+    """
+    path = cfg.reports_jsonl
+    if not path.exists():
+        return []
+    tail: deque[str] = deque(maxlen=max_scan)
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tail.append(line)
+    ql = q.lower() if q else None
+    out: list[dict] = []
+    for line in tail:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ca = rec.get("captured_at", "")
+        if frm and ca < frm:
+            continue
+        if to and ca > to:
+            continue
+        if product and rec.get("product_type") != product:
+            continue
+        if ql and ql not in (rec.get("text") or "").lower():
+            continue
+        out.append(rec)
+    out.reverse()  # newest first
+    return out[: max(1, limit)]

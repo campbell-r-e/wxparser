@@ -100,6 +100,10 @@ GET /conditions/history?condition=&city=&from=&to=&limit=
 GET /forecast                    → latest forecast for all heard cities/areas
 GET /forecast/history?from=&to=&city=
                                  → historical forecast predictions between dates
+GET /transcripts?from=&to=&q=&product=&limit=
+                                 → raw transcript records (newest first); q= is a
+                                   case-insensitive text search, product= filters on
+                                   product_type (current_conditions, zone_forecast, ...)
 GET /alerts/active               → SAME alerts not yet expired
 GET /health                      → liveness + counts
 ```
@@ -108,6 +112,8 @@ GET /health                      → liveness + counts
 surface a city once it's been **heard ≥2 times** (`WX_MIN_SIGHTINGS`, override per request
 with `?min=`) so STT-garbage city names are suppressed; `/conditions/history` keeps the raw
 data. Served from PostgreSQL over the LAN, e.g. `curl http://<host>:8080/conditions/temperature`.
+`/transcripts` reads the raw JSONL transcript log directly (e.g.
+`curl 'http://<host>:8080/transcripts?product=tornado_warning&limit=20'`).
 
 ## Deploy
 

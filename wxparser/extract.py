@@ -213,6 +213,14 @@ _RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")
 # "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
 # literal " area" suffix so the city group can't swallow the word "area")
 _RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
+# Climate-summary / almanac recaps quote PAST or normal values, not live
+# conditions: "Yesterday's low temperature was 55 degrees", "normal high is 85",
+# "record low ...". Their "(high|low) temperature was N degrees" is a substring
+# match for _RE_TEMP, so without this guard they get ingested as the primary
+# city's *current* temperature (e.g. Muncie current temp wrongly set to 55).
+_RE_RECAP = re.compile(
+    r"\b(climate summary|yesterday|normal (?:high|low)|record (?:high|low)"
+    r"|(?:high|low) temperature was|degree days?)\b", re.I)
 
 
 def _norm_city(name: str) -> str:
@@ -247,6 +255,11 @@ class CityConditionsAggregator:
         # standalone conditions ("the temperature was N", no "at <City>") are always
         # the station's home city; attribute them there rather than to a possibly
         # mis-heard header city ("At Monthsy ...").
+        # ...but skip climate-summary/almanac recaps — those quote yesterday's or
+        # normal highs/lows, not live conditions, and would poison the primary
+        # city's current readings.
+        if _RE_RECAP.search(text):
+            return readings
         for cond, val in extract_observation(text).items():
             readings.append(self._reading(self.primary_city, cond, val))
         return readings

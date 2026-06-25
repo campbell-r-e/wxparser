@@ -9,6 +9,8 @@ Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
                                           -> historical readings between times
     GET /forecast                         -> latest forecast for all heard cities
     GET /forecast/history?from=&to=&city= -> historical forecast predictions
+    GET /transcripts?from=&to=&q=&product=&limit=
+                                          -> raw transcript records (newest first)
     GET /alerts/active                    -> SAME alerts not yet expired
     GET /health                           -> liveness + counts
 
@@ -25,6 +27,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import CONFIG, Config
 from .db import Database
+from .store import query_reports
 
 # friendly condition name -> stored key
 _CONDITION_ALIASES = {
@@ -41,6 +44,7 @@ def _canon(condition: str) -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     db: Database = None
+    cfg: Config = None
     min_sightings: int = 2
     protocol_version = "HTTP/1.1"
 
@@ -67,7 +71,8 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/":
                 self._send({"endpoints": [
                     "/conditions", "/conditions/{condition}", "/conditions/history",
-                    "/forecast", "/forecast/history", "/alerts/active", "/health"]})
+                    "/forecast", "/forecast/history", "/transcripts",
+                    "/alerts/active", "/health"]})
             elif path == "/conditions":
                 self._send({"min_sightings": self._min(q),
                             "conditions": self.db.list_conditions(self._min(q))})
@@ -92,6 +97,17 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"from": q.get("from"), "to": q.get("to"), "city": q.get("city"),
                             "forecasts": self.db.forecast_history(
                                 q.get("from"), q.get("to"), q.get("city"))})
+            elif path == "/transcripts":
+                try:
+                    limit = min(1000, max(1, int(q.get("limit", 100))))
+                except ValueError:
+                    limit = 100
+                reports = query_reports(
+                    self.cfg, limit=limit, frm=q.get("from"), to=q.get("to"),
+                    q=q.get("q"), product=q.get("product"))
+                self._send({"from": q.get("from"), "to": q.get("to"),
+                            "q": q.get("q"), "product": q.get("product"),
+                            "count": len(reports), "transcripts": reports})
             elif path == "/alerts/active":
                 self._send({"alerts": self.db.get_active_alerts()})
             elif path == "/health":
@@ -110,6 +126,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 def serve(cfg: Config = CONFIG) -> None:
     _Handler.db = Database(cfg)
+    _Handler.cfg = cfg
     _Handler.min_sightings = cfg.api_min_sightings
     server = ThreadingHTTPServer((cfg.api_host, cfg.api_port), _Handler)
     print(
