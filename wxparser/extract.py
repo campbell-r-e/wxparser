@@ -206,9 +206,12 @@ class ForecastAggregator:
 # Generic multi-city extraction (Phase 6+, city-agnostic)
 # --------------------------------------------------------------------------- #
 _CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
-# "At Muncie, it was clear." / "At Muncie, the temperature was ..." -> primary city
+# "At Muncie, it was clear." / "At Muncie, the temperature was ..." -> primary city.
+# STT routinely mis-hears the lead-in "at" as "it"/"in" ("...it Muncie, it was
+# mostly sunny..."), so accept those; the city must still be capitalized and
+# followed by observation framing, so "it was ..." can't match on its own.
 _RE_CITY_HEADER = re.compile(
-    rf"\bat ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
+    rf"\b(?:at|it|in) ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
     rf"barometric|wind|dew))", re.I)
 # "... 56 at Anderson, 63 at Portland ..." -> per-city temperatures
 _RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")

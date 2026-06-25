@@ -149,6 +149,22 @@ def test_primary_obs_with_trailing_roundup_in_same_segment():
     assert m[("Marion", "temperature_f")] == 74
 
 
+def test_home_header_tolerates_at_misheard_as_it():
+    # STT hears "At Muncie, it was..." as "it Muncie, it was..."; the home obs
+    # must still be recognized even with a trailing roundup in the same segment.
+    agg = CityConditionsAggregator()
+    out = agg.update(
+        "At 1 p.m., it Muncie, it was mostly sunny. The temperature was 77 degrees, "
+        "and the relative humidity 68%. The barometric pressure was 29.97 inches and "
+        "steady. Nearby, with a temperature of 74 at Indianapolis, 76 at Marion."
+    )
+    m = {(r["city"], r["condition"]): r["value"] for r in out}
+    assert m[("Muncie", "temperature_f")] == 77
+    assert m[("Muncie", "sky")] == "mostly sunny"
+    assert m[("Marion", "temperature_f")] == 76
+    assert ("Indianapolis", "temperature_f") in m
+
+
 def test_conditions_wind_direction_extracted():
     # regression: the alert wind-speed regex shadowed _RE_WIND, so current-
     # conditions wind direction never extracted.
