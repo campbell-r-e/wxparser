@@ -1,0 +1,13 @@
+[Unit]
+Description=wxparser — age out very stale out-of-state city readings (>24h)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=creed
+Group=creed
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/creed/wxparser
+ExecStart=/usr/bin/python3 /home/creed/wxparser/deploy/prune_stale_readings.py

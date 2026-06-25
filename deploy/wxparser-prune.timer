@@ -1,0 +1,10 @@
+[Unit]
+Description=Run wxparser stale-reading prune nightly
+
+[Timer]
+# 01:00, after the nightly city-name (00:00) and term (00:30) cleanups.
+OnCalendar=*-*-* 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
