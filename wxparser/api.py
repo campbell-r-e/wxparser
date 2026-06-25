@@ -5,6 +5,9 @@ Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
 
     GET /now?city=                        -> one-call snapshot: a city's full ob,
                                              the roundup, latest forecast, alerts
+    GET /bulletin?city=                   -> plain-text read-on-air net bulletin (EmComm)
+    GET /sitrep?city=                     -> plain-text situation report (Winlink/print)
+    GET /aprs?city=&format=text           -> APRS weather report + alert bulletins
     GET /cities                           -> cities with data + freshness
     GET /city/{city}                      -> every current condition for one city
     GET /conditions                       -> available conditions (index)
@@ -43,6 +46,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import CONFIG, Config
 from .db import Database
+from .formats import aprs_bulletins, aprs_weather, net_bulletin, sitrep
 from .health import Heartbeat, assess
 from .store import count_reports, query_reports, reports_since
 from .trust import mark as mark_trust
@@ -195,6 +199,29 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text(self, text: str, status: int = 200) -> None:
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _snapshot(self, q: dict) -> dict:
+        """The /now data — current ob + roundup + forecast + active alerts — reused
+        by the human/RF format endpoints."""
+        city = q.get("city", self.cfg.primary_city)
+        conds = mark_trust(self._annotate_age(
+            self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh="")))
+        roundup = mark_trust(self._annotate_age(
+            [r for r in self.db.latest_for_condition("temperature_f", self._min(q))
+             if r["city"].lower() != city.lower()], dict(q, fresh="")))
+        forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
+        alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
+        return {"generated_at": _now_iso(), "station": self.cfg.station, "city": city,
+                "conditions": conds, "roundup": roundup,
+                "forecast": forecast, "alerts": alerts}
+
     def do_GET(self) -> None:  # noqa: N802
         u = urlsplit(self.path)
         path = u.path.rstrip("/") or "/"
@@ -203,7 +230,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 self._send({"endpoints": [
-                    "/now", "/cities", "/city/{city}",
+                    "/now", "/bulletin", "/sitrep", "/aprs",
+                    "/cities", "/city/{city}",
                     "/conditions", "/conditions/{condition}", "/conditions/history",
                     "/forecast", "/forecast/history",
                     "/transcripts", "/export?since=", "/stream",
@@ -211,18 +239,20 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/stream":
                 self._serve_sse(q.get("since"))
             elif path == "/now":
-                city = q.get("city", self.cfg.primary_city)
-                conds = mark_trust(self._annotate_age(
-                    self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh="")))
-                roundup = mark_trust(self._annotate_age(
-                    [r for r in self.db.latest_for_condition("temperature_f", self._min(q))
-                     if r["city"].lower() != city.lower()], dict(q, fresh="")))
-                forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
-                alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
-                self._send({"generated_at": _now_iso(),
-                            "station": self.cfg.station, "city": city,
-                            "conditions": conds, "roundup": roundup,
-                            "forecast": forecast, "alerts": alerts})
+                self._send(self._snapshot(q))
+            elif path == "/bulletin":
+                self._send_text(net_bulletin(self._snapshot(q)))
+            elif path == "/sitrep":
+                self._send_text(sitrep(self._snapshot(q)))
+            elif path == "/aprs":
+                snap = self._snapshot(q)
+                payload = {"station": snap["station"], "generated_at": snap["generated_at"],
+                           "weather_report": aprs_weather(snap),
+                           "bulletins": aprs_bulletins(snap)}
+                if q.get("format") == "text":
+                    self._send_text("\n".join([payload["weather_report"], *payload["bulletins"]]) + "\n")
+                else:
+                    self._send(payload)
             elif path == "/cities":
                 self._send({"generated_at": _now_iso(),
                             "cities": self.db.cities(self._min(q))})
