@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter, deque
+
+from .data.place_names import correct_place
 from dataclasses import dataclass
 
 # --- small spoken-number parser (whisper sometimes spells numbers out) ------- #
@@ -224,7 +226,9 @@ _RE_RECAP = re.compile(
 
 
 def _norm_city(name: str) -> str:
-    return name.strip().title()
+    # title-case, then fold known STT mis-hearings to the canonical spelling so
+    # the store only ever sees correct city names (no nightly cleanup needed).
+    return correct_place(name.strip().title())
 
 
 class CityConditionsAggregator:

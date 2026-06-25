@@ -167,3 +167,21 @@ def test_extract_alert_details_svr_hail_wind():
 
 def test_extract_alert_details_none_on_plain_conditions():
     assert extract_alert_details("At Muncie, it was clear with a temperature of 73 degrees.") == {}
+
+
+def test_norm_city_autocorrects_stt_mishearings():
+    from wxparser.extract import _norm_city
+    assert _norm_city("Monthsy") == "Muncie"
+    assert _norm_city("terrell") == "Terre Haute"
+    assert _norm_city("Lyle") == "Lima"
+    assert _norm_city("South End") == "South Bend"
+    assert _norm_city("Deepan") == "Dayton"
+    # an unrecognized name is just title-cased, not mangled
+    assert _norm_city("anderson") == "Anderson"
+
+
+def test_nearby_list_corrected_before_store():
+    agg = CityConditionsAggregator()
+    out = agg.update("Nearby, 64 at Deepan, 73 at Terrell, 55 at Monthsy.")
+    cities = {r["city"] for r in out}
+    assert cities == {"Dayton", "Terre Haute", "Muncie"}

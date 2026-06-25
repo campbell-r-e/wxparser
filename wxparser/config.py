@@ -17,16 +17,14 @@ def _env(name: str, default: str) -> str:
 
 
 # Local place-name vocabulary for the whisper prompt (KJY93 / east-central
-# Indiana coverage + the regional roundup cities). Natural-text form biases the
-# decoder toward these proper nouns without forcing them.
+# Indiana coverage). Kept to ~50 tokens so it fits whisper_prompt_max_ctx without
+# truncation. Prioritizes the county + town names that appear in *warnings* (the
+# regional-roundup cities are already handled by data.place_names corrections).
 _DEFAULT_STT_PROMPT = (
     "NOAA Weather Radio for east central Indiana. Counties: Delaware, Madison, "
-    "Henry, Randolph, Jay, Blackford, Grant, Wayne, Hancock, Rush, Tipton, "
-    "Hamilton, Howard, Wells, Adams. Cities: Muncie, Anderson, Marion, Portland, "
-    "Hartford City, Winchester, New Castle, Richmond, Yorktown, Albany, Eaton, "
-    "Dunkirk, Alexandria, Elwood, Gas City, Upland, Indianapolis, Fort Wayne, "
-    "Lafayette, Bloomington, Terre Haute, Evansville, Shelbyville, Dayton, "
-    "Cincinnati, Louisville, Champaign, Lima, Chicago."
+    "Henry, Randolph, Jay, Blackford, Grant, Wayne, Tipton, Hamilton, Howard. "
+    "Towns: Muncie, Anderson, Marion, Portland, Winchester, New Castle, Richmond, "
+    "Yorktown, Albany, Dunkirk, Alexandria, Gas City, Hartford City."
 )
 
 
@@ -61,9 +59,16 @@ class Config:
     # low so any genuinely gap-less stretch still transcribes fast and the gate
     # isn't fed un-dedupable 30s blocks.
     vad_threshold_dbfs: float = float(_env("WX_VAD_DBFS", "-35"))
-    vad_min_silence_s: float = float(_env("WX_VAD_MIN_SILENCE", "0.4"))
+    # Each STT call carries a fixed ~3 s model-init overhead, so FEWER, LONGER
+    # segments transcribe the same audio far faster than many short ones (six 2 s
+    # segments ≈ 32 s of STT; one 28 s segment ≈ 33 s — half the wall-clock).
+    # With base.en-q5_1 we coalesce to PRODUCT level: split only on the ~1 s
+    # inter-product gaps, not the ~0.4 s inter-sentence ones. Bonus: whole-product
+    # segments fingerprint-match across loop repeats far better than sentence
+    # fragments, so the novelty gate drops more before STT ever runs.
+    vad_min_silence_s: float = float(_env("WX_VAD_MIN_SILENCE", "1.0"))
     vad_min_speech_s: float = float(_env("WX_VAD_MIN_SPEECH", "1.0"))
-    vad_max_segment_s: float = float(_env("WX_VAD_MAX_SEGMENT", "12"))
+    vad_max_segment_s: float = float(_env("WX_VAD_MAX_SEGMENT", "28"))
     vad_pad_s: float = 0.2  # keep a little audio either side of speech
 
     # --- Phase 2: audio fingerprint + novelty gate ---
@@ -79,8 +84,10 @@ class Config:
     whisper_bin: Path = Path(
         _env("WX_WHISPER_BIN", str(Path.home() / "whisper.cpp/build/bin/whisper-cli"))
     )
+    # base.en quantized to q5_1: full-base.en accuracy at ~tiny speed on this CPU
+    # (quantization cuts the memory bandwidth this old box is bottlenecked on).
     whisper_model: Path = Path(
-        _env("WX_WHISPER_MODEL", str(Path.home() / "whisper.cpp/models/ggml-tiny.en.bin"))
+        _env("WX_WHISPER_MODEL", str(Path.home() / "whisper.cpp/models/ggml-base.en-q5_1.bin"))
     )
     whisper_threads: int = int(_env("WX_WHISPER_THREADS", "2"))
     whisper_engine_name: str = "whisper.cpp"
@@ -97,13 +104,11 @@ class Config:
     # for minutes. Per-segment STT errors are cleaned up by repeat-voting (§8).
     whisper_fast_decode: bool = _env("WX_FAST_DECODE", "1") == "1"
     # Vocabulary bias (whisper --prompt): seeds the decoder with the local place
-    # names it would otherwise mangle (proper nouns — "Muncie"->"Monthsy", county
-    # names in warnings, etc.). OFF by default: empirically tiny.en degenerates to
-    # "The the..." with ANY initial prompt (its text context is too small to
-    # absorb one), so a prompt destroys transcription on this model. Wired and
-    # ready for a larger model — enable with WX_STT_PROMPT (e.g. set it to
-    # _DEFAULT_STT_PROMPT) once running base.en/small.en, which honor prompts.
-    whisper_prompt: str = _env("WX_STT_PROMPT", "")
+    # names it would otherwise mangle (proper nouns — county/town names in
+    # warnings). ON with base.en, which absorbs the prompt cleanly. (tiny.en
+    # degenerated to "The the..." with ANY prompt — too small a text context — so
+    # this MUST stay empty if WX_WHISPER_MODEL is pointed back at tiny.en.)
+    whisper_prompt: str = _env("WX_STT_PROMPT", _DEFAULT_STT_PROMPT)
     # Carried-context cap used alongside the prompt: 0 (fast-decode default) caps
     # the repetition-loop pathology but also suppresses --prompt, so when a prompt
     # is set we keep a small bounded context instead.

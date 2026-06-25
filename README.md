@@ -47,16 +47,16 @@ stretches where the loop just repeats.
 | Module | Role |
 |---|---|
 | `capture.py` | persistent `arecord` → frames / WAVs; retries on transient device-busy |
-| `segment.py` | energy-VAD segmentation (splits on inter-sentence silence) |
+| `segment.py` | energy-VAD segmentation (coalesces to product-level on inter-product silence) |
 | `fingerprint.py` | numpy mel-spectral fingerprint + cosine **novelty gate** |
-| `stt.py` | whisper.cpp `whisper-cli` wrapper (dynamic `--audio-ctx`, greedy decode) |
+| `stt.py` | whisper.cpp `whisper-cli` wrapper (`base.en-q5_1`, dynamic `--audio-ctx`, greedy decode, vocabulary prompt) |
 | `dedup.py` | text-level dedup + `supersedes` update chains |
-| `extract.py` | multi-city current-conditions + forecast extraction, repeat-voting |
+| `extract.py` | multi-city current-conditions + forecast extraction, repeat-voting, spoken-alert detail parsing |
 | `same.py` | SAME AFSK decoder + FIPS/event lookups + live burst monitor |
 | `db.py` | PostgreSQL store (pg8000) |
 | `api.py` | stdlib-http LAN query API |
 | `main.py` | wiring + service loop |
-| `data/` | bundled `fips.json` (US counties) + SAME event/originator codes |
+| `data/` | bundled `fips.json` (US counties), SAME event/originator codes, `place_names.py` STT mis-hearing corrections |
 
 ## Data products
 
@@ -65,7 +65,9 @@ stretches where the loop just repeats.
 - **Current conditions** — temp / dewpoint / humidity / pressure / wind / sky, extracted from
   the voice and **majority-voted across repeats** to harden numbers against STT slips. Stored
   **per city**: the station's primary city (Muncie) gets the full set; other cities named in
-  the broadcast (the "Nearby …" list and regional temp roundup) get temperature.
+  the broadcast (the "Nearby …" list and regional temp roundup) get temperature. City names are
+  **auto-corrected at extraction time** (`data/place_names.py`) so the store never sees STT
+  mis-hearings (e.g. "Monthsy"→Muncie, "Deepan"→Dayton).
 - **Forecast** — zone-forecast periods (highs/lows, precip %, sky) with computed
   `valid_from`/`valid_to`, tagged with the area they cover.
 - **Alerts** — two layers. The **SAME header** is decoded straight from the audio (event,
@@ -153,11 +155,12 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 |---|---|---|
 | `WX_STATION` / `WX_PRIMARY_CITY` | `KJY93` / `Muncie` | station + home city |
 | `WX_ALSA_DEVICE` | `plughw:0,0` | capture device |
-| `WX_WHISPER_BIN` / `WX_WHISPER_MODEL` | `~/whisper.cpp/...` | STT binary + model |
+| `WX_WHISPER_BIN` / `WX_WHISPER_MODEL` | `~/whisper.cpp/...ggml-base.en-q5_1.bin` | STT binary + model (q5_1 = base.en accuracy at ~tiny speed) |
 | `WX_WHISPER_THREADS` | `2` | STT threads |
-| `WX_STT_PROMPT` | `` (off) | whisper vocabulary-bias prompt for local place names; **off by default** — `tiny.en` degenerates with any prompt, enable only on `base.en`/`small.en` |
+| `WX_STT_PROMPT` | local place names (on) | whisper vocabulary-bias prompt; **must be `""` if you point `WX_WHISPER_MODEL` back at `tiny.en`**, which degenerates with any prompt |
 | `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
-| `WX_VAD_DBFS` | `-40` | VAD speech threshold |
+| `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
+| `WX_VAD_DBFS` | `-35` | VAD speech threshold |
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
 | `WX_PG_HOST/PORT/DATABASE/USER` | `127.0.0.1/5432/wxparser/wxparser` | Postgres (local trust) |
 | `WX_API_HOST` / `WX_API_PORT` | `0.0.0.0` / `8080` | API bind |
