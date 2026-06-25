@@ -89,6 +89,13 @@ def test_forecast_aggregator_builds_periods():
     assert periods["Tonight"]["precip_pct"] == 70
     assert periods["Saturday"]["high_f"] == 80
     assert periods["Saturday"]["sky"] == "mostly sunny"
+
+
+def test_precip_accepts_percent_sign_and_word():
+    # whisper emits both "40%" and "40 percent" across runs; extract both.
+    assert extract_forecast_fields("Chance of rain 40%.")["precip_pct"] == 40
+    assert extract_forecast_fields("Chance of rain 40 percent.")["precip_pct"] == 40
+    assert extract_forecast_fields("Chance of precipitation 90%.")["precip_pct"] == 90
     # a high mentioned under Tonight must not leak into Saturday and vice-versa
     assert "high_f" not in periods["Tonight"]
 

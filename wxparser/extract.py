@@ -116,7 +116,7 @@ _RE_PERIOD = re.compile(
 _RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_PRECIP = re.compile(
-    r"chance of (?:rain|precipitation|showers|snow)\s+(\d{1,3})\s*percent", re.I)
+    r"chance of (?:rain|precipitation|showers|snow)\s+(\d{1,3})\s*(?:%|percent)", re.I)
 _TEMP_OFFSET = {"lower": 1, "low": 1, "mid": 5, "middle": 5, "upper": 8}
 
 
