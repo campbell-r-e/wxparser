@@ -117,11 +117,38 @@ _DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
 _RE_PERIOD = re.compile(
     rf"^\s*(today|tonight|this afternoon|this evening|this morning|overnight|"
     rf"(?:{_DAYS})(?: night)?|rest of (?:today|tonight))\b", re.I)
+# Period names as they appear *anywhere* in the narrative.
+_PERIOD_NAME = (
+    rf"this (?:afternoon|evening|morning)|tonight|today|overnight"
+    rf"|rest of (?:today|tonight)|(?:{_DAYS})(?:\s+night)?")
+# A period *header* is the name at a clause boundary (segment start, after a
+# ". "/", " or "for "/"forecast for ... area"). VAD chops the forecast narrative
+# mid-stream and prefixes lead-ins ("And now we look at the forecast for the
+# Muncie area. This afternoon, ..."), so headers are almost never at the literal
+# segment start, and one segment routinely spans several periods ("...Saturday
+# night. ... lows ..., Sunday, partly cloudy ..."). Splitting on these lets each
+# period own only the fields stated in its own span.
+_RE_PERIOD_HDR = re.compile(
+    rf"(?:^|[.,]\s+|\bfor\s+)({_PERIOD_NAME})\b(?=[\s,.]|$)", re.I)
+# Climate outlook / almanac — NOT a daily forecast ("8 to 14 day outlook ...
+# temperatures above normal", "normal high is 85"). Parsing it as periods invents
+# bogus far-future days and phantom highs, so skip the whole segment.
+_RE_FC_OUTLOOK = re.compile(
+    r"\b(?:\d{1,2}\s*(?:to|-|through)\s*\d{1,2}[\s-]*day|outlook|"
+    r"(?:above|below|near)\s+normal|normal\s+(?:high|low)|climate|degree days?)\b",
+    re.I)
 _RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_PRECIP = re.compile(
     r"chance of (?:rain|precipitation|showers|snow)\s+(\d{1,3})\s*(?:%|percent)", re.I)
 _TEMP_OFFSET = {"lower": 1, "low": 1, "mid": 5, "middle": 5, "upper": 8}
+
+
+_DECADE_WORDS = {
+    "twenties": 20, "thirties": 30, "forties": 40, "fifties": 50,
+    "sixties": 60, "seventies": 70, "eighties": 80, "nineties": 90,
+}
+_RE_DECADE_WORD = "|".join(_DECADE_WORDS)
 
 
 def parse_temp_value(phrase: str) -> int | None:
@@ -130,6 +157,12 @@ def parse_temp_value(phrase: str) -> int | None:
         return int(m.group(1))
     if m := re.search(r"(lower|low|mid|middle|upper)\s+(\d{1,3})s", phrase):
         return int(m.group(2)) + _TEMP_OFFSET[m.group(1)]
+    # spelled-out decades: STT renders "lower 60s" as "lower sixties" about as
+    # often as the digit form, so the lows/highs go missing without this.
+    if m := re.search(rf"(lower|low|mid|middle|upper)\s+({_RE_DECADE_WORD})", phrase):
+        return _DECADE_WORDS[m.group(2)] + _TEMP_OFFSET[m.group(1)]
+    if m := re.search(rf"\b({_RE_DECADE_WORD})\b", phrase):
+        return _DECADE_WORDS[m.group(1)] + 5  # bare "sixties" -> mid
     if m := re.search(r"\b(\d{1,3})s\b", phrase):
         return int(m.group(1)) + 5  # bare "80s" -> mid
     if m := re.search(r"\b(\d{1,3})\b", phrase):
@@ -187,19 +220,37 @@ class ForecastAggregator:
             self.periods[name] = entry
 
     def update(self, text: str) -> bool:
+        # Climate outlook / almanac recaps are not the daily forecast.
+        if _RE_FC_OUTLOOK.search(text):
+            return False
         changed = False
         if m := _RE_FC_AREA.search(text):
             self.city = _norm_city(m.group(1))
-        if (hdr := period_header(text)) is not None:
-            self._current = hdr
-            self.periods.setdefault(hdr, {"period": hdr})
-            changed = True
-        if self._current is None:
-            return changed
-        fields = extract_forecast_fields(text)
-        if fields:
-            self.periods[self._current].update(fields)
-            changed = True
+        # Split the segment at every period header so a multi-period segment
+        # attaches each clause's fields to its OWN period (a later period's high
+        # must not leak onto an earlier night period). Text before the first
+        # header continues the carry-over period from the previous segment.
+        matches = list(_RE_PERIOD_HDR.finditer(text))
+        spans: list[tuple[str | None, str]] = []
+        if not matches:
+            spans.append((self._current, text))
+        else:
+            if matches[0].start() > 0:
+                spans.append((self._current, text[: matches[0].start()]))
+            for i, m in enumerate(matches):
+                name = m.group(1).strip().title()
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                spans.append((name, text[m.start(): end]))
+                self._current = name
+                changed = True
+        for period, chunk in spans:
+            if period is None:
+                continue
+            self.periods.setdefault(period, {"period": period})
+            fields = extract_forecast_fields(chunk)
+            if fields:
+                self.periods[period].update(fields)
+                changed = True
         return changed
 
     def snapshot(self) -> list[dict]:

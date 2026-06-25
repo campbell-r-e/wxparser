@@ -67,6 +67,44 @@ def test_parse_temp_value():
     assert parse_temp_value("in the mid 60s") == 65
     assert parse_temp_value("in the lower 80s") == 81
     assert parse_temp_value("near 75") == 75
+    # spelled-out decades (STT renders "lower 60s" as "lower sixties")
+    assert parse_temp_value("in the lower sixties") == 61
+    assert parse_temp_value("mid eighties") == 85
+    assert parse_temp_value("upper seventies") == 78
+
+
+def test_forecast_segment_spanning_periods_does_not_leak():
+    # one VAD segment routinely spans periods; a later period's high must NOT
+    # land on an earlier night period (the "Overnight ... high 78" bug).
+    fc = ForecastAggregator()
+    fc.update("for Saturday night. Partly cloudy, lows in the lower sixties, "
+              "Sunday, partly cloudy. Highs in the mid 80s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["Saturday Night"].get("low_f") == 61
+    assert "high_f" not in s["Saturday Night"]          # no leak from Sunday
+    assert s["Sunday"].get("high_f") == 85
+
+
+def test_forecast_header_detected_after_lead_in():
+    # "...forecast for the Muncie area. This afternoon, ..." — header is not at
+    # the segment start, but must still open the period.
+    fc = ForecastAggregator()
+    fc.update("And now we look at the forecast for the Muncie area. This afternoon, "
+              "mostly cloudy. Highs in the upper 70s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["This Afternoon"]["high_f"] == 78
+    assert s["This Afternoon"]["sky"] == "mostly cloudy"
+
+
+def test_forecast_skips_climate_outlook():
+    # the 8-14 day outlook is not a daily forecast; parsing it invents bogus
+    # far-future periods and phantom highs.
+    fc = ForecastAggregator()
+    changed = fc.update("The 8 to 14 day outlook for Thursday, July 2nd through "
+                        "Wednesday, July 8th calls for temperatures above normal. "
+                        "Normal high is 85.")
+    assert changed is False
+    assert fc.snapshot() == []
 
 
 def test_period_header():
