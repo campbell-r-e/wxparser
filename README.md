@@ -100,6 +100,10 @@ happened?"** is a SQL join.
 
 ## Query API (LAN-only)
 
+> **Full usage guide with examples for every feature: [`docs/USAGE.md`](docs/USAGE.md)** —
+> snapshot, pagination, incremental sync, live push (SSE + webhook), health/monitoring, the
+> trust model, cleanup jobs, multi-transmitter, and the STT-model trial.
+
 Generic and city-agnostic, with a one-call snapshot, full pagination, and an incremental
 export so **every row in every store is reachable with no silent truncation**:
 
