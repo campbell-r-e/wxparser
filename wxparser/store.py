@@ -22,17 +22,38 @@ SCHEMA_VERSION = 1
 # Reports and SAME alerts are appended from different threads; serialize writes.
 _append_lock = threading.Lock()
 
-# Best-effort product typing via cheap keyword matching (a hint, not authoritative;
-# authoritative typing comes later from SAME decoding — PLAN §5.1, §8).
+import re
+
+from .extract import extract_forecast_fields, extract_observation, period_header
+
+# Explicit, authoritative product names (a literal warning/statement title beats
+# any structural guess). The routine loop products — forecast and conditions —
+# are typed below from the same structured extraction the rest of the pipeline
+# runs, because VAD chops them into mid-narrative fragments that seldom contain a
+# product name (which left ~73% of reports "unknown").
 _PRODUCT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("tornado_warning", ("tornado warning",)),
     ("severe_thunderstorm_warning", ("severe thunderstorm warning",)),
     ("flash_flood_warning", ("flash flood warning",)),
     ("special_weather_statement", ("special weather statement",)),
     ("hazardous_weather_outlook", ("hazardous weather outlook",)),
-    ("zone_forecast", ("zone forecast", "tonight", "highs", "lows", "chance of rain")),
-    ("current_conditions", ("current conditions", "at the", "relative humidity", "dewpoint")),
 ]
+# Forecast-narrative phrasing that carries no extractable number but is
+# unmistakably the zone forecast (the connective tissue between the labelled
+# highs/lows lines). Conditions never use these.
+_RE_FORECASTY = re.compile(
+    r"\bchance of (?:showers|thunderstorms?|rain|snow|flurries|precipitation)\b"
+    r"|\b(?:north|south|east|west|northeast|northwest|southeast|southwest)(?:erly)?\s+winds?\b"
+    r"|\bwinds?\s+(?:around|near|becoming|light|calm|up to|\d)"
+    r"|\bbecoming\s+(?:mostly |partly )?(?:cloudy|clear|sunny|fair|windy)"
+    r"|\b(?:toward|through the late)\s+(?:daybreak|overnight|morning|afternoon|evening)"
+    r"|\bshowers likely\b|\bslight chance\b|\bchance of a\b", re.I)
+# Conditions-only fields (a forecast never reports barometric pressure, relative
+# humidity, dewpoint, or a "the wind was <dir> at N" observation).
+_COND_FIELDS = ("pressure_in", "temperature_f", "dewpoint_f", "humidity_pct", "wind")
+# The nearby-city temperature roundup ("... 74 at Marion, 76 at Anderson ...") is
+# part of the current-conditions product; a forecast never lists "<temp> at City".
+_RE_ROUNDUP = re.compile(r"\b-?\d{2,3}\s+(?:degrees?\s+)?at\s+[A-Z][a-z]+", re.I)
 
 
 # product_types that carry an alert narrative worth structuring + linking to a
@@ -45,9 +66,23 @@ ALERT_PRODUCTS = frozenset({
 
 def classify(text: str) -> str:
     low = text.lower()
+    # 1) explicit product name wins (warnings / statements / outlook).
     for product_type, keywords in _PRODUCT_KEYWORDS:
         if any(k in low for k in keywords):
             return product_type
+    # 2) conditions: any conditions-only observation field present.
+    obs = extract_observation(text)
+    if any(obs.get(k) is not None for k in _COND_FIELDS) or _RE_ROUNDUP.search(text):
+        return "current_conditions"
+    # 3) forecast: a period header, an extracted high/low/precip, or the
+    #    unmistakable forecast-narrative phrasing between the labelled lines.
+    if period_header(text) is not None:
+        return "zone_forecast"
+    fc = extract_forecast_fields(text)
+    if any(fc.get(k) is not None for k in ("high_f", "low_f", "precip_pct", "steady_f")):
+        return "zone_forecast"
+    if _RE_FORECASTY.search(text):
+        return "zone_forecast"
     return "unknown"
 
 
