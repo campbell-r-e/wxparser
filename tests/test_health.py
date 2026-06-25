@@ -38,6 +38,13 @@ def test_degraded_when_audio_silent():
     assert any("deaf" in c for c in r["checks"])
 
 
+def test_not_wedged_during_startup_grace():
+    # just booted: a segment queued, first STT still running -> not yet wedged
+    hb = {"updated_at": _ago(0.2), "started_at": _ago(0.4),
+          "last_segment_at": _ago(0.3), "last_stt_ok_at": None, "queue_depth": 1}
+    assert assess(hb, CONFIG, _NOW)["status"] == "ok"
+
+
 def test_degraded_when_worker_wedged():
     # backlog queued but nothing transcribed recently -> STT worker stuck
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),

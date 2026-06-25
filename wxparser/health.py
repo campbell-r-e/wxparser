@@ -99,9 +99,12 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
     if audio_age is None or audio_age > cfg.health_audio_silent_min:
         status = "degraded" if status == "ok" else status
         checks.append(f"audio silent ({_fmt(audio_age)}m) — possible deaf radio")
-    # worker wedged: a backlog is queued but nothing has transcribed recently.
-    if hb.get("queue_depth", 0) > 0 and (stt_age is None
-                                         or stt_age > cfg.health_audio_silent_min):
+    # worker wedged: a backlog is queued but nothing has transcribed for a while.
+    # Before the first success, measure from process start so a just-booted worker
+    # (whose first STT is still running) isn't flagged.
+    stt_ref_age = stt_age if stt_age is not None else _age_min(hb.get("started_at"), now)
+    if hb.get("queue_depth", 0) > 0 and (stt_ref_age is None
+                                         or stt_ref_age > cfg.health_audio_silent_min):
         status = "degraded" if status == "ok" else status
         checks.append(f"STT worker may be wedged (q={hb.get('queue_depth')}, "
                       f"last ok {_fmt(stt_age)}m ago)")
