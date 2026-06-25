@@ -132,11 +132,12 @@ _RE_PERIOD_HDR = re.compile(
     rf"(?:^|[.,]\s+|\bfor\s+)({_PERIOD_NAME})\b(?=[\s,.]|$)", re.I)
 # Climate outlook / almanac — NOT a daily forecast ("8 to 14 day outlook ...
 # temperatures above normal", "normal high is 85"). Parsing it as periods invents
-# bogus far-future days and phantom highs, so skip the whole segment.
+# bogus far-future days and phantom highs, so skip the whole segment. NB: match
+# on "outlook"/"normal", NOT on a "N-day" range — the legit *3-7 day forecast*
+# (real Saturday/Sunday highs/lows) also says "3 to 7 day".
 _RE_FC_OUTLOOK = re.compile(
-    r"\b(?:\d{1,2}\s*(?:to|-|through)\s*\d{1,2}[\s-]*day|outlook|"
-    r"(?:above|below|near)\s+normal|normal\s+(?:high|low)|climate|degree days?)\b",
-    re.I)
+    r"\b(?:outlook|(?:above|below|near)\s+normal|normal\s+(?:high|low)"
+    r"|climate|degree days?)\b", re.I)
 _RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_PRECIP = re.compile(

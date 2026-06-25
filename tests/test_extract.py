@@ -107,6 +107,19 @@ def test_forecast_skips_climate_outlook():
     assert fc.snapshot() == []
 
 
+def test_forecast_3_to_7_day_is_not_skipped_as_outlook():
+    # the "3-7 day forecast" is a real extended forecast (Saturday/Sunday highs),
+    # NOT the "8-14 day outlook" climate product — it must still parse.
+    fc = ForecastAggregator()
+    fc.update("Taking a look at your 3-7 day forecast for the Muncie area for "
+              "Saturday night. Partly cloudy, lows in the lower 60s, Sunday, "
+              "partly cloudy. Highs in the mid 80s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["Saturday Night"]["low_f"] == 61
+    assert s["Sunday"]["high_f"] == 85
+    assert "high_f" not in s["Saturday Night"]
+
+
 def test_period_header():
     assert period_header("Tonight, partly cloudy.") == "Tonight"
     assert period_header("Saturday night, clear.") == "Saturday Night"
