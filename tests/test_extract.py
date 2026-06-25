@@ -107,6 +107,27 @@ def test_forecast_skips_climate_outlook():
     assert fc.snapshot() == []
 
 
+def test_day_period_never_gets_a_low():
+    fc = ForecastAggregator()
+    fc.update("Saturday, partly cloudy. Highs in the mid 80s. Lows tonight in the 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["Saturday"]["high_f"] == 85
+    assert "low_f" not in s["Saturday"]
+
+
+def test_new_forecast_pass_resets_carryover():
+    # a stale "This Afternoon" must not absorb the lead text of a fresh pass.
+    fc = ForecastAggregator()
+    fc.update("This afternoon, mostly cloudy. Highs in the upper 70s.")
+    fc.update("Taking a look at your 3-7 day forecast for the Muncie area. "
+              "Clear, hot, highs in the mid-90s. Saturday night, partly cloudy. "
+              "Lows in the lower 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["This Afternoon"]["high_f"] == 78        # not polluted to 95
+    assert "low_f" not in s["This Afternoon"]
+    assert s["Saturday Night"]["low_f"] == 61
+
+
 def test_night_period_never_gets_a_high():
     # grouped extended phrasing "Sunday night through Wednesday ... highs in the
     # lower 90s" must not put that daytime high on the night period.

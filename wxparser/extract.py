@@ -249,6 +249,11 @@ class ForecastAggregator:
         changed = False
         if m := _RE_FC_AREA.search(text):
             self.city = _norm_city(m.group(1))
+            # A fresh forecast pass ("...the forecast for the Muncie area...")
+            # starts here; drop the carry-over so a stale period from the prior
+            # pass can't absorb this segment's lead text (e.g. a leftover "This
+            # Afternoon" swallowing "...highs in the mid-90s").
+            self._current = None
         # Split the segment at every period header so a multi-period segment
         # attaches each clause's fields to its OWN period (a later period's high
         # must not leak onto an earlier night period). Text before the first
@@ -274,15 +279,19 @@ class ForecastAggregator:
             # A "near steady temperature in the X" reading has no high/low label;
             # it's the high on a day period, the low on a night period.
             steady = fields.pop("steady_f", None)
+            # A zone-forecast day period forecasts only a high, a night period
+            # only a low. The opposite slot in a chunk is a leak from an adjacent
+            # period (e.g. a grouped "Sunday night through Wednesday ... highs in
+            # the 90s"), so drop it and route an unlabeled steady temp to the slot
+            # the period actually carries.
             if _is_night_period(period):
-                # Night periods only forecast a low. A daytime high in a night
-                # chunk is a leak — usually from a grouped extended period
-                # ("Sunday night through Wednesday ... highs in the lower 90s").
                 fields.pop("high_f", None)
                 if steady is not None and "low_f" not in fields and entry.get("low_f") is None:
                     fields["low_f"] = steady
-            elif steady is not None and "high_f" not in fields and entry.get("high_f") is None:
-                fields["high_f"] = steady
+            else:
+                fields.pop("low_f", None)
+                if steady is not None and "high_f" not in fields and entry.get("high_f") is None:
+                    fields["high_f"] = steady
             if fields:
                 entry.update(fields)
                 changed = True
