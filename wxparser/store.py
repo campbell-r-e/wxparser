@@ -52,7 +52,10 @@ _RE_FORECASTY = re.compile(
     r"|\bbecoming\s+(?:mostly |partly )?(?:cloudy|clear|sunny|fair|windy)"
     r"|\b(?:toward|through the late)\s+(?:daybreak|overnight|morning|afternoon|evening)"
     r"|\bshowers likely\b|\bslight chance\b|\bchance of a\b"
-    r"|\bof (?:showers|thunderstorms?)\b|\bthunderstorms? (?:likely|possible)\b", re.I)
+    r"|\bof (?:showers|thunderstorms?)\b|\bthunderstorms? (?:likely|possible)\b"
+    # a forecast temp band "in the lower/mid/upper <decade>" — catches lines
+    # whose high/low label STT garbled ("Close/Pines in the mid-eighties").
+    r"|\bin the (?:lower|mid|middle|upper)[\s-]+(?:\d{1,3}s?|\w+ies)\b", re.I)
 # Conditions-only fields (a forecast never reports barometric pressure, relative
 # humidity, dewpoint, or a "the wind was <dir> at N" observation).
 _COND_FIELDS = ("pressure_in", "temperature_f", "dewpoint_f", "humidity_pct", "wind")
