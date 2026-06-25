@@ -98,9 +98,17 @@ happened?"** is a SQL join.
 
 ## Query API (LAN-only)
 
-Generic and city-agnostic — one endpoint per condition, returning every city that reports it:
+Generic and city-agnostic, with a one-call snapshot, full pagination, and an incremental
+export so **every row in every store is reachable with no silent truncation**:
 
 ```
+Snapshot & discovery
+GET /now?city=                   → one call: a city's full current ob + the regional
+                                   roundup + the latest forecast + active alerts
+GET /cities                      → cities with data, each with first/last_seen + count
+GET /city/{city}                 → every current condition for one city (the full ob)
+
+Conditions
 GET /conditions                  → available conditions (index)
 GET /conditions/{condition}      → every city's latest value (temperature, humidity,
                                    pressure, dewpoint, wind, sky, ...); accepts friendly
@@ -108,29 +116,49 @@ GET /conditions/{condition}      → every city's latest value (temperature, hum
                                    Each reading carries age_minutes + a stale flag
                                    (older than WX_STALE_AFTER_MIN); ?fresh=1 hides stale,
                                    ?stale_after=N overrides the threshold
-GET /conditions/history?condition=&city=&from=&to=&limit=
-                                 → historical readings between two times
-GET /forecast                    → latest forecast for all heard cities/areas
-GET /forecast/history?from=&to=&city=
-                                 → historical forecast predictions between dates
-GET /transcripts?from=&to=&q=&product=&limit=
+GET /conditions/history?condition=&city=&from=&to=&limit=&offset=
+                                 → historical readings between two times (paginated)
+
+Forecast
+GET /forecast                    → latest forecast for all heard cities/areas, each
+                                   issuance annotated with age_minutes + stale
+GET /forecast/history?from=&to=&city=&limit=&offset=
+                                 → historical forecast predictions between dates (paginated)
+
+Transcripts
+GET /transcripts?from=&to=&q=&product=&limit=&offset=
                                  → raw transcript records (newest first); q= is a
                                    case-insensitive text search, product= filters on
                                    product_type (current_conditions, zone_forecast, ...)
+
+Alerts
 GET /alerts/active               → SAME alerts not yet expired; each carries a
                                    "spoken" list linking the structured details
                                    parsed from its narrative (?details=0 to skip)
+GET /alerts/history?from=&to=&event=&limit=&offset=
+                                 → all SAME alerts, active + expired (?details=1 to link)
 GET /alerts/details?from=&to=    → structured spoken-warning details on their own
                                    (until, motion, threats, locations, spotter flag)
+
+Bulk / sync
+GET /export?since=&limit=        → incremental watermark feed of every store
+                                   (observations, forecasts, alerts, alert_details,
+                                   transcripts) captured after `since`
 GET /health                      → liveness + counts
 ```
 
-`from`/`to` are ISO-8601 (`2026-06-24T12:00:00Z`), inclusive. The condition endpoints only
-surface a city once it's been **heard ≥2 times** (`WX_MIN_SIGHTINGS`, override per request
-with `?min=`) so STT-garbage city names are suppressed; `/conditions/history` keeps the raw
-data. Served from PostgreSQL over the LAN, e.g. `curl http://<host>:8080/conditions/temperature`.
-`/transcripts` reads the raw JSONL transcript log directly (e.g.
-`curl 'http://<host>:8080/transcripts?product=tornado_warning&limit=20'`).
+`from`/`to`/`since` are ISO-8601 (`2026-06-24T12:00:00Z`); `from`/`to` are inclusive, `since`
+is exclusive. The condition endpoints only surface a city once it's been **heard ≥2 times**
+(`WX_MIN_SIGHTINGS`, override per request with `?min=`) so STT-garbage city names are
+suppressed; `/conditions/history` keeps the raw data. Served from PostgreSQL over the LAN,
+e.g. `curl http://<host>:8080/now`. `/transcripts` and `/export` read the raw JSONL transcript
+log directly (e.g. `curl 'http://<host>:8080/transcripts?product=tornado_warning&limit=20'`).
+
+**Pagination** — the list endpoints return `{total, count, limit, offset, next_offset}`
+alongside the data; page until `next_offset` is `null` to retrieve every row. **Incremental
+sync** — `/export` returns `{next_since, more, ...}`; re-request with `since=next_since` while
+`more` is true to drain the whole store losslessly (the primitive a mesh publisher or a mirror
+uses). Both keep the answer complete — no result is ever silently capped.
 
 ## Deploy
 

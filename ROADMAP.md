@@ -11,10 +11,13 @@ authoritative; STT is advisory enrichment) is sound. These are feature gaps.
 
 ## High leverage (most move the "useful in an emergency" grade)
 
-- [ ] **Outbound notification / push (biggest gap).** Today it's a passive query
-  API — consumers must poll. Add push so downstream systems/people are *told*:
-  webhook POST on new SAME alert, a WebSocket/SSE stream of alerts+conditions,
-  and/or MQTT. This is the single highest-value addition.
+- [ ] **Outbound notification / push (biggest gap).** Still a *pull* API, but the
+  pull side is now complete and efficient: `/now` (one-call snapshot), full
+  pagination with totals, and `/export?since=` (incremental watermark feed of
+  every store) give a mirror or mesh publisher a lossless, low-overhead way to
+  stay in sync. The remaining gap is server-*initiated* delivery: webhook POST on
+  new SAME alert, a WebSocket/SSE stream of alerts+conditions, and/or MQTT. This
+  is the single highest-value addition.
 - [ ] **Fail-loud health + watchdog.** It can't currently report "I've gone
   deaf." Surface real liveness: audio-silent for N minutes, STT worker wedged,
   decode-error rate climbing, capture restarts. Make `/health` reflect actual
