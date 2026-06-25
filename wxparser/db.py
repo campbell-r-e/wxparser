@@ -299,18 +299,31 @@ class Database:
                  "votes": r["votes"], "total": r["total"], "sightings": r["sightings"]}
                 for r in rows]
 
-    def condition_history(self, condition: str, city: str | None,
-                          frm: str | None, to: str | None, limit: int = 1000) -> list[dict]:
-        sql = "SELECT city,condition,value_num,value_text,captured_at,votes,total FROM city_observations WHERE condition=:c"
-        params = {"c": condition, "lim": limit}
+    def _obs_where(self, condition: str, city: str | None,
+                   frm: str | None, to: str | None) -> tuple[str, dict]:
+        where = "WHERE condition=:c"
+        params: dict = {"c": condition}
         if city:
-            sql += " AND city=:city"; params["city"] = city
+            where += " AND city=:city"; params["city"] = city
         if frm:
-            sql += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
+            where += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
         if to:
-            sql += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
-        sql += " ORDER BY captured_at DESC LIMIT :lim"
-        rows = self._query(sql, **params)
+            where += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
+        return where, params
+
+    def condition_history_count(self, condition: str, city: str | None,
+                                frm: str | None, to: str | None) -> int:
+        where, params = self._obs_where(condition, city, frm, to)
+        return self._query(f"SELECT COUNT(*) AS n FROM city_observations {where}", **params)[0]["n"]
+
+    def condition_history(self, condition: str, city: str | None,
+                          frm: str | None, to: str | None,
+                          limit: int = 1000, offset: int = 0) -> list[dict]:
+        where, params = self._obs_where(condition, city, frm, to)
+        rows = self._query(
+            f"SELECT city,condition,value_num,value_text,captured_at,votes,total "
+            f"FROM city_observations {where} ORDER BY captured_at DESC LIMIT :lim OFFSET :off",
+            lim=limit, off=offset, **params)
         return [{"city": r["city"], "condition": r["condition"], "value": _value(r),
                  "captured_at": _ts(r["captured_at"]), "votes": r["votes"], "total": r["total"]}
                 for r in rows]
@@ -333,17 +346,28 @@ class Database:
             out.append({"city": city, "issued_at": _ts(issued), "periods": rows})
         return out
 
-    def forecast_history(self, frm: str | None, to: str | None, city: str | None) -> list[dict]:
-        sql = "SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky FROM forecasts WHERE 1=1"
+    def _fc_where(self, frm: str | None, to: str | None, city: str | None) -> tuple[str, dict]:
+        where = "WHERE 1=1"
         params: dict = {}
         if city:
-            sql += " AND city=:city"; params["city"] = city
+            where += " AND city=:city"; params["city"] = city
         if frm:
-            sql += " AND issued_at >= :frm"; params["frm"] = _parse_iso(frm)
+            where += " AND issued_at >= :frm"; params["frm"] = _parse_iso(frm)
         if to:
-            sql += " AND issued_at <= :to"; params["to"] = _parse_iso(to)
-        sql += " ORDER BY issued_at DESC, city, period LIMIT 5000"
-        rows = self._query(sql, **params)
+            where += " AND issued_at <= :to"; params["to"] = _parse_iso(to)
+        return where, params
+
+    def forecast_history_count(self, frm: str | None, to: str | None, city: str | None) -> int:
+        where, params = self._fc_where(frm, to, city)
+        return self._query(f"SELECT COUNT(*) AS n FROM forecasts {where}", **params)[0]["n"]
+
+    def forecast_history(self, frm: str | None, to: str | None, city: str | None,
+                         limit: int = 1000, offset: int = 0) -> list[dict]:
+        where, params = self._fc_where(frm, to, city)
+        rows = self._query(
+            f"SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky "
+            f"FROM forecasts {where} ORDER BY issued_at DESC, city, period LIMIT :lim OFFSET :off",
+            lim=limit, off=offset, **params)
         for r in rows:
             for k in ("issued_at", "valid_from", "valid_to"):
                 r[k] = _ts(r[k])
@@ -361,6 +385,94 @@ class Database:
             for k in ("captured_at", "expires_at"):
                 d[k] = _ts(d[k])
         return rows
+
+    def alerts_history(self, frm: str | None, to: str | None, event: str | None,
+                       limit: int = 1000, offset: int = 0) -> tuple[int, list[dict]]:
+        """All SAME alerts (active and expired), newest first, paginated."""
+        where = "WHERE 1=1"
+        base: dict = {}
+        if frm:
+            where += " AND captured_at >= :frm"; base["frm"] = _parse_iso(frm)
+        if to:
+            where += " AND captured_at <= :to"; base["to"] = _parse_iso(to)
+        if event:
+            where += " AND event = :event"; base["event"] = event
+        total = self._query(f"SELECT COUNT(*) AS n FROM alerts {where}", **base)[0]["n"]
+        rows = self._query(
+            f"SELECT * FROM alerts {where} ORDER BY captured_at DESC LIMIT :lim OFFSET :off",
+            lim=limit, off=offset, **base)
+        for d in rows:
+            d["areas"] = _as_obj(d["areas"]) or []
+            d["counties"] = _as_obj(d["counties"]) or []
+            for k in ("captured_at", "expires_at"):
+                d[k] = _ts(d[k])
+        return total, rows
+
+    # --- readers: per-city / index --------------------------------------- #
+    def all_conditions_for_city(self, city: str, min_sightings: int = 1) -> list[dict]:
+        """Every current condition for one city (the full local observation)."""
+        rows = self._query(
+            "SELECT condition, value_num, value_text, last_seen, votes, total, sightings "
+            "FROM city_conditions WHERE LOWER(city)=LOWER(:c) AND sightings >= :m ORDER BY condition",
+            c=city, m=min_sightings)
+        return [{"condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["last_seen"]), "votes": r["votes"],
+                 "total": r["total"], "sightings": r["sightings"]} for r in rows]
+
+    def cities(self, min_sightings: int = 1) -> list[dict]:
+        """Distinct cities with data, with per-city condition count and freshness."""
+        rows = self._query(
+            "SELECT city, COUNT(*) AS conditions, MIN(first_seen) AS first_seen, "
+            "MAX(last_seen) AS last_seen FROM city_conditions WHERE sightings >= :m "
+            "GROUP BY city ORDER BY city", m=min_sightings)
+        return [{"city": r["city"], "conditions": r["conditions"],
+                 "first_seen": _ts(r["first_seen"]), "last_seen": _ts(r["last_seen"])}
+                for r in rows]
+
+    # --- readers: incremental export (watermark sync) -------------------- #
+    def observations_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        rows = self._query(
+            "SELECT city,condition,value_num,value_text,captured_at,votes,total "
+            "FROM city_observations WHERE captured_at > :s "
+            "ORDER BY captured_at LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=limit, off=offset)
+        return [{"city": r["city"], "condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["captured_at"]), "votes": r["votes"], "total": r["total"]}
+                for r in rows]
+
+    def forecasts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        rows = self._query(
+            "SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky "
+            "FROM forecasts WHERE issued_at > :s ORDER BY issued_at LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=limit, off=offset)
+        for r in rows:
+            for k in ("issued_at", "valid_from", "valid_to"):
+                r[k] = _ts(r[k])
+        return rows
+
+    def alerts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        rows = self._query(
+            "SELECT * FROM alerts WHERE captured_at > :s ORDER BY captured_at LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=limit, off=offset)
+        for d in rows:
+            d["areas"] = _as_obj(d["areas"]) or []
+            d["counties"] = _as_obj(d["counties"]) or []
+            for k in ("captured_at", "expires_at"):
+                d[k] = _ts(d[k])
+        return rows
+
+    def alert_details_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        rows = self._query(
+            "SELECT report_id,captured_at,product_type,until_text,motion,threats,"
+            "locations,spotter_activation,text FROM alert_details WHERE captured_at > :s "
+            "ORDER BY captured_at LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=limit, off=offset)
+        return [{"report_id": r["report_id"], "captured_at": _ts(r["captured_at"]),
+                 "product_type": r["product_type"], "until": r["until_text"],
+                 "motion": _as_obj(r["motion"]), "threats": _as_obj(r["threats"]),
+                 "locations": _as_obj(r["locations"]),
+                 "spotter_activation": r["spotter_activation"], "text": r["text"]}
+                for r in rows]
 
     def latest_readings(self) -> list[dict]:
         """All latest (city, condition) readings — used to prime the aggregator."""

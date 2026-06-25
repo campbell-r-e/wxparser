@@ -3,18 +3,32 @@
 Serves structured weather data sourced entirely from the radio, fully offline.
 Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
 
+    GET /now?city=                        -> one-call snapshot: a city's full ob,
+                                             the roundup, latest forecast, alerts
+    GET /cities                           -> cities with data + freshness
+    GET /city/{city}                      -> every current condition for one city
     GET /conditions                       -> available conditions (index)
     GET /conditions/{condition}           -> every city's latest value for it
-    GET /conditions/history?condition=&city=&from=&to=&limit=
-                                          -> historical readings between times
-    GET /forecast                         -> latest forecast for all heard cities
-    GET /forecast/history?from=&to=&city= -> historical forecast predictions
-    GET /transcripts?from=&to=&q=&product=&limit=
+    GET /conditions/history?condition=&city=&from=&to=&limit=&offset=
+                                          -> historical readings (paginated)
+    GET /forecast                         -> latest forecast (+ staleness)
+    GET /forecast/history?from=&to=&city=&limit=&offset=
+                                          -> historical forecast predictions
+    GET /transcripts?from=&to=&q=&product=&limit=&offset=
                                           -> raw transcript records (newest first)
+    GET /export?since=&limit=             -> incremental watermark feed of every
+                                             store (observations/forecasts/alerts/
+                                             alert_details/transcripts) since a time
     GET /alerts/active                    -> SAME alerts not yet expired
+    GET /alerts/history?from=&to=&event=&limit=&offset=
+                                          -> all SAME alerts (active + expired)
+    GET /alerts/details?from=&to=         -> structured spoken-alert details
     GET /health                           -> liveness + counts
 
-`from`/`to` are ISO-8601 (e.g. 2026-06-24T12:00:00Z), inclusive.
+`from`/`to`/`since` are ISO-8601 (e.g. 2026-06-24T12:00:00Z), inclusive (`since`
+is exclusive). Paginated endpoints return {total, count, limit, offset,
+next_offset}; page until next_offset is null. `/export` returns {next_since,
+more}; re-request with since=next_since until more is false.
 `{condition}` accepts friendly names (temperature, humidity, pressure, dewpoint,
 wind, sky) or the stored keys (temperature_f, humidity_pct, ...).
 """
@@ -28,7 +42,11 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import CONFIG, Config
 from .db import Database
-from .store import query_reports
+from .store import count_reports, query_reports, reports_since
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # friendly condition name -> stored key
 _CONDITION_ALIASES = {
@@ -82,6 +100,36 @@ class _Handler(BaseHTTPRequestHandler):
             out.append(r)
         return out
 
+    def _page(self, q: dict, default: int = 100, maximum: int = 1000) -> tuple[int, int]:
+        try:
+            limit = min(maximum, max(1, int(q.get("limit", default))))
+        except (ValueError, TypeError):
+            limit = default
+        try:
+            offset = max(0, int(q.get("offset", 0)))
+        except (ValueError, TypeError):
+            offset = 0
+        return limit, offset
+
+    @staticmethod
+    def _paging(total: int, returned: int, limit: int, offset: int) -> dict:
+        nxt = offset + limit
+        return {"total": total, "count": returned, "limit": limit, "offset": offset,
+                "next_offset": nxt if nxt < total else None}
+
+    def _annotate_forecast_age(self, forecasts: list, q: dict) -> list:
+        """Add age_minutes + stale to each forecast issuance (by issued_at)."""
+        threshold = self._stale_after(q)
+        now = datetime.now(timezone.utc)
+        for fc in forecasts:
+            ia = fc.get("issued_at")
+            if ia:
+                age = (now - datetime.strptime(ia, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc)).total_seconds() / 60
+                fc["age_minutes"] = round(age, 1)
+                fc["stale"] = age > threshold
+        return forecasts
+
     def _link_details(self, alert: dict) -> dict:
         """Attach the spoken-detail transcripts that fall in this alert's window
         (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
@@ -112,9 +160,31 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 self._send({"endpoints": [
+                    "/now", "/cities", "/city/{city}",
                     "/conditions", "/conditions/{condition}", "/conditions/history",
-                    "/forecast", "/forecast/history", "/transcripts",
-                    "/alerts/active", "/alerts/details", "/health"]})
+                    "/forecast", "/forecast/history",
+                    "/transcripts", "/export?since=",
+                    "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
+            elif path == "/now":
+                city = q.get("city", self.cfg.primary_city)
+                conds = self._annotate_age(
+                    self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh=""))
+                roundup = self._annotate_age(
+                    [r for r in self.db.latest_for_condition("temperature_f", self._min(q))
+                     if r["city"].lower() != city.lower()], dict(q, fresh=""))
+                forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
+                alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
+                self._send({"generated_at": _now_iso(), "city": city,
+                            "conditions": conds, "roundup": roundup,
+                            "forecast": forecast, "alerts": alerts})
+            elif path == "/cities":
+                self._send({"generated_at": _now_iso(),
+                            "cities": self.db.cities(self._min(q))})
+            elif parts[0] == "city" and len(parts) == 2:
+                m = self._min(q)
+                conds = self._annotate_age(self.db.all_conditions_for_city(parts[1], m), q)
+                self._send({"city": parts[1], "min_sightings": m,
+                            "stale_after_min": self._stale_after(q), "conditions": conds})
             elif path == "/conditions":
                 conds = self.db.list_conditions(self._min(q))
                 for c in conds:  # reuse age annotation against each condition's latest
@@ -127,11 +197,14 @@ class _Handler(BaseHTTPRequestHandler):
                 if not cond:
                     self._send({"error": "condition= query param required"}, 400)
                     return
+                limit, offset = self._page(q, default=1000)
+                total = self.db.condition_history_count(
+                    cond, q.get("city"), q.get("from"), q.get("to"))
+                rows = self.db.condition_history(
+                    cond, q.get("city"), q.get("from"), q.get("to"), limit, offset)
                 self._send({"condition": cond, "city": q.get("city"),
-                            "from": q.get("from"), "to": q.get("to"),
-                            "readings": self.db.condition_history(
-                                cond, q.get("city"), q.get("from"), q.get("to"),
-                                int(q.get("limit", 1000)))})
+                            "from": q.get("from"), "to": q.get("to"), "readings": rows,
+                            **self._paging(total, len(rows), limit, offset)})
             elif parts[0] == "conditions" and len(parts) == 2:
                 cond = _canon(parts[1])
                 m = self._min(q)
@@ -139,27 +212,66 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"condition": cond, "min_sightings": m,
                             "stale_after_min": self._stale_after(q), "cities": cities})
             elif path == "/forecast":
-                self._send({"forecasts": self.db.latest_forecasts()})
+                self._send({"forecasts": self._annotate_forecast_age(
+                    self.db.latest_forecasts(), q)})
             elif parts[:2] == ["forecast", "history"]:
+                limit, offset = self._page(q, default=1000)
+                total = self.db.forecast_history_count(
+                    q.get("from"), q.get("to"), q.get("city"))
+                rows = self.db.forecast_history(
+                    q.get("from"), q.get("to"), q.get("city"), limit, offset)
                 self._send({"from": q.get("from"), "to": q.get("to"), "city": q.get("city"),
-                            "forecasts": self.db.forecast_history(
-                                q.get("from"), q.get("to"), q.get("city"))})
+                            "forecasts": rows,
+                            **self._paging(total, len(rows), limit, offset)})
             elif path == "/transcripts":
-                try:
-                    limit = min(1000, max(1, int(q.get("limit", 100))))
-                except ValueError:
-                    limit = 100
+                limit, offset = self._page(q, default=100)
+                total = count_reports(self.cfg, frm=q.get("from"), to=q.get("to"),
+                                      q=q.get("q"), product=q.get("product"))
                 reports = query_reports(
                     self.cfg, limit=limit, frm=q.get("from"), to=q.get("to"),
-                    q=q.get("q"), product=q.get("product"))
+                    q=q.get("q"), product=q.get("product"), offset=offset)
                 self._send({"from": q.get("from"), "to": q.get("to"),
                             "q": q.get("q"), "product": q.get("product"),
-                            "count": len(reports), "transcripts": reports})
+                            "transcripts": reports,
+                            **self._paging(total, len(reports), limit, offset)})
+            elif path == "/export":
+                since = q.get("since")
+                if not since:
+                    self._send({"error": "since= query param required (ISO-8601)"}, 400)
+                    return
+                limit, _ = self._page(q, default=500, maximum=2000)
+                obs = self.db.observations_since(since, limit)
+                fcs = self.db.forecasts_since(since, limit)
+                als = self.db.alerts_since(since, limit)
+                ads = self.db.alert_details_since(since, limit)
+                trs = reports_since(self.cfg, since, limit)
+                sections = {"observations": obs, "forecasts": fcs, "alerts": als,
+                            "alert_details": ads, "transcripts": trs}
+                stamps = ([r["captured_at"] for r in obs]
+                          + [r["issued_at"] for r in fcs]
+                          + [r["captured_at"] for r in als]
+                          + [r["captured_at"] for r in ads]
+                          + [r.get("captured_at", "") for r in trs])
+                stamps = [s for s in stamps if s]
+                self._send({"since": since,
+                            "next_since": max(stamps) if stamps else since,
+                            "limit": limit,
+                            "more": any(len(v) >= limit for v in sections.values()),
+                            **sections})
             elif path == "/alerts/active":
                 alerts = self.db.get_active_alerts()
                 if q.get("details", "1") != "0":
                     alerts = [self._link_details(a) for a in alerts]
                 self._send({"alerts": alerts})
+            elif parts[:2] == ["alerts", "history"]:
+                limit, offset = self._page(q, default=100)
+                total, rows = self.db.alerts_history(
+                    q.get("from"), q.get("to"), q.get("event"), limit, offset)
+                if q.get("details") in ("1", "true"):
+                    rows = [self._link_details(a) for a in rows]
+                self._send({"from": q.get("from"), "to": q.get("to"),
+                            "event": q.get("event"), "alerts": rows,
+                            **self._paging(total, len(rows), limit, offset)})
             elif parts[:2] == ["alerts", "details"]:
                 now = datetime.now(timezone.utc)
                 to = q.get("to") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -168,9 +280,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"from": frm, "to": to,
                             "details": self.db.alert_details_between(frm, to)})
             elif path == "/health":
-                self._send({"status": "ok",
+                total_alerts, _ = self.db.alerts_history(None, None, None, 1, 0)
+                self._send({"status": "ok", "generated_at": _now_iso(),
                             "conditions": len(self.db.list_conditions()),
+                            "cities": len(self.db.cities()),
                             "active_alerts": len(self.db.get_active_alerts()),
+                            "total_alerts": total_alerts,
                             "forecast_cities": len(self.db.latest_forecasts())})
             else:
                 self._send({"error": "not found", "path": path}, 404)

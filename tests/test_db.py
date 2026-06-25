@@ -92,6 +92,61 @@ def test_period_window_weekday_night():
     assert vf is not None and vt is not None and vf < vt
 
 
+def test_all_conditions_for_city_and_cities_index():
+    db = _db()
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 77},
+                      "2026-06-24T12:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 78},
+                      "2026-06-24T12:30:00Z")  # twice -> surfaces
+    db.record_reading({"city": "Muncie", "condition": "humidity_pct", "value": 68},
+                      "2026-06-24T12:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "humidity_pct", "value": 67},
+                      "2026-06-24T12:30:00Z")
+    conds = {c["condition"]: c["value"] for c in db.all_conditions_for_city("muncie", 2)}
+    assert conds == {"temperature_f": 78, "humidity_pct": 67}
+    cities = {c["city"]: c for c in db.cities(2)}
+    assert cities["Muncie"]["conditions"] == 2
+
+
+def test_condition_history_pagination():
+    db = _db()
+    for i in range(5):
+        db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 70 + i},
+                          f"2026-06-24T12:0{i}:00Z")
+    assert db.condition_history_count("temperature_f", None, None, None) == 5
+    page1 = db.condition_history("temperature_f", None, None, None, limit=2, offset=0)
+    page2 = db.condition_history("temperature_f", None, None, None, limit=2, offset=2)
+    assert len(page1) == 2 and len(page2) == 2
+    assert {r["captured_at"] for r in page1} != {r["captured_at"] for r in page2}
+
+
+def test_alerts_history_and_since():
+    db = _db()
+    for i in range(2):
+        db.write_alert({"id": f"a{i}", "captured_at": f"2026-06-24T0{i}:00:00Z",
+                        "alert": {"event": "SVR", "event_label": "Severe T-storm",
+                                  "areas": ["Delaware"], "counties": ["18035"],
+                                  "purge_minutes": 10, "raw": "ZCZC"}})
+    total, rows = db.alerts_history(None, None, None, 1, 0)
+    assert total == 2 and len(rows) == 1            # paginated, total reported
+    assert db.alerts_history(None, None, "SVR", 10, 0)[0] == 2
+    since = db.alerts_since("2026-06-24T00:30:00Z", 10)
+    assert [a["id"] for a in since] == ["a1"]       # strictly after, ascending
+
+
+def test_observations_and_forecasts_since():
+    db = _db()
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 70},
+                      "2026-06-24T12:00:00Z")
+    db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 72},
+                      "2026-06-24T13:00:00Z")
+    obs = db.observations_since("2026-06-24T12:30:00Z", 10)
+    assert [o["value"] for o in obs] == [72]
+    db.write_forecast([{"period": "Tonight", "low_f": 61}], "2026-06-24T18:00:00Z")
+    assert len(db.forecasts_since("2026-06-24T17:00:00Z", 10)) == 1
+    assert len(db.forecasts_since("2026-06-24T19:00:00Z", 10)) == 0
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

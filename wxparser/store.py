@@ -199,6 +199,7 @@ def query_reports(
     q: str | None = None,
     product: str | None = None,
     max_scan: int = 20000,
+    offset: int = 0,
 ) -> list[dict]:
     """Raw transcript records from reports.jsonl, most-recent-first.
 
@@ -235,4 +236,68 @@ def query_reports(
             continue
         out.append(rec)
     out.reverse()  # newest first
-    return out[: max(1, limit)]
+    offset = max(0, offset)
+    return out[offset: offset + max(1, limit)]
+
+
+def _report_matches(rec: dict, frm, to, ql, product) -> bool:
+    ca = rec.get("captured_at", "")
+    if frm and ca < frm:
+        return False
+    if to and ca > to:
+        return False
+    if product and rec.get("product_type") != product:
+        return False
+    if ql and ql not in (rec.get("text") or "").lower():
+        return False
+    return True
+
+
+def count_reports(cfg: Config, frm: str | None = None, to: str | None = None,
+                  q: str | None = None, product: str | None = None,
+                  max_scan: int = 20000) -> int:
+    """Number of transcript reports matching the same filters as query_reports."""
+    path = cfg.reports_jsonl
+    if not path.exists():
+        return 0
+    ql = q.lower() if q else None
+    tail: deque[str] = deque(maxlen=max_scan)
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tail.append(line)
+    n = 0
+    for line in tail:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if _report_matches(rec, frm, to, ql, product):
+            n += 1
+    return n
+
+
+def reports_since(cfg: Config, since: str, limit: int, offset: int = 0,
+                  max_scan: int = 20000) -> list[dict]:
+    """Transcript reports with captured_at strictly after `since`, OLDEST-first
+    (ascending) — the watermark order /export needs to page losslessly."""
+    path = cfg.reports_jsonl
+    if not path.exists():
+        return []
+    tail: deque[str] = deque(maxlen=max_scan)
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                tail.append(line)
+    out: list[dict] = []
+    for line in tail:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("captured_at", "") > since:
+            out.append(rec)
+    out.sort(key=lambda r: r.get("captured_at", ""))  # oldest-first
+    return out[max(0, offset): max(0, offset) + max(1, limit)]
