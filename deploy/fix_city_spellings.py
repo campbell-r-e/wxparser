@@ -36,6 +36,7 @@ CORRECTIONS: dict[str, list[str]] = {
     "Terre Haute": [
         "Terrehold", "Terrehald", "Terrehalt", "Terrahold", "Terrahaut",
         "Terrell", "Terrelld", "Terrellt", "Terre Hold", "Terre Halt",
+        "Terreault",  # "...79 Edterreault and 80 Ed Evansville..."
     ],
     # "... at Champaign, Illinois ..." — homophones of the French word.
     "Champaign": [
@@ -45,6 +46,7 @@ CORRECTIONS: dict[str, list[str]] = {
     "Lima": [
         "Lyle", "Laima", "Laimo", "Loomo", "Lulule", "Lulevel",
         "Lyme", "Lima Ohio", "Leema",
+        "Limo", "Lime",  # "...Lima, Ohio, just outside Indiana, it was sunny..."
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [
@@ -52,7 +54,7 @@ CORRECTIONS: dict[str, list[str]] = {
     ],
     # "... at Marion ..." (MAIR-ee-un) — heard as a three-syllable name.
     "Marion": [
-        "Merriam", "Meridian", "Mary Ann", "Marian",
+        "Merriam", "Meridian", "Mary Ann", "Marian", "Merion",
     ],
     # "... at Louisville ..." — the out-of-state tail slot after Cincinnati;
     # the decoder collapses the name to a fragment ("...at Blue or more?").
