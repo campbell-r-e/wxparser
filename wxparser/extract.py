@@ -160,7 +160,7 @@ _DECADE_WORDS = {
     # recurring STT garbles of the decade words, always in a "highs in the
     # lower <X>" context so they're safe to fold to the intended decade.
     "naddies": 90, "netties": 90, "negies": 90, "nadies": 90, "naughties": 90,
-    "aidies": 80, "aighties": 80, "eddies": 80,
+    "naggies": 90, "aidies": 80, "aighties": 80, "eddies": 80, "adias": 80,
 }
 _RE_DECADE_WORD = "|".join(_DECADE_WORDS)
 
