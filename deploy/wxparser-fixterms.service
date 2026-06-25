@@ -1,0 +1,14 @@
+[Unit]
+Description=wxparser — retro-fix STT term mis-hearings in stored transcripts (Chants of Brain -> Chance of Rain, etc.)
+After=wxparser.service
+Wants=wxparser.service
+
+[Service]
+Type=oneshot
+User=creed
+Group=creed
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+# Reads/rewrites transcripts/reports.jsonl that the capture service appends to.
+WorkingDirectory=/home/creed/wxparser
+ExecStart=/usr/bin/python3 /home/creed/wxparser/deploy/fix_stt_terms.py

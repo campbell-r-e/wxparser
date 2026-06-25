@@ -18,6 +18,10 @@ import re
 # canonical term -> consistent STT mis-hearings folded into it
 TERM_CORRECTIONS: dict[str, list[str]] = {
     "Highs": ["Pies"],
+    # "Chance of Rain" is consistently heard as "Chants of Brain"; neither
+    # "chants" nor "brain" appears in legit NWR vocabulary, so fold each word.
+    "Chance": ["Chants"],
+    "Rain": ["Brain"],
 }
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [

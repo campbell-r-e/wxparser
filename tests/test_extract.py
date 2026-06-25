@@ -196,3 +196,9 @@ def test_correct_terms_pies_to_highs():
     fc.update("Saturday, mostly sunny.")
     fc.update(correct_terms("Pies around 80."))
     assert {p["period"]: p for p in fc.snapshot()}["Saturday"]["high_f"] == 80
+
+
+def test_correct_terms_chants_of_brain_to_chance_of_rain():
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Chants of Brain 90% for Friday") == "Chance of Rain 90% for Friday"
+    assert correct_terms("a chants of brain") == "a chance of rain"
