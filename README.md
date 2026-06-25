@@ -102,7 +102,10 @@ Generic and city-agnostic — one endpoint per condition, returning every city t
 GET /conditions                  → available conditions (index)
 GET /conditions/{condition}      → every city's latest value (temperature, humidity,
                                    pressure, dewpoint, wind, sky, ...); accepts friendly
-                                   names or stored keys (temperature_f, humidity_pct, ...)
+                                   names or stored keys (temperature_f, humidity_pct, ...).
+                                   Each reading carries age_minutes + a stale flag
+                                   (older than WX_STALE_AFTER_MIN); ?fresh=1 hides stale,
+                                   ?stale_after=N overrides the threshold
 GET /conditions/history?condition=&city=&from=&to=&limit=
                                  → historical readings between two times
 GET /forecast                    → latest forecast for all heard cities/areas

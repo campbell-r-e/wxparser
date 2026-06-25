@@ -55,6 +55,33 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self.min_sightings
 
+    def _stale_after(self, q: dict) -> int:
+        try:
+            return max(1, int(q.get("stale_after", self.cfg.condition_stale_after_min)))
+        except (ValueError, TypeError):
+            return self.cfg.condition_stale_after_min
+
+    def _annotate_age(self, rows: list, q: dict) -> list:
+        """Add age_minutes + stale to each reading (by captured_at); ?fresh=1
+        drops the stale ones."""
+        threshold = self._stale_after(q)
+        now = datetime.now(timezone.utc)
+        out = []
+        for r in rows:
+            ca = r.get("captured_at")
+            if ca:
+                age = (now - datetime.strptime(ca, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=timezone.utc)).total_seconds() / 60
+                r["age_minutes"] = round(age, 1)
+                r["stale"] = age > threshold
+            else:
+                r["age_minutes"] = None
+                r["stale"] = None
+            if q.get("fresh") in ("1", "true") and r.get("stale"):
+                continue
+            out.append(r)
+        return out
+
     def _link_details(self, alert: dict) -> dict:
         """Attach the spoken-detail transcripts that fall in this alert's window
         (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
@@ -89,8 +116,12 @@ class _Handler(BaseHTTPRequestHandler):
                     "/forecast", "/forecast/history", "/transcripts",
                     "/alerts/active", "/alerts/details", "/health"]})
             elif path == "/conditions":
+                conds = self.db.list_conditions(self._min(q))
+                for c in conds:  # reuse age annotation against each condition's latest
+                    c["captured_at"] = c.get("latest")
+                conds = self._annotate_age(conds, dict(q, fresh=""))  # never drop on index
                 self._send({"min_sightings": self._min(q),
-                            "conditions": self.db.list_conditions(self._min(q))})
+                            "stale_after_min": self._stale_after(q), "conditions": conds})
             elif parts[:2] == ["conditions", "history"]:
                 cond = _canon(q.get("condition", ""))
                 if not cond:
@@ -104,8 +135,9 @@ class _Handler(BaseHTTPRequestHandler):
             elif parts[0] == "conditions" and len(parts) == 2:
                 cond = _canon(parts[1])
                 m = self._min(q)
+                cities = self._annotate_age(self.db.latest_for_condition(cond, m), q)
                 self._send({"condition": cond, "min_sightings": m,
-                            "cities": self.db.latest_for_condition(cond, m)})
+                            "stale_after_min": self._stale_after(q), "cities": cities})
             elif path == "/forecast":
                 self._send({"forecasts": self.db.latest_forecasts()})
             elif parts[:2] == ["forecast", "history"]:
