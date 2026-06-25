@@ -111,6 +111,9 @@ export so **every row in every store is reachable with no silent truncation**:
 Snapshot & discovery
 GET /now?city=                   → one call: a city's full current ob + the regional
                                    roundup + the latest forecast + active alerts
+GET /bulletin?city=              → plain-text read-on-air net bulletin (EmComm/SKYWARN)
+GET /sitrep?city=                → plain-text situation report (Winlink-pasteable/printable)
+GET /aprs?city=&format=text      → APRS weather report + alert bulletins (RF beacon)
 GET /cities                      → cities with data, each with first/last_seen + count
 GET /city/{city}                 → every current condition for one city (the full ob)
 
@@ -263,6 +266,7 @@ python3 -m tests.test_db        # PostgreSQL store, history, pagination, export 
 python3 -m tests.test_health    # fail-loud pipeline health assessment
 python3 -m tests.test_trust     # STT trust scoring
 python3 -m tests.test_notify    # opt-in webhook push
+python3 -m tests.test_formats   # EmComm bulletin / sitrep / APRS formats
 ```
 
 ## License

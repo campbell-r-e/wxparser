@@ -6,6 +6,7 @@ ISO-8601 UTC (`2026-06-25T21:39:49Z`). Examples assume `H=http://<host>:8080`.
 
 - [1. Quick start](#1-quick-start)
 - [2. The snapshot — `/now`](#2-the-snapshot--now)
+- [2a. EmComm formats — `/bulletin`, `/sitrep`, `/aprs`](#2a-emcomm-formats)
 - [3. Discovery — `/cities`, `/city`, `/conditions`](#3-discovery)
 - [4. History & pagination](#4-history--pagination)
 - [5. Incremental sync — `/export`](#5-incremental-sync--export)
@@ -64,6 +65,63 @@ and any active alerts — already annotated with freshness and trust.
 - `?city=Anderson` snapshots a different city (nearby cities carry only temperature).
 - `?min=1` lowers the sightings filter (default 2 — see §3); `?stale_after=30` overrides
   the staleness threshold (default 60 min); `?fresh=1` drops stale rows.
+
+---
+
+## 2a. EmComm formats
+
+Operator-ready renderings of the same snapshot, for amateur-radio emergency comms /
+SKYWARN. All carry the authoritative-vs-advisory distinction so you never relay
+transcribed STT as fact. Pass `?city=` to target a city (defaults to the home city).
+
+### `/bulletin` — read-on-air net bulletin (`text/plain`)
+
+```bash
+curl -s $H/bulletin
+```
+
+```
+WX BULLETIN -- KJY93 Muncie -- 2026-06-25 2159Z
+
+** ACTIVE WARNINGS (SAME -- authoritative) **
+  TORNADO WARNING -- Delaware County, IN -- until 2230Z  ** SPOTTERS ACTIVATED **
+
+CURRENT (advisory -- transcribed from voice):
+  Temp 80F  Sky sunny  Wind southwest at 15  Humidity 54%  Pressure 29.94 falling
+
+FORECAST (advisory):
+  Tonight: low 61, mostly cloudy, rain 50%
+  ...
+```
+
+Warnings come first (authoritative SAME), with **SPOTTERS ACTIVATED** flagged when the
+narrative requested it — net control reads it verbatim.
+
+### `/sitrep` — Winlink-pasteable / printable situation report (`text/plain`)
+
+```bash
+curl -s $H/sitrep | tee sitrep.txt        # paste into Winlink, or print for the EOC wall
+```
+
+A fuller report: source/disclaimer header, active warnings (with spoken detail), labelled
+current conditions (stale values marked `*`), the regional temperature roundup, and the full
+forecast.
+
+### `/aprs` — RF beacon strings
+
+```bash
+curl -s $H/aprs                 # JSON: { weather_report, bulletins }
+curl -s "$H/aprs?format=text"   # plain lines, ready to beacon
+```
+
+```
+_06252159c225s015g...t080h54b10139      ← APRS positionless weather report
+:BLN1WX   :No active NWS warnings KJY93  ← APRS bulletin (one per active alert, body ≤67)
+```
+
+The weather report encodes wind direction (text→degrees), speed, temperature (°F), humidity,
+and pressure (inHg→tenths-mb) in standard APRS form. Pipe the `text` form into your APRS
+beacon/TNC. Each active SAME alert becomes a `:BLNnWX   :` bulletin line.
 
 ---
 
