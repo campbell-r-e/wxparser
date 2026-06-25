@@ -20,13 +20,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import queue
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from collections.abc import Iterator
+
+# STT queue priorities (lower = transcribed first). Spoken warning narratives
+# captured just after a SAME burst jump ahead of routine forecast/conditions.
+_PRIO_ALERT = 0
+_PRIO_NORMAL = 10
 
 from .capture import stream_frames
 from .config import CONFIG, Config
@@ -119,7 +126,7 @@ def run_file(wav_path: Path, cfg: Config) -> int:
 
 
 def _stt_worker(
-    q: "queue.Queue[tuple[Segment, str] | None]",
+    q: "queue.PriorityQueue",
     cfg: Config,
     once: bool,
     deduper: TextDeduper,
@@ -129,12 +136,14 @@ def _stt_worker(
 ) -> None:
     while not _STOP.is_set():
         try:
-            item = q.get(timeout=0.5)
+            prio, _seq, payload = q.get(timeout=0.5)
         except queue.Empty:
             continue
-        if item is None:  # poison pill
+        if payload is None:  # poison pill
             break
-        seg, digest = item
+        seg, digest = payload
+        if prio == _PRIO_ALERT:
+            print(f"  >> PRIORITY (alert narrative) {seg.duration_s:5.1f}s", flush=True)
         try:
             transcript = transcribe_samples(seg.samples, cfg)
         except Exception as e:  # keep the service alive on a single bad segment
@@ -200,13 +209,23 @@ def run_live(cfg: Config, once: bool = False) -> int:
             break
     if readings or fcs:
         print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas)", flush=True)
-    q: "queue.Queue[tuple[Segment, str] | None]" = queue.Queue()
+    q: "queue.PriorityQueue" = queue.PriorityQueue()
+    seq = itertools.count()  # tie-breaker so PriorityQueue never compares payloads
     worker = threading.Thread(
         target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db), daemon=True
     )
     worker.start()
 
-    monitor = SAMEMonitor(cfg, lambda m: _emit_alert(m, cfg, db)) if cfg.same_enabled else None
+    # SAME decode runs here on the producer thread; when a burst fires, open a
+    # priority window so the spoken narrative that follows is transcribed first.
+    alert_until = [0.0]
+
+    def _on_alert(m: SAMEMessage) -> None:
+        _emit_alert(m, cfg, db)
+        alert_until[0] = time.monotonic() + cfg.alert_priority_window_s
+        print(f"  >> alert priority window open ({cfg.alert_priority_window_s:.0f}s)", flush=True)
+
+    monitor = SAMEMonitor(cfg, _on_alert) if cfg.same_enabled else None
     if monitor is not None:
         print("  (SAME alert decoding enabled)", flush=True)
 
@@ -228,15 +247,17 @@ def run_live(cfg: Config, once: bool = False) -> int:
                 continue
             gate.add(vec)
             n_new += 1
-            q.put((seg, digest))
+            prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL
+            q.put((prio, next(seq), (seg, digest)))
             print(
-                f"  + novel  {seg.duration_s:5.1f}s sim={sim:.3f} -> queued "
+                f"  + novel  {seg.duration_s:5.1f}s sim={sim:.3f} -> queued"
+                f"{' PRIORITY' if prio == _PRIO_ALERT else ''} "
                 f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]",
                 flush=True,
             )
     finally:
         _STOP.set()
-        q.put(None)
+        q.put((-1, next(seq), None))  # highest-priority poison pill -> prompt exit
         worker.join(timeout=5)
     return 0
 

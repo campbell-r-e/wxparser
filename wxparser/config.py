@@ -137,6 +137,10 @@ class Config:
     # ones captured this many seconds before the digital burst (a heads-up can
     # precede the tones); the window runs to the alert's expiry.
     alert_link_pre_buffer_s: int = int(_env("WX_ALERT_LINK_PREBUFFER", "120"))
+    # after a SAME burst fires, segments captured within this window are the
+    # spoken warning narrative — jump them to the FRONT of the STT queue so the
+    # warning transcribes ahead of routine forecast/conditions backlog.
+    alert_priority_window_s: float = float(_env("WX_ALERT_PRIORITY_WINDOW", "120"))
 
     # --- Phase 4: SAME alert decoding ---
     same_enabled: bool = _env("WX_SAME", "1") == "1"

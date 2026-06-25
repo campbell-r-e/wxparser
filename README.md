@@ -75,7 +75,9 @@ stretches where the loop just repeats.
   over-the-air Required Weekly Test). The **spoken narrative** that follows is transcribed and
   parsed into structured detail (expiry time, storm motion, threats, locations, spotter
   activation), then **linked back to the SAME alert** by capture-time window — so a query
-  returns both *what* was issued and *what was said* about it.
+  returns both *what* was issued and *what was said* about it. When a SAME burst fires, the
+  segments that follow get **priority in the STT queue**, so the warning narrative transcribes
+  ahead of routine forecast/conditions backlog even when STT is busy.
 
 ## Data model (PostgreSQL, db `wxparser`)
 
@@ -163,6 +165,8 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STT_PROMPT` | local place names (on) | whisper vocabulary-bias prompt; **must be `""` if you point `WX_WHISPER_MODEL` back at `tiny.en`**, which degenerates with any prompt |
 | `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
 | `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
+| `WX_ALERT_PRIORITY_WINDOW` | `120` | seconds after a SAME burst that captured segments jump the STT queue (warning narrative transcribes ahead of routine backlog) |
+| `WX_STALE_AFTER_MIN` | `60` | conditions reading older than this is flagged `stale` |
 | `WX_VAD_DBFS` | `-35` | VAD speech threshold |
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
 | `WX_PG_HOST/PORT/DATABASE/USER` | `127.0.0.1/5432/wxparser/wxparser` | Postgres (local trust) |
