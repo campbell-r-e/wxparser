@@ -47,6 +47,7 @@ CORRECTIONS: dict[str, list[str]] = {
         "Lyle", "Laima", "Laimo", "Loomo", "Lulule", "Lulevel",
         "Lyme", "Lima Ohio", "Leema",
         "Limo", "Lime",  # "...Lima, Ohio, just outside Indiana, it was sunny..."
+        "La Mile", "La",  # post-Champaign slot (parallels "...69 at Lyle...")
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [
@@ -57,9 +58,15 @@ CORRECTIONS: dict[str, list[str]] = {
         "Merriam", "Meridian", "Mary Ann", "Marian", "Merion",
     ],
     # "... at Louisville ..." — the out-of-state tail slot after Cincinnati;
-    # the decoder collapses the name to a fragment ("...at Blue or more?").
+    # the decoder collapses the name to a fragment ("...at Blue or more?", or
+    # "...73 at Luhl" parallel to the clean "...73 at Louisville").
     "Louisville": [
-        "Blue",
+        "Blue", "Luhl",
+    ],
+    # "... at Portland ..." (Portland, IN) — slot after Marion ("63 at Portland"
+    # heard as "63 at Ridgebrough").
+    "Portland": [
+        "Ridgebrough",
     ],
     # "... at Dayton ..." — confirmed by temperature cross-reference: the
     # "Deepan"/"Deep" readings (64F @ 13Z, 78F @ 22Z on 2026-06-24) match KDAY's
