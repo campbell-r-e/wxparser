@@ -45,6 +45,7 @@ from .config import CONFIG, Config
 from .db import Database
 from .health import Heartbeat, assess
 from .store import count_reports, query_reports, reports_since
+from .trust import mark as mark_trust
 
 
 def _now_iso() -> str:
@@ -155,6 +156,7 @@ class _Handler(BaseHTTPRequestHandler):
         threshold = self._stale_after(q)
         now = datetime.now(timezone.utc)
         for fc in forecasts:
+            fc["source"] = "stt"; fc["advisory"] = True  # transcribed, not SAME
             ia = fc.get("issued_at")
             if ia:
                 age = (now - datetime.strptime(ia, "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -163,9 +165,17 @@ class _Handler(BaseHTTPRequestHandler):
                 fc["stale"] = age > threshold
         return forecasts
 
+    @staticmethod
+    def _authoritative(alert: dict) -> dict:
+        """Tag a SAME alert as the authoritative (digital, not transcribed) source."""
+        alert["source"] = "same"
+        alert["authoritative"] = True
+        return alert
+
     def _link_details(self, alert: dict) -> dict:
         """Attach the spoken-detail transcripts that fall in this alert's window
         (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
+        alert = self._authoritative(alert)
         try:
             ca = datetime.strptime(alert["captured_at"], "%Y-%m-%dT%H:%M:%SZ")
             frm = (ca - timedelta(seconds=self.cfg.alert_link_pre_buffer_s)
@@ -202,11 +212,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_sse(q.get("since"))
             elif path == "/now":
                 city = q.get("city", self.cfg.primary_city)
-                conds = self._annotate_age(
-                    self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh=""))
-                roundup = self._annotate_age(
+                conds = mark_trust(self._annotate_age(
+                    self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh="")))
+                roundup = mark_trust(self._annotate_age(
                     [r for r in self.db.latest_for_condition("temperature_f", self._min(q))
-                     if r["city"].lower() != city.lower()], dict(q, fresh=""))
+                     if r["city"].lower() != city.lower()], dict(q, fresh="")))
                 forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
                 alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
                 self._send({"generated_at": _now_iso(), "city": city,
@@ -217,7 +227,8 @@ class _Handler(BaseHTTPRequestHandler):
                             "cities": self.db.cities(self._min(q))})
             elif parts[0] == "city" and len(parts) == 2:
                 m = self._min(q)
-                conds = self._annotate_age(self.db.all_conditions_for_city(parts[1], m), q)
+                conds = mark_trust(self._annotate_age(
+                    self.db.all_conditions_for_city(parts[1], m), q))
                 self._send({"city": parts[1], "min_sightings": m,
                             "stale_after_min": self._stale_after(q), "conditions": conds})
             elif path == "/conditions":
@@ -243,7 +254,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif parts[0] == "conditions" and len(parts) == 2:
                 cond = _canon(parts[1])
                 m = self._min(q)
-                cities = self._annotate_age(self.db.latest_for_condition(cond, m), q)
+                cities = mark_trust(self._annotate_age(self.db.latest_for_condition(cond, m), q))
                 self._send({"condition": cond, "min_sightings": m,
                             "stale_after_min": self._stale_after(q), "cities": cities})
             elif path == "/forecast":
@@ -304,6 +315,8 @@ class _Handler(BaseHTTPRequestHandler):
                     q.get("from"), q.get("to"), q.get("event"), limit, offset)
                 if q.get("details") in ("1", "true"):
                     rows = [self._link_details(a) for a in rows]
+                else:
+                    rows = [self._authoritative(a) for a in rows]
                 self._send({"from": q.get("from"), "to": q.get("to"),
                             "event": q.get("event"), "alerts": rows,
                             **self._paging(total, len(rows), limit, offset)})
