@@ -107,6 +107,17 @@ def test_forecast_skips_climate_outlook():
     assert fc.snapshot() == []
 
 
+def test_night_period_never_gets_a_high():
+    # grouped extended phrasing "Sunday night through Wednesday ... highs in the
+    # lower 90s" must not put that daytime high on the night period.
+    fc = ForecastAggregator()
+    fc.update("for Sunday night through Wednesday, mostly clear, hot. "
+              "Highs in the lower 90s. Lows in the upper 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert "high_f" not in s["Sunday Night"]
+    assert s["Sunday Night"]["low_f"] == 68
+
+
 def test_forecast_3_to_7_day_is_not_skipped_as_outlook():
     # the "3-7 day forecast" is a real extended forecast (Saturday/Sunday highs),
     # NOT the "8-14 day outlook" climate product — it must still parse.

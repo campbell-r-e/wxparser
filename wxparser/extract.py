@@ -194,6 +194,11 @@ def period_header(text: str) -> str | None:
     return m.group(1).strip().title() if m else None
 
 
+def _is_night_period(name: str) -> bool:
+    n = name.lower()
+    return n in ("tonight", "overnight", "rest of tonight") or n.endswith(" night")
+
+
 class ForecastAggregator:
     """Builds ordered forecast periods from the in-order segment stream.
 
@@ -249,6 +254,12 @@ class ForecastAggregator:
                 continue
             self.periods.setdefault(period, {"period": period})
             fields = extract_forecast_fields(chunk)
+            # Night periods only forecast a low. A daytime high in a night chunk
+            # is a leak — usually from a grouped extended period ("Sunday night
+            # through Wednesday ... highs in the lower 90s"), where the high
+            # belongs to the daytime days, not the night.
+            if _is_night_period(period):
+                fields.pop("high_f", None)
             if fields:
                 self.periods[period].update(fields)
                 changed = True
