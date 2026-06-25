@@ -223,6 +223,23 @@ _RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
 _RE_RECAP = re.compile(
     r"\b(climate summary|yesterday|normal (?:high|low)|record (?:high|low)"
     r"|(?:high|low) temperature was|degree days?)\b", re.I)
+# Lead-in phrases that introduce the regional roundup right after the home-station
+# observation ("... and falling. Nearby, at Indianapolis ...").
+_RE_ROUNDUP_LEADIN = re.compile(
+    r"\b(?:nearby|elsewhere|just outside|other (?:locations|cities)|"
+    r"across (?:the|central|northern|southern|indiana))\b", re.I)
+
+
+def _roundup_start(text: str) -> int:
+    """Index where the regional roundup begins, so the home-station observation
+    before it can be parsed in isolation. Earliest of a roundup lead-in phrase or
+    the first 'NN at <City>' nearby temperature; len(text) if neither is present."""
+    idx = len(text)
+    if m := _RE_ROUNDUP_LEADIN.search(text):
+        idx = min(idx, m.start())
+    if m := _RE_NEARBY.search(text):
+        idx = min(idx, m.start())
+    return idx
 
 
 def _norm_city(name: str) -> str:
@@ -249,23 +266,36 @@ class CityConditionsAggregator:
         """Returns every (city, condition) reading heard in this text, with the
         current voted value/votes/total. Each is a 'sighting' the store counts."""
         readings: list[dict] = []
-        nearby = [(int(v), _norm_city(c)) for v, c in _RE_NEARBY.findall(text)]
-        if nearby:
-            # a nearby list: the temps belong to the named cities
-            for val, city in nearby:
-                if -60 <= val <= 130:
-                    readings.append(self._reading(city, "temperature_f", val))
-            return readings
-        # standalone conditions ("the temperature was N", no "at <City>") are always
-        # the station's home city; attribute them there rather than to a possibly
-        # mis-heard header city ("At Monthsy ...").
-        # ...but skip climate-summary/almanac recaps — those quote yesterday's or
-        # normal highs/lows, not live conditions, and would poison the primary
-        # city's current readings.
-        if _RE_RECAP.search(text):
-            return readings
-        for cond, val in extract_observation(text).items():
-            readings.append(self._reading(self.primary_city, cond, val))
+        # Regional-roundup temps ("... 74 at Marion ...") belong to the named cities.
+        nearby = _RE_NEARBY.findall(text)
+        for v, c in nearby:
+            val, city = int(v), _norm_city(c)
+            if -60 <= val <= 130:
+                readings.append(self._reading(city, "temperature_f", val))
+
+        # The home-station observation, when present, leads its segment and can be
+        # FOLLOWED by the roundup in the same segment. Parse the primary block in
+        # isolation (from its "At Muncie, ..." header up to where the roundup
+        # begins) so a shared segment still records the home obs — the bug this
+        # fixes: a trailing "74 at Marion" used to drop the whole Muncie reading.
+        primary_block: str | None = None
+        for m in _RE_CITY_HEADER.finditer(text):
+            if _norm_city(m.group(1)) == self.primary_city:
+                tail = text[m.start():]
+                primary_block = tail[:_roundup_start(tail)]
+                break
+        if primary_block is None and not nearby:
+            # No "At <City>" header and no roundup: a bare standalone observation
+            # ("the temperature was N ...") is the station's home city. (When a
+            # roundup IS present without a home header, attribute nothing to the
+            # primary city, so a roundup lead-in sentence can't poison it.)
+            primary_block = text
+
+        # skip climate-summary/almanac recaps — they quote yesterday's or normal
+        # highs/lows, not live conditions, and would poison the primary readings.
+        if primary_block and not _RE_RECAP.search(primary_block):
+            for cond, val in extract_observation(primary_block).items():
+                readings.append(self._reading(self.primary_city, cond, val))
         return readings
 
     def _reading(self, city: str, condition: str, value) -> dict:
@@ -369,7 +399,11 @@ _RE_HAIL = re.compile(
     r"|hail\s*(?:up to\s*|of\s*)?(\d(?:\.\d+)?)\s*inch"
     r"|(quarter|nickel|penny|ping[\s-]?pong|golf[\s-]?ball|half[\s-]?dollar|"
     r"tennis[\s-]?ball|baseball)\s*[- ]?siz", re.I)
-_RE_WIND = re.compile(
+# Alert-narrative wind SPEED ("winds to 60 mph", "gusts up to 70 mph"). Distinct
+# from the current-conditions wind-DIRECTION regex (_RE_WIND, defined above) —
+# they previously shared the name, and this one silently shadowed it, disabling
+# wind extraction in current conditions.
+_RE_ALERT_WIND = re.compile(
     r"(?:winds?|gusts?)\s*(?:up to|of|to|near|around)?\s*(\d{2,3})\s*(?:mph|miles per hour)",
     re.I)
 # "near Yorktown", "over the Muncie area", "approaching Albany" — place after a
@@ -399,7 +433,7 @@ def extract_alert_details(text: str) -> dict:
     if m := _RE_HAIL.search(text):
         size = next((g for g in m.groups() if g), "")
         threats.append(f"hail {size.strip()}".strip() + ("in" if re.match(r"^\d", size) else ""))
-    if m := _RE_WIND.search(text):
+    if m := _RE_ALERT_WIND.search(text):
         threats.append(f"wind {m.group(1)}mph")
     if _RE_FLASH_FLOOD.search(text):
         threats.append("flash flood")

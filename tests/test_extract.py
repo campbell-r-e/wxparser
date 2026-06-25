@@ -7,6 +7,7 @@ from wxparser.extract import (
     ConditionsAggregator,
     ForecastAggregator,
     extract_alert_details,
+    extract_forecast_fields,
     extract_observation,
     parse_temp_value,
     period_header,
@@ -96,8 +97,6 @@ def test_precip_accepts_percent_sign_and_word():
     assert extract_forecast_fields("Chance of rain 40%.")["precip_pct"] == 40
     assert extract_forecast_fields("Chance of rain 40 percent.")["precip_pct"] == 40
     assert extract_forecast_fields("Chance of precipitation 90%.")["precip_pct"] == 90
-    # a high mentioned under Tonight must not leak into Saturday and vice-versa
-    assert "high_f" not in periods["Tonight"]
 
 
 def test_prime_conditions_from_snapshot():
@@ -129,6 +128,33 @@ def test_city_conditions_primary_and_nearby():
     assert nm[("Portland", "temperature_f")] == 63
     # a nearby temp must NOT be attributed to the primary city
     assert ("Muncie", "temperature_f") not in nm
+
+
+def test_primary_obs_with_trailing_roundup_in_same_segment():
+    # regression: when one segment carries BOTH the home-station observation and a
+    # trailing roundup temp, the whole Muncie obs used to be dropped (only the
+    # nearby "Marion 74" was recorded), freezing /current for hours.
+    agg = CityConditionsAggregator()
+    out = agg.update(
+        "At noon, at Muncie, it was partly sunny. The temperature was 76 degrees, "
+        "and the relative humidity 68%. The wind was southwest at 8 miles an hour. "
+        "The barometric pressure was 29.97 inches and falling. Nearby, 74 at Marion."
+    )
+    m = {(r["city"], r["condition"]): r["value"] for r in out}
+    assert m[("Muncie", "temperature_f")] == 76
+    assert m[("Muncie", "wind")] == "southwest at 8"
+    assert m[("Muncie", "sky")] == "partly sunny"
+    assert m[("Muncie", "pressure_in")] == 29.97
+    assert m[("Muncie", "pressure_trend")] == "falling"
+    assert m[("Marion", "temperature_f")] == 74
+
+
+def test_conditions_wind_direction_extracted():
+    # regression: the alert wind-speed regex shadowed _RE_WIND, so current-
+    # conditions wind direction never extracted.
+    o = extract_observation("The wind was northwest at 12 miles an hour.")
+    assert o["wind"] == "northwest at 12"
+    assert o["wind_speed_mph"] == 12
 
 
 def test_forecast_area_detection():
