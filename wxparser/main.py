@@ -32,11 +32,17 @@ from .capture import stream_frames
 from .config import CONFIG, Config
 from .db import Database
 from .dedup import TextDeduper
-from .extract import CityConditionsAggregator, ForecastAggregator
+from .extract import CityConditionsAggregator, ForecastAggregator, extract_alert_details
 from .fingerprint import Fingerprinter, NoveltyGate
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_stream
-from .store import append_report, build_alert, build_report, load_recent_reports
+from .store import (
+    ALERT_PRODUCTS,
+    append_report,
+    build_alert,
+    build_report,
+    load_recent_reports,
+)
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 from .store import _utc_now_iso
 
@@ -53,8 +59,9 @@ def _save(
     duration_s: float,
     fingerprint: str,
     deduper: TextDeduper | None = None,
-) -> bool:
-    """Build, text-dedup, and persist a report. Returns True if it was saved."""
+) -> dict | None:
+    """Build, text-dedup, and persist a report. Returns the saved report (or None
+    if it was dropped as a duplicate)."""
     report = build_report(transcript, cfg, duration_s=duration_s, fingerprint=fingerprint)
     tag = "NEW"
     if deduper is not None:
@@ -64,7 +71,7 @@ def _save(
                 f"  . text-dup skip {duration_s:5.1f}s ({report['product_type']})",
                 flush=True,
             )
-            return False
+            return None
         report["supersedes"] = res.supersedes
         tag = "UPD" if res.kind == "update" else "NEW"
     path = append_report(report, cfg)
@@ -76,7 +83,7 @@ def _save(
     if report.get("supersedes"):
         print(f"    (supersedes {report['supersedes']})", flush=True)
     print(f"    {transcript.text}", flush=True)
-    return True
+    return report
 
 
 def _tee_to_same(
@@ -147,7 +154,17 @@ def _stt_worker(
             if forecast.update(text) and db is not None:
                 db.write_forecast(forecast.snapshot(), now, city=forecast.city)
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
-            if once and saved:
+            if saved is not None and db is not None:
+                # structure the spoken narrative of warnings/statements so it can
+                # be linked to the SAME header at query time
+                details = extract_alert_details(text)
+                if details or saved["product_type"] in ALERT_PRODUCTS:
+                    db.write_alert_detail(
+                        saved["id"], now, saved["product_type"], details, text)
+                    if details:
+                        print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}",
+                              flush=True)
+            if once and saved is not None:
                 _STOP.set()
         q.task_done()
 

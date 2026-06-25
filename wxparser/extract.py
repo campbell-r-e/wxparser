@@ -342,3 +342,74 @@ class ConditionsAggregator:
             if b is not None:
                 out[k] = {"value": b.value, "votes": b.votes, "total": b.total, "source": "voice"}
         return out
+
+
+# --------------------------------------------------------------------------- #
+# Spoken warning / statement narrative -> structured details (Phase 7)
+# --------------------------------------------------------------------------- #
+# The SAME digital header gives the event type, counties, and expiry. The spoken
+# narrative that follows carries the rest — when it expires in plain language,
+# where the threat is, how it's moving, what the hazard is, and whether spotters
+# are activated. These are STT-transcribed, so place names may be garbled; the
+# numbers/times/keywords survive well and are what we pull here.
+_TIME = r"\d{1,2}(?::\d{2})?\s*(?:[ap]\.?\s?m\.?)|\d{3,4}\s*(?:[ap]\.?\s?m\.?)|noon|midnight"
+_RE_UNTIL = re.compile(rf"until\s+({_TIME})", re.I)
+_DIR = r"north|south|east|west|northeast|northwest|southeast|southwest"
+_RE_MOTION = re.compile(
+    rf"\bmov(?:ing|ed)\s+(?:to\s+the\s+)?({_DIR})\s+at\s+(\d{{1,3}})\s*(?:mph|miles per hour)",
+    re.I)
+_RE_TORNADO = re.compile(r"\btornado(?:es)?\b", re.I)
+_RE_FLASH_FLOOD = re.compile(r"\bflash\s+flood", re.I)
+_RE_HAIL = re.compile(
+    r"(\d(?:\.\d+)?)\s*inch(?:es)?\s*(?:hail|in diameter)"
+    r"|hail\s*(?:up to\s*|of\s*)?(\d(?:\.\d+)?)\s*inch"
+    r"|(quarter|nickel|penny|ping[\s-]?pong|golf[\s-]?ball|half[\s-]?dollar|"
+    r"tennis[\s-]?ball|baseball)\s*[- ]?siz", re.I)
+_RE_WIND = re.compile(
+    r"(?:winds?|gusts?)\s*(?:up to|of|to|near|around)?\s*(\d{2,3})\s*(?:mph|miles per hour)",
+    re.I)
+# "near Yorktown", "over the Muncie area", "approaching Albany" — place after a
+# locator preposition. STT may garble the name, but capturing it is still useful.
+_RE_NEAR = re.compile(rf"\b(?:near|over|approaching|just (?:north|south|east|west) of|from)\s+(?:the\s+)?({_CITY})")
+_RE_SPOTTER = re.compile(
+    r"spotter activation|weather spotters?|spotters?\s+(?:are\s+|should\s+be\s+)?"
+    r"(?:needed|activated|encouraged|in the area|on alert)|report(?:ing)? (?:any )?severe weather",
+    re.I)
+
+
+def extract_alert_details(text: str) -> dict:
+    """Pull structured fields from a spoken warning/statement transcript.
+
+    Returns {} when nothing alert-like is found, so callers can cheaply tell a
+    real narrative from a routine segment.
+    """
+    d: dict = {}
+    if m := _RE_UNTIL.search(text):
+        d["until"] = re.sub(r"\s+", " ", m.group(1).strip()).rstrip(" .")
+    if m := _RE_MOTION.search(text):
+        d["motion"] = {"direction": m.group(1).lower(), "mph": int(m.group(2))}
+
+    threats: list[str] = []
+    if _RE_TORNADO.search(text):
+        threats.append("tornado")
+    if m := _RE_HAIL.search(text):
+        size = next((g for g in m.groups() if g), "")
+        threats.append(f"hail {size.strip()}".strip() + ("in" if re.match(r"^\d", size) else ""))
+    if m := _RE_WIND.search(text):
+        threats.append(f"wind {m.group(1)}mph")
+    if _RE_FLASH_FLOOD.search(text):
+        threats.append("flash flood")
+    if threats:
+        d["threats"] = threats
+
+    locs: list[str] = []
+    for c in _RE_NEAR.findall(text):
+        c = _norm_city(c)
+        if c not in locs:
+            locs.append(c)
+    if locs:
+        d["locations"] = locs
+
+    if _RE_SPOTTER.search(text):
+        d["spotter_activation"] = True
+    return d

@@ -22,6 +22,7 @@ wind, sky) or the stored keys (temperature_f, humidity_pct, ...).
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -54,6 +55,20 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self.min_sightings
 
+    def _link_details(self, alert: dict) -> dict:
+        """Attach the spoken-detail transcripts that fall in this alert's window
+        (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
+        try:
+            ca = datetime.strptime(alert["captured_at"], "%Y-%m-%dT%H:%M:%SZ")
+            frm = (ca - timedelta(seconds=self.cfg.alert_link_pre_buffer_s)
+                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            to = alert.get("expires_at") or ca.strftime("%Y-%m-%dT%H:%M:%SZ")
+            alert = dict(alert)
+            alert["spoken"] = self.db.alert_details_between(frm, to)
+        except (KeyError, ValueError):
+            alert = dict(alert, spoken=[])
+        return alert
+
     def _send(self, payload, status: int = 200) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(status)
@@ -72,7 +87,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"endpoints": [
                     "/conditions", "/conditions/{condition}", "/conditions/history",
                     "/forecast", "/forecast/history", "/transcripts",
-                    "/alerts/active", "/health"]})
+                    "/alerts/active", "/alerts/details", "/health"]})
             elif path == "/conditions":
                 self._send({"min_sightings": self._min(q),
                             "conditions": self.db.list_conditions(self._min(q))})
@@ -109,7 +124,17 @@ class _Handler(BaseHTTPRequestHandler):
                             "q": q.get("q"), "product": q.get("product"),
                             "count": len(reports), "transcripts": reports})
             elif path == "/alerts/active":
-                self._send({"alerts": self.db.get_active_alerts()})
+                alerts = self.db.get_active_alerts()
+                if q.get("details", "1") != "0":
+                    alerts = [self._link_details(a) for a in alerts]
+                self._send({"alerts": alerts})
+            elif parts[:2] == ["alerts", "details"]:
+                now = datetime.now(timezone.utc)
+                to = q.get("to") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                frm = q.get("from") or (now - timedelta(hours=24)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ")
+                self._send({"from": frm, "to": to,
+                            "details": self.db.alert_details_between(frm, to)})
             elif path == "/health":
                 self._send({"status": "ok",
                             "conditions": len(self.db.list_conditions()),

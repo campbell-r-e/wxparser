@@ -63,7 +63,12 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
     if cfg.whisper_dynamic_audio_ctx:
         cmd += ["-ac", str(_audio_ctx_for(_wav_duration_s(wav_path), cfg))]
     if cfg.whisper_fast_decode:
-        cmd += ["-bs", "1", "-bo", "1", "-nf", "-mc", "0"]
+        cmd += ["-bs", "1", "-bo", "1", "-nf"]
+        # -mc 0 caps the repetition loop but also drops the --prompt tokens, so
+        # keep a small bounded context when a vocabulary prompt is configured.
+        cmd += ["-mc", str(cfg.whisper_prompt_max_ctx) if cfg.whisper_prompt else "0"]
+    if cfg.whisper_prompt:
+        cmd += ["--prompt", cfg.whisper_prompt]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise STTError(f"whisper-cli failed ({proc.returncode}): {proc.stderr.strip()}")

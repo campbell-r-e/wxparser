@@ -6,6 +6,7 @@ from wxparser.extract import (
     CityConditionsAggregator,
     ConditionsAggregator,
     ForecastAggregator,
+    extract_alert_details,
     extract_observation,
     parse_temp_value,
     period_header,
@@ -139,3 +140,30 @@ def _run():
 
 if __name__ == "__main__":
     _run()
+
+
+def test_extract_alert_details_tornado():
+    d = extract_alert_details(
+        "Tornado warning for Delaware County until 6:15 PM. A tornado was located "
+        "near Yorktown, moving northeast at 40 mph. Weather spotters are activated."
+    )
+    assert d["until"] == "6:15 PM"
+    assert d["motion"] == {"direction": "northeast", "mph": 40}
+    assert "tornado" in d["threats"]
+    assert "Yorktown" in d["locations"]
+    assert d["spotter_activation"] is True
+
+
+def test_extract_alert_details_svr_hail_wind():
+    d = extract_alert_details(
+        "Severe thunderstorm warning until 245 PM. Wind gusts up to 70 mph and "
+        "quarter size hail. The storm was over Albany moving east at 35 miles per hour."
+    )
+    assert d["until"] == "245 PM"
+    assert any("wind 70" in t for t in d["threats"])
+    assert any("hail" in t for t in d["threats"])
+    assert "Albany" in d["locations"]
+
+
+def test_extract_alert_details_none_on_plain_conditions():
+    assert extract_alert_details("At Muncie, it was clear with a temperature of 73 degrees.") == {}

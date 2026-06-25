@@ -75,6 +75,23 @@ _SCHEMA = [
         expires_at TIMESTAMPTZ
     )""",
     "CREATE INDEX IF NOT EXISTS ix_alert_exp ON alerts(expires_at)",
+    # Structured fields parsed from a spoken warning/statement transcript
+    # (extract.extract_alert_details). Keyed by the transcript's report id so
+    # re-hearing the same airing updates in place. Linked to SAME alerts at read
+    # time by capture-time window (the SAME header and the spoken detail arrive
+    # as separate events).
+    """CREATE TABLE IF NOT EXISTS alert_details (
+        report_id TEXT PRIMARY KEY,
+        captured_at TIMESTAMPTZ NOT NULL,
+        product_type TEXT,
+        until_text TEXT,
+        motion JSONB,
+        threats JSONB,
+        locations JSONB,
+        spotter_activation BOOLEAN DEFAULT FALSE,
+        text TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_ad_time ON alert_details(captured_at)",
 ]
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -221,6 +238,47 @@ class Database:
             rw=a.get("raw"), ex=expires,
         )
 
+    def write_alert_detail(self, report_id: str, captured_at: str,
+                           product_type: str, details: dict, text: str = "") -> None:
+        """Persist structured fields parsed from a spoken warning transcript."""
+        ca = _parse_iso(captured_at)
+        self._run(
+            "INSERT INTO alert_details"
+            "(report_id,captured_at,product_type,until_text,motion,threats,"
+            "locations,spotter_activation,text) "
+            "VALUES(:id,:ca,:pt,:ut,CAST(:mo AS jsonb),CAST(:th AS jsonb),"
+            "CAST(:lo AS jsonb),:sp,:tx) "
+            "ON CONFLICT (report_id) DO UPDATE SET "
+            "captured_at=EXCLUDED.captured_at, product_type=EXCLUDED.product_type, "
+            "until_text=EXCLUDED.until_text, motion=EXCLUDED.motion, "
+            "threats=EXCLUDED.threats, locations=EXCLUDED.locations, "
+            "spotter_activation=EXCLUDED.spotter_activation, text=EXCLUDED.text",
+            id=report_id, ca=ca, pt=product_type, ut=details.get("until"),
+            mo=json.dumps(details.get("motion")) if details.get("motion") else None,
+            th=json.dumps(details.get("threats")) if details.get("threats") else None,
+            lo=json.dumps(details.get("locations")) if details.get("locations") else None,
+            sp=bool(details.get("spotter_activation")), tx=text,
+        )
+
+    def alert_details_between(self, frm: str, to: str) -> list[dict]:
+        """Structured spoken-alert details captured in [frm, to] (newest first)."""
+        rows = self._query(
+            "SELECT report_id,captured_at,product_type,until_text,motion,threats,"
+            "locations,spotter_activation,text FROM alert_details "
+            "WHERE captured_at >= :frm AND captured_at <= :to "
+            "ORDER BY captured_at DESC", frm=_parse_iso(frm), to=_parse_iso(to),
+        )
+        out = []
+        for r in rows:
+            out.append({
+                "report_id": r["report_id"], "captured_at": _ts(r["captured_at"]),
+                "product_type": r["product_type"], "until": r["until_text"],
+                "motion": _as_obj(r["motion"]), "threats": _as_obj(r["threats"]),
+                "locations": _as_obj(r["locations"]),
+                "spotter_activation": r["spotter_activation"], "text": r["text"],
+            })
+        return out
+
     # --- readers: conditions --------------------------------------------- #
     def list_conditions(self, min_sightings: int = 1) -> list[dict]:
         rows = self._query(
@@ -310,7 +368,7 @@ class Database:
         return [{"city": r["city"], "condition": r["condition"], "value": _value(r)} for r in rows]
 
     def clear(self) -> None:
-        self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts")
+        self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts, alert_details")
 
     def close(self) -> None:
         with self._lock:

@@ -16,6 +16,20 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+# Local place-name vocabulary for the whisper prompt (KJY93 / east-central
+# Indiana coverage + the regional roundup cities). Natural-text form biases the
+# decoder toward these proper nouns without forcing them.
+_DEFAULT_STT_PROMPT = (
+    "NOAA Weather Radio for east central Indiana. Counties: Delaware, Madison, "
+    "Henry, Randolph, Jay, Blackford, Grant, Wayne, Hancock, Rush, Tipton, "
+    "Hamilton, Howard, Wells, Adams. Cities: Muncie, Anderson, Marion, Portland, "
+    "Hartford City, Winchester, New Castle, Richmond, Yorktown, Albany, Eaton, "
+    "Dunkirk, Alexandria, Elwood, Gas City, Upland, Indianapolis, Fort Wayne, "
+    "Lafayette, Bloomington, Terre Haute, Evansville, Shelbyville, Dayton, "
+    "Cincinnati, Louisville, Champaign, Lima, Chicago."
+)
+
+
 @dataclass(frozen=True)
 class Config:
     # --- Station (KJY93 Muncie, IN) ---
@@ -82,6 +96,18 @@ class Config:
     # decoder repetition-loop pathology that can otherwise wedge one short segment
     # for minutes. Per-segment STT errors are cleaned up by repeat-voting (§8).
     whisper_fast_decode: bool = _env("WX_FAST_DECODE", "1") == "1"
+    # Vocabulary bias (whisper --prompt): seeds the decoder with the local place
+    # names it would otherwise mangle (proper nouns — "Muncie"->"Monthsy", county
+    # names in warnings, etc.). OFF by default: empirically tiny.en degenerates to
+    # "The the..." with ANY initial prompt (its text context is too small to
+    # absorb one), so a prompt destroys transcription on this model. Wired and
+    # ready for a larger model — enable with WX_STT_PROMPT (e.g. set it to
+    # _DEFAULT_STT_PROMPT) once running base.en/small.en, which honor prompts.
+    whisper_prompt: str = _env("WX_STT_PROMPT", "")
+    # Carried-context cap used alongside the prompt: 0 (fast-decode default) caps
+    # the repetition-loop pathology but also suppresses --prompt, so when a prompt
+    # is set we keep a small bounded context instead.
+    whisper_prompt_max_ctx: int = int(_env("WX_PROMPT_MAX_CTX", "64"))
 
     # --- Phase 3: text dedup (second-line guard) ---
     # High, so only near-exact repeats are dropped. On short templated forecasts a
@@ -97,6 +123,10 @@ class Config:
     # only surface a city once heard this many times (filters one-off STT garbage);
     # clients can override per request with ?min=
     api_min_sightings: int = int(_env("WX_MIN_SIGHTINGS", "2"))
+    # when linking a SAME alert to its spoken-detail transcripts, also include
+    # ones captured this many seconds before the digital burst (a heads-up can
+    # precede the tones); the window runs to the alert's expiry.
+    alert_link_pre_buffer_s: int = int(_env("WX_ALERT_LINK_PREBUFFER", "120"))
 
     # --- Phase 4: SAME alert decoding ---
     same_enabled: bool = _env("WX_SAME", "1") == "1"

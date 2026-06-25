@@ -35,6 +35,14 @@ _PRODUCT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+# product_types that carry an alert narrative worth structuring + linking to a
+# SAME header (see extract.extract_alert_details / db.alert_details).
+ALERT_PRODUCTS = frozenset({
+    "tornado_warning", "severe_thunderstorm_warning", "flash_flood_warning",
+    "special_weather_statement", "hazardous_weather_outlook",
+})
+
+
 def classify(text: str) -> str:
     low = text.lower()
     for product_type, keywords in _PRODUCT_KEYWORDS:

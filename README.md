@@ -68,9 +68,12 @@ stretches where the loop just repeats.
   the broadcast (the "Nearby …" list and regional temp roundup) get temperature.
 - **Forecast** — zone-forecast periods (highs/lows, precip %, sky) with computed
   `valid_from`/`valid_to`, tagged with the area they cover.
-- **Alerts** — SAME headers decoded straight from the audio (event, FIPS→county areas, valid
-  time) with **zero STT** — instant and reliable. Validated on a real over-the-air Required
-  Weekly Test.
+- **Alerts** — two layers. The **SAME header** is decoded straight from the audio (event,
+  FIPS→county areas, valid time) with **zero STT** — instant and reliable (validated on a real
+  over-the-air Required Weekly Test). The **spoken narrative** that follows is transcribed and
+  parsed into structured detail (expiry time, storm motion, threats, locations, spotter
+  activation), then **linked back to the SAME alert** by capture-time window — so a query
+  returns both *what* was issued and *what was said* about it.
 
 ## Data model (PostgreSQL, db `wxparser`)
 
@@ -81,6 +84,9 @@ stretches where the loop just repeats.
 - `forecasts` — one row per `(issued_at, city, period)` with `valid_from`/`valid_to`,
   `high_f`/`low_f`/`precip_pct`/`sky`. Append-only issuances → full forecast history.
 - `alerts` — decoded SAME alerts with `expires_at` for active-alert queries.
+- `alert_details` — structured fields parsed from a spoken warning/statement transcript
+  (`until_text`, `motion`, `threats`, `locations`, `spotter_activation`), keyed by the
+  transcript's report id and linked to `alerts` by capture-time window.
 
 Timestamps are `timestamptz`, JSON columns are `jsonb`. Because forecasts store their valid
 window and readings are timestamped, **"what did we forecast for a day vs. what actually
@@ -104,7 +110,11 @@ GET /transcripts?from=&to=&q=&product=&limit=
                                  → raw transcript records (newest first); q= is a
                                    case-insensitive text search, product= filters on
                                    product_type (current_conditions, zone_forecast, ...)
-GET /alerts/active               → SAME alerts not yet expired
+GET /alerts/active               → SAME alerts not yet expired; each carries a
+                                   "spoken" list linking the structured details
+                                   parsed from its narrative (?details=0 to skip)
+GET /alerts/details?from=&to=    → structured spoken-warning details on their own
+                                   (until, motion, threats, locations, spotter flag)
 GET /health                      → liveness + counts
 ```
 
@@ -145,6 +155,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_ALSA_DEVICE` | `plughw:0,0` | capture device |
 | `WX_WHISPER_BIN` / `WX_WHISPER_MODEL` | `~/whisper.cpp/...` | STT binary + model |
 | `WX_WHISPER_THREADS` | `2` | STT threads |
+| `WX_STT_PROMPT` | `` (off) | whisper vocabulary-bias prompt for local place names; **off by default** — `tiny.en` degenerates with any prompt, enable only on `base.en`/`small.en` |
 | `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
 | `WX_VAD_DBFS` | `-40` | VAD speech threshold |
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
