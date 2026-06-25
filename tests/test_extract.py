@@ -118,6 +118,29 @@ def test_night_period_never_gets_a_high():
     assert s["Sunday Night"]["low_f"] == 68
 
 
+def test_precip_word_number_and_comma():
+    assert extract_forecast_fields("Chance of rain eighty percent.")["precip_pct"] == 80
+    assert extract_forecast_fields("Chance of rain, 80%.")["precip_pct"] == 80
+
+
+def test_garbled_decade_words():
+    # STT mangles "nineties"->"naddies", "eighties"->"aidies" in "highs in..."
+    assert extract_forecast_fields("Hot with highs in the lower naddies.")["high_f"] == 91
+    assert extract_forecast_fields("cloudy, highs in the mid-aidies.")["high_f"] == 85
+
+
+def test_steady_temperature_routes_by_period():
+    # "near steady temperature in the X" has no high/low label -> high by day,
+    # low by night, and conditions "temperature was N degrees" stays out.
+    fc = ForecastAggregator()
+    fc.update("Rest of today, partly cloudy. Near steady temperature in the upper 70s.")
+    assert {p["period"]: p for p in fc.snapshot()}["Rest Of Today"]["high_f"] == 78
+    fc2 = ForecastAggregator()
+    fc2.update("Tonight, clear. Near steady temperature in the lower 60s.")
+    assert {p["period"]: p for p in fc2.snapshot()}["Tonight"]["low_f"] == 61
+    assert extract_forecast_fields("The temperature was 72 degrees.") == {}
+
+
 def test_forecast_3_to_7_day_is_not_skipped_as_outlook():
     # the "3-7 day forecast" is a real extended forecast (Saturday/Sunday highs),
     # NOT the "8-14 day outlook" climate product — it must still parse.

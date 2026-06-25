@@ -140,14 +140,27 @@ _RE_FC_OUTLOOK = re.compile(
     r"|climate|degree days?)\b", re.I)
 _RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
+# "near steady temperature in the upper 70s" / "temperature near 80" — a period's
+# representative temp stated without the word "high"/"low" (the aggregator routes
+# it to the high on a day period, the low on a night period).
+_RE_FC_TEMP = re.compile(
+    r"temperature[s]?\s+(?:near steady\s+|steady\s+|remaining\s+)?"
+    r"(?:in the|near|around)\s+([^.]*?)(?:\.|$)", re.I)
+# precip: accept a comma ("chance of rain, 80%") and a spelled-out number
+# ("chance of rain eighty percent"), not just "<digits> percent".
 _RE_PRECIP = re.compile(
-    r"chance of (?:rain|precipitation|showers|snow)\s+(\d{1,3})\s*(?:%|percent)", re.I)
+    r"chance of (?:rain|precipitation|showers|snow)[\s,]+"
+    r"(\d{1,3}|[a-z\- ]+?)\s*(?:%|percent)", re.I)
 _TEMP_OFFSET = {"lower": 1, "low": 1, "mid": 5, "middle": 5, "upper": 8}
 
 
 _DECADE_WORDS = {
     "twenties": 20, "thirties": 30, "forties": 40, "fifties": 50,
     "sixties": 60, "seventies": 70, "eighties": 80, "nineties": 90,
+    # recurring STT garbles of the decade words, always in a "highs in the
+    # lower <X>" context so they're safe to fold to the intended decade.
+    "naddies": 90, "netties": 90, "negies": 90, "nadies": 90, "naughties": 90,
+    "aidies": 80, "aighties": 80, "eddies": 80,
 }
 _RE_DECADE_WORD = "|".join(_DECADE_WORDS)
 
@@ -180,9 +193,13 @@ def extract_forecast_fields(text: str) -> dict:
     if m := _RE_LOW.search(text):
         if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 100:
             out["low_f"] = v
+    # representative temp stated without "high"/"low" — routed by the aggregator.
+    if "high_f" not in out and "low_f" not in out and (m := _RE_FC_TEMP.search(text)):
+        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 130:
+            out["steady_f"] = v
     if m := _RE_PRECIP.search(text):
-        p = int(m.group(1))
-        if 0 <= p <= 100:
+        p = words_to_int(m.group(1))  # handles "80" and "eighty"
+        if p is not None and 0 <= p <= 100:
             out["precip_pct"] = p
     if m := _RE_SKY.search(text):
         out["sky"] = m.group(1).lower()
@@ -252,16 +269,22 @@ class ForecastAggregator:
         for period, chunk in spans:
             if period is None:
                 continue
-            self.periods.setdefault(period, {"period": period})
+            entry = self.periods.setdefault(period, {"period": period})
             fields = extract_forecast_fields(chunk)
-            # Night periods only forecast a low. A daytime high in a night chunk
-            # is a leak — usually from a grouped extended period ("Sunday night
-            # through Wednesday ... highs in the lower 90s"), where the high
-            # belongs to the daytime days, not the night.
+            # A "near steady temperature in the X" reading has no high/low label;
+            # it's the high on a day period, the low on a night period.
+            steady = fields.pop("steady_f", None)
             if _is_night_period(period):
+                # Night periods only forecast a low. A daytime high in a night
+                # chunk is a leak — usually from a grouped extended period
+                # ("Sunday night through Wednesday ... highs in the lower 90s").
                 fields.pop("high_f", None)
+                if steady is not None and "low_f" not in fields and entry.get("low_f") is None:
+                    fields["low_f"] = steady
+            elif steady is not None and "high_f" not in fields and entry.get("high_f") is None:
+                fields["high_f"] = steady
             if fields:
-                self.periods[period].update(fields)
+                entry.update(fields)
                 changed = True
         return changed
 
