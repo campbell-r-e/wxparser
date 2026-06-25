@@ -207,6 +207,24 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STREAM_POLL_S` | `3` | `/stream` (SSE) poll interval |
 | `WX_STALE_PRUNE_HOURS` | `24` | nightly prune drops non-home cities not heard in this long |
 
+### Trialing a more accurate STT model (small.en)
+
+The model is just `WX_WHISPER_MODEL` — the pipeline derives everything else (the encoder
+context is sized per-segment, the vocabulary prompt is already wired, and `model_name`
+self-labels from the path), so trialing a bigger model is a download + one env var, no code
+change. `base.en-q5_1` is the shipped default; `small.en` is the next rung up and would *reduce*
+the STT mis-hearings the term/place correctors patch (decade words, place names):
+
+```bash
+bash ~/whisper.cpp/models/download-ggml-model.sh small.en          # or small.en-q5_1 for the slow box
+WX_WHISPER_MODEL=~/whisper.cpp/models/ggml-small.en.bin python3 -m wxparser.main
+```
+
+Tradeoff: more accurate, ~2-3× slower per segment. On a weak box keep the quantized variant
+(`small.en-q5_1`) and watch `/health` — if `queue_depth` climbs and stays up, the transcriber
+is falling behind real airings; revert to `base.en-q5_1`. (Unlike `tiny.en`, `small.en` does
+**not** degenerate with the vocabulary prompt, so leave `WX_STT_PROMPT` on.)
+
 ## Multi-transmitter (run N instances + aggregate)
 
 One instance = one transmitter. To cover several NWR stations, run **one instance per
