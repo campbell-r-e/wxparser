@@ -55,10 +55,13 @@ _RE_FORECASTY = re.compile(
     r"|\bof (?:showers|thunderstorms?)\b|\bthunderstorms? (?:likely|possible)\b"
     # a forecast temp band "in the lower/mid/upper <decade>" — catches lines
     # whose high/low label STT garbled ("Close/Pines in the mid-eighties").
-    r"|\bin the (?:lower|mid|middle|upper)[\s-]+(?:\d{1,3}s?|\w+ies)\b", re.I)
-# Conditions-only fields (a forecast never reports barometric pressure, relative
-# humidity, dewpoint, or a "the wind was <dir> at N" observation).
-_COND_FIELDS = ("pressure_in", "temperature_f", "dewpoint_f", "humidity_pct", "wind")
+    r"|\bin the (?:lower|mid|middle|upper)[\s-]+(?:\d{1,3}s?|\w+ies)\b"
+    r"|\bforecast for the\b|\bextended forecast\b", re.I)
+# Conditions-only fields. "sky" here comes from the observation-framed regex
+# ("it was clear"), which a forecast ("Tonight, clear") never uses, so it's a
+# safe conditions signal. A forecast also never reports pressure / humidity /
+# dewpoint / "the wind was <dir> at N".
+_COND_FIELDS = ("pressure_in", "temperature_f", "dewpoint_f", "humidity_pct", "wind", "sky")
 # The nearby-city temperature roundup ("... 74 at Marion, 76 at Anderson ...") is
 # part of the current-conditions product; a forecast never lists "<temp> at City".
 _RE_ROUNDUP = re.compile(r"\b-?\d{2,3}\s+(?:degrees?\s+)?at\s+[A-Z][a-z]+", re.I)
