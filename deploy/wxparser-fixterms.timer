@@ -1,9 +1,9 @@
 [Unit]
-Description=Run wxparser transcript term cleanup every 10 minutes
+Description=Run wxparser transcript term cleanup nightly (backstop; corrections also apply at write time)
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=10min
+# Staggered 30min after the city-name cleanup so the two don't run at once.
+OnCalendar=*-*-* 00:30:00
 Persistent=true
 
 [Install]

@@ -12,8 +12,3 @@ venv/
 
 # OS
 .DS_Store
-
-# Local-only ops scripts (deployed to the weather machine, not tracked)
-deploy/fix_city_spellings.py
-deploy/wxparser-fixspelling.service
-deploy/wxparser-fixspelling.timer

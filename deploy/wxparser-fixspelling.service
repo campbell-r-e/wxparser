@@ -1,0 +1,14 @@
+[Unit]
+Description=wxparser — nightly city-name autocorrect (Munsee -> Muncie, etc.)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=creed
+Group=creed
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+# Same DB connection the main service uses (WX_PG_* defaults => local trust).
+WorkingDirectory=/home/creed/wxparser
+ExecStart=/usr/bin/python3 /home/creed/wxparser/deploy/fix_city_spellings.py
