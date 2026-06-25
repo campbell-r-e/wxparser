@@ -165,6 +165,16 @@ def test_home_header_tolerates_at_misheard_as_it():
     assert ("Indianapolis", "temperature_f") in m
 
 
+def test_recap_it_was_n_degrees_extracts_temp():
+    # the 1 p.m. recap "...it Muncie, it was 76 degrees..." lacks the word
+    # "temperature"; it must still yield the home temp, but "it was mostly sunny"
+    # must not be read as a temperature.
+    assert extract_observation("it was 76 degrees with partly sunny skies")["temperature_f"] == 76
+    assert "temperature_f" not in extract_observation("it was mostly sunny.")
+    out = CityConditionsAggregator().update("Once again, it Muncie, it was 76 degrees.")
+    assert {(r["city"], r["condition"]): r["value"] for r in out}[("Muncie", "temperature_f")] == 76
+
+
 def test_conditions_wind_direction_extracted():
     # regression: the alert wind-speed regex shadowed _RE_WIND, so current-
     # conditions wind direction never extracted.

@@ -45,7 +45,11 @@ def words_to_int(text: str) -> int | None:
 
 _NUM = r"(\d{1,3}|[a-z\- ]+?)"
 
-_RE_TEMP = re.compile(rf"temperature (?:was|is|of) {_NUM} degree", re.I)
+# "temperature was/is/of N degrees" and the recap form "it was N degrees" (the
+# 1 p.m. ob's "...it Muncie, it was 76 degrees..."). The trailing "degree" keeps
+# "it was mostly sunny" from matching, and extract_observation only runs on the
+# home-station block, so a nearby/forecast temp can't slip in as the primary.
+_RE_TEMP = re.compile(rf"(?:temperature (?:was|is|of)|it (?:was|is)) {_NUM} degree", re.I)
 _RE_DEW = re.compile(rf"dew\s?point (?:was|is|of) {_NUM}(?: degree)?", re.I)
 _RE_HUM = re.compile(rf"relative humidity (?:was |is |of )?{_NUM} ?(?:percent|%)", re.I)
 _RE_PRESS = re.compile(r"(?:barometric )?pressure (?:was|is) (\d{2}\.\d{2}) inch", re.I)
