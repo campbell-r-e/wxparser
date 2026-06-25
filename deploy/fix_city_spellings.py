@@ -48,6 +48,7 @@ CORRECTIONS: dict[str, list[str]] = {
         "Lyme", "Lima Ohio", "Leema",
         "Limo", "Lime",  # "...Lima, Ohio, just outside Indiana, it was sunny..."
         "La Mile", "La",  # post-Champaign slot (parallels "...69 at Lyle...")
+        "Lyma",
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [

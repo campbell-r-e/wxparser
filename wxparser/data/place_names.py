@@ -27,7 +27,7 @@ PLACE_CORRECTIONS: dict[str, list[str]] = {
     "Champaign": ["Champagne", "Campaign", "Champ Pain", "Sham Pain"],
     "Lima": [
         "Lyle", "Laima", "Laimo", "Loomo", "Lulule", "Lulevel",
-        "Lyme", "Lima Ohio", "Leema", "Limo", "Lime", "La Mile", "La",
+        "Lyme", "Lima Ohio", "Leema", "Limo", "Lime", "La Mile", "La", "Lyma",
     ],
     "South Bend": ["South End", "Southend", "South And"],
     "Marion": ["Merriam", "Meridian", "Mary Ann", "Marian", "Merion"],

@@ -24,7 +24,11 @@ _append_lock = threading.Lock()
 
 import re
 
-from .extract import extract_forecast_fields, extract_observation, period_header
+from .extract import (
+    _RE_PERIOD_HDR,
+    extract_forecast_fields,
+    extract_observation,
+)
 
 # Explicit, authoritative product names (a literal warning/statement title beats
 # any structural guess). The routine loop products — forecast and conditions —
@@ -47,7 +51,8 @@ _RE_FORECASTY = re.compile(
     r"|\bwinds?\s+(?:around|near|becoming|light|calm|up to|\d)"
     r"|\bbecoming\s+(?:mostly |partly )?(?:cloudy|clear|sunny|fair|windy)"
     r"|\b(?:toward|through the late)\s+(?:daybreak|overnight|morning|afternoon|evening)"
-    r"|\bshowers likely\b|\bslight chance\b|\bchance of a\b", re.I)
+    r"|\bshowers likely\b|\bslight chance\b|\bchance of a\b"
+    r"|\bof (?:showers|thunderstorms?)\b|\bthunderstorms? (?:likely|possible)\b", re.I)
 # Conditions-only fields (a forecast never reports barometric pressure, relative
 # humidity, dewpoint, or a "the wind was <dir> at N" observation).
 _COND_FIELDS = ("pressure_in", "temperature_f", "dewpoint_f", "humidity_pct", "wind")
@@ -76,7 +81,7 @@ def classify(text: str) -> str:
         return "current_conditions"
     # 3) forecast: a period header, an extracted high/low/precip, or the
     #    unmistakable forecast-narrative phrasing between the labelled lines.
-    if period_header(text) is not None:
+    if _RE_PERIOD_HDR.search(text) is not None:
         return "zone_forecast"
     fc = extract_forecast_fields(text)
     if any(fc.get(k) is not None for k in ("high_f", "low_f", "precip_pct", "steady_f")):
