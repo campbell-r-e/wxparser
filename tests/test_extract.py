@@ -427,6 +427,19 @@ def test_ed_muncie_header():
     assert out[("Muncie", "temperature_f")] == 76 and out[("Muncie", "sky")] == "cloudy"
 
 
+def test_timestamped_were_reported_home_ob():
+    # the evening ob form "At 7 p.m., <garbled Muncie>, ... were reported. The
+    # temperature was N" must still attach the temp to the home city — even when a
+    # roundup follows in the same segment (which is what was dropping it).
+    for header in ("Ed Muncie", "Edmondsee"):
+        out = {(r["city"], r["condition"]): r["value"] for r in
+               CityConditionsAggregator().update(
+                   f"At 7 p.m., {header}, light rain and fog were reported. "
+                   "The temperature was 70 degrees. Nearby, 71 at Anderson.")}
+        assert out[("Muncie", "temperature_f")] == 70, header
+        assert out[("Anderson", "temperature_f")] == 71, header  # roundup still parsed
+
+
 def test_correct_terms_pies_to_highs():
     from wxparser.data.stt_terms import correct_terms
     assert correct_terms("Pies around 80.") == "Highs around 80."

@@ -338,9 +338,16 @@ _CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
 # STT routinely mis-hears the lead-in "at" as "it"/"in"/"ed" ("...it Muncie, it
 # was mostly sunny...", "...Ed Muncie, it was cloudy..."), so accept those; the
 # city must still be capitalized and followed by observation framing.
+# The evening ob also uses a time-stamped form — "At 7 p.m., [at] Muncie, <sky>
+# were reported. The temperature was N" — where STT can slur "At Muncie" into one
+# word ("Edmondsee"). Accept the time prefix and the "...were reported" framing so
+# that ob's temperature still attaches to the home city (else, when a roundup
+# follows in the same segment, the home reading is dropped entirely).
+_HOME_LEADIN = (r"(?:(?:at|it|in|ed)\s+"
+                r"|at\s+\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?,?\s+(?:at\s+|ed\s+)?)")
 _RE_CITY_HEADER = re.compile(
-    rf"\b(?:at|it|in|ed) ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
-    rf"barometric|wind|dew))", re.I)
+    rf"\b{_HOME_LEADIN}({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
+    rf"barometric|wind|dew)|[\w\s,]{{0,40}}?were reported)", re.I)
 # Regional roundup temperatures, across the phrasings NWR/STT use:
 # NB: these are NOT case-insensitive — _CITY is capital-anchored on purpose, so the
 # matcher can't swallow a leading lowercase word ("and Shelbyville"). Keyword case

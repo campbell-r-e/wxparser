@@ -18,6 +18,8 @@ PLACE_CORRECTIONS: dict[str, list[str]] = {
     "Muncie": [
         "Monthsy", "Munsee", "Muncey", "Muncy", "Munci", "Muncee",
         "Munsie", "Munsy", "Monsey", "Munce", "Mun See", "Muns",
+        # "At Muncie" slurred into one word in the time-stamped evening ob
+        "Edmondsee", "Edmonsee", "Edmundsee",
     ],
     "Terre Haute": [
         "Terrehold", "Terrehald", "Terrehalt", "Terrahold", "Terrahaut",
