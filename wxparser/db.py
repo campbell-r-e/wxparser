@@ -19,6 +19,7 @@ import pg8000.native
 
 from .config import CONFIG, Config
 
+from .data.same_events import event_label
 from .extract import ALMANAC_NUMERIC
 
 _NUMERIC_CONDITIONS = {
@@ -53,12 +54,14 @@ _SCHEMA = [
         PRIMARY KEY (city, condition)
     )""",
     "CREATE INDEX IF NOT EXISTS ix_cc_cond ON city_conditions(condition)",
+    # valid_from/valid_to are NOT stored: they're a pure function of (period,
+    # issued_at) via period_window(), so storing them would duplicate the key
+    # derivation (a 2NF partial-key dependency — they don't depend on `city`) and
+    # could drift if the windowing logic changes. They're computed on read.
     """CREATE TABLE IF NOT EXISTS forecasts (
         issued_at TIMESTAMPTZ NOT NULL,
         city TEXT NOT NULL,
         period TEXT NOT NULL,
-        valid_from TIMESTAMPTZ,
-        valid_to TIMESTAMPTZ,
         high_f INTEGER,
         low_f INTEGER,
         precip_pct INTEGER,
@@ -68,10 +71,13 @@ _SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at)",
     "CREATE INDEX IF NOT EXISTS ix_fc_city ON forecasts(city, issued_at)",
+    # event_label is NOT stored: it's a pure lookup on `event` (event ->
+    # event_label is a transitive dependency, a 3NF violation if stored). The
+    # label is resolved from data.same_events at read time.
     """CREATE TABLE IF NOT EXISTS alerts (
         id TEXT PRIMARY KEY,
         captured_at TIMESTAMPTZ NOT NULL,
-        event TEXT, event_label TEXT,
+        event TEXT,
         areas JSONB, counties JSONB,
         purge_minutes INTEGER, issued_raw TEXT, station TEXT, raw TEXT,
         expires_at TIMESTAMPTZ
@@ -246,16 +252,14 @@ class Database:
     def write_forecast(self, periods: list[dict], issued_at: str, city: str = "Muncie") -> None:
         issued_dt = _parse_iso(issued_at)
         for p in periods:
-            vf, vt = period_window(p["period"], issued_dt)
             self._run(
                 "INSERT INTO forecasts"
-                "(issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source) "
-                "VALUES(:ia,:city,:pd,:vf,:vt,:hi,:lo,:pp,:sky,:src) "
+                "(issued_at,city,period,high_f,low_f,precip_pct,sky,source) "
+                "VALUES(:ia,:city,:pd,:hi,:lo,:pp,:sky,:src) "
                 "ON CONFLICT (issued_at,city,period) DO UPDATE SET "
-                "valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, "
                 "high_f=EXCLUDED.high_f, low_f=EXCLUDED.low_f, "
                 "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source",
-                ia=issued_dt, city=city, pd=p["period"], vf=_parse_iso(vf), vt=_parse_iso(vt),
+                ia=issued_dt, city=city, pd=p["period"],
                 hi=p.get("high_f"), lo=p.get("low_f"), pp=p.get("precip_pct"),
                 sky=p.get("sky"), src=p.get("source", "voice"),
             )
@@ -265,11 +269,11 @@ class Database:
         captured = _parse_iso(record["captured_at"])
         expires = captured + timedelta(minutes=a.get("purge_minutes", 0))
         self._run(
-            "INSERT INTO alerts(id,captured_at,event,event_label,areas,counties,"
+            "INSERT INTO alerts(id,captured_at,event,areas,counties,"
             "purge_minutes,issued_raw,station,raw,expires_at) "
-            "VALUES(:id,:ca,:ev,:el,CAST(:ar AS jsonb),CAST(:co AS jsonb),:pm,:ir,:st,:rw,:ex) "
+            "VALUES(:id,:ca,:ev,CAST(:ar AS jsonb),CAST(:co AS jsonb),:pm,:ir,:st,:rw,:ex) "
             "ON CONFLICT (id) DO UPDATE SET expires_at=EXCLUDED.expires_at",
-            id=record["id"], ca=captured, ev=a.get("event"), el=a.get("event_label"),
+            id=record["id"], ca=captured, ev=a.get("event"),
             ar=json.dumps(a.get("areas", [])), co=json.dumps(a.get("counties", [])),
             pm=a.get("purge_minutes"), ir=a.get("issued_raw"), st=a.get("station"),
             rw=a.get("raw"), ex=expires,
@@ -415,6 +419,14 @@ class Database:
                 for r in rows]
 
     # --- readers: forecast ----------------------------------------------- #
+    @staticmethod
+    def _with_window(row: dict, issued: datetime) -> dict:
+        """Attach the derived (valid_from, valid_to) period window — computed from
+        (period, issued), never stored (see the forecasts schema note)."""
+        vf, vt = period_window(row["period"], issued.astimezone(timezone.utc))
+        row["valid_from"], row["valid_to"] = vf, vt
+        return row
+
     def latest_forecasts(self) -> list[dict]:
         cities = self._query("SELECT DISTINCT city FROM forecasts")
         out = []
@@ -423,12 +435,13 @@ class Database:
             mx = self._query("SELECT MAX(issued_at) AS m FROM forecasts WHERE city=:city", city=city)
             issued = mx[0]["m"]
             rows = self._query(
-                "SELECT period,valid_from,valid_to,high_f,low_f,precip_pct,sky,source "
-                "FROM forecasts WHERE city=:city AND issued_at=:ia ORDER BY valid_from NULLS LAST, period",
+                "SELECT period,high_f,low_f,precip_pct,sky,source "
+                "FROM forecasts WHERE city=:city AND issued_at=:ia ORDER BY period",
                 city=city, ia=issued,
             )
             for r in rows:
-                r["valid_from"] = _ts(r["valid_from"]); r["valid_to"] = _ts(r["valid_to"])
+                self._with_window(r, issued)
+            rows.sort(key=lambda r: (r["valid_from"] is None, str(r["valid_from"])))
             out.append({"city": city, "issued_at": _ts(issued), "periods": rows})
         return out
 
@@ -451,26 +464,32 @@ class Database:
                          limit: int = 1000, offset: int = 0) -> list[dict]:
         where, params = self._fc_where(frm, to, city)
         rows = self._query(
-            f"SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky "
+            f"SELECT issued_at,city,period,high_f,low_f,precip_pct,sky "
             f"FROM forecasts {where} ORDER BY issued_at DESC, city, period LIMIT :lim OFFSET :off",
             lim=limit, off=offset, **params)
         for r in rows:
-            for k in ("issued_at", "valid_from", "valid_to"):
-                r[k] = _ts(r[k])
+            self._with_window(r, r["issued_at"])
+            r["issued_at"] = _ts(r["issued_at"])
         return rows
 
     # --- readers: alerts -------------------------------------------------- #
+    @staticmethod
+    def _hydrate_alert(d: dict) -> dict:
+        """Decode the JSONB area/county lists, stamp timestamps, and resolve the
+        derived event_label from `event` (the label is looked up, never stored)."""
+        d["event_label"] = event_label(d["event"])
+        d["areas"] = _as_obj(d["areas"]) or []
+        d["counties"] = _as_obj(d["counties"]) or []
+        for k in ("captured_at", "expires_at"):
+            d[k] = _ts(d[k])
+        return d
+
     def get_active_alerts(self, now: str | None = None) -> list[dict]:
         now_dt = _parse_iso(now) or datetime.now(timezone.utc)
         rows = self._query(
             "SELECT * FROM alerts WHERE expires_at > :now ORDER BY captured_at DESC", now=now_dt,
         )
-        for d in rows:
-            d["areas"] = _as_obj(d["areas"]) or []
-            d["counties"] = _as_obj(d["counties"]) or []
-            for k in ("captured_at", "expires_at"):
-                d[k] = _ts(d[k])
-        return rows
+        return [self._hydrate_alert(d) for d in rows]
 
     def alerts_history(self, frm: str | None, to: str | None, event: str | None,
                        limit: int = 1000, offset: int = 0) -> tuple[int, list[dict]]:
@@ -487,12 +506,7 @@ class Database:
         rows = self._query(
             f"SELECT * FROM alerts {where} ORDER BY captured_at DESC LIMIT :lim OFFSET :off",
             lim=limit, off=offset, **base)
-        for d in rows:
-            d["areas"] = _as_obj(d["areas"]) or []
-            d["counties"] = _as_obj(d["counties"]) or []
-            for k in ("captured_at", "expires_at"):
-                d[k] = _ts(d[k])
-        return total, rows
+        return total, [self._hydrate_alert(d) for d in rows]
 
     # --- readers: per-city / index --------------------------------------- #
     def all_conditions_for_city(self, city: str, min_sightings: int = 1) -> list[dict]:
@@ -528,24 +542,19 @@ class Database:
 
     def forecasts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(
-            "SELECT issued_at,city,period,valid_from,valid_to,high_f,low_f,precip_pct,sky "
+            "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky "
             "FROM forecasts WHERE issued_at > :s ORDER BY issued_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
         for r in rows:
-            for k in ("issued_at", "valid_from", "valid_to"):
-                r[k] = _ts(r[k])
+            self._with_window(r, r["issued_at"])
+            r["issued_at"] = _ts(r["issued_at"])
         return rows
 
     def alerts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(
             "SELECT * FROM alerts WHERE captured_at > :s ORDER BY captured_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
-        for d in rows:
-            d["areas"] = _as_obj(d["areas"]) or []
-            d["counties"] = _as_obj(d["counties"]) or []
-            for k in ("captured_at", "expires_at"):
-                d[k] = _ts(d[k])
-        return rows
+        return [self._hydrate_alert(d) for d in rows]
 
     def alert_details_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(
