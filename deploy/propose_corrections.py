@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from wxparser.data.place_names import PLACE_CORRECTIONS  # noqa: E402
 from wxparser.data.stt_terms import TERM_CORRECTIONS     # noqa: E402
+from wxparser.extract import _DECADE_WORDS               # noqa: E402
 
 DECADE = (r"(?:\d{1,3}s|twenties|thirties|forties|fifties|sixties|seventies|eighties"
           r"|nineties|naddies|netties|negies|nadies|naughties|naggies|aidies|aighties"
@@ -159,6 +160,24 @@ def main() -> int:
         for e in p["ex"]:
             print(f"        e.g. {e}")
     print()
+
+    # --- number/decade mishearings -------------------------------------- #
+    # A garbled decade word ("eighties" -> "aidies") in "highs in the lower <X>"
+    # drops the number or lands it on the wrong decade (off by ~10F). Surface
+    # tokens in that slot that aren't a recognised decade for mapping into
+    # extract._DECADE_WORDS.
+    known = {d.lower() for d in _DECADE_WORDS}
+    dec = Counter()
+    for m in re.finditer(r"\bin the (?:lower|low|mid|middle|upper)\s+([a-z]+)", low):
+        t = m.group(1)
+        if t not in known and not re.match(r"\d{1,3}s$", t):
+            dec[t] += 1
+    dec_cand = [(t, n) for t, n in dec.most_common() if n >= args.min_count]
+    if dec_cand:
+        print("Decade/number mishearings (map to a decade in extract._DECADE_WORDS):")
+        for t, n in dec_cand:
+            print(f"   {n:4}  {t!r}")
+        print()
 
     safe = [p for p in proposals if p["verdict"].startswith("SAFE")]
     if safe:
