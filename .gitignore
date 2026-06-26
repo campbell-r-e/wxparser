@@ -10,5 +10,10 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# Test / coverage artifacts
+.coverage
+htmlcov/
+wxparser-testenv/
+
 # OS
 .DS_Store
