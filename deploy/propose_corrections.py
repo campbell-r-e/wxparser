@@ -50,6 +50,9 @@ COMMON_WORDS = {
     "north", "south", "east", "west", "northwest", "northeast", "southwest", "southeast",
     "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
     "night", "tonight", "today", "afternoon", "evening", "morning", "overnight",
+    # ordinary words that show up rarely in a slot but are real (would be false-SAFE)
+    "tree", "trees", "line", "lines", "plain", "plains", "time", "times", "pine",
+    "pines", "area", "areas", "day", "days", "rivers", "river", "lake", "lakes",
 }
 HANDLED = {v.lower() for vs in TERM_CORRECTIONS.values() for v in vs} | {"close", "flows"}
 PLACES = ({c.lower() for c in PLACE_CORRECTIONS}
