@@ -257,22 +257,24 @@ systemd units per instance (`wxparser@.service`) or just set the env block per u
 
 ## Tests & CI
 
+> **Developer guide (setup, test layout, coverage policy, CI/CD): [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)**
+
 **100% line *and branch* coverage**, enforced. Tests run against the `wxparser_test`
-PostgreSQL database (created by `setup-postgres.sh`); subprocesses (`arecord`, `whisper-cli`)
-are mocked:
+PostgreSQL database; subprocesses (`arecord`, `whisper-cli`) are mocked, so only PostgreSQL is
+needed:
 
 ```bash
 pip install -e '.[test]'         # pytest + coverage
 createdb wxparser_test           # once
-coverage run -m pytest           # whole suite (137 tests)
-coverage report                  # fails under 100% (see .coveragerc)
+coverage run -m pytest           # whole suite (152 tests), branch mode via .coveragerc
+coverage report                  # fails under 100%
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs the suite on every push/PR across Python 3.11–3.12
-with a Postgres service container, lints for real errors (ruff), and **gates on 100% coverage**.
-**CD** is pull-based (the box has no inbound access): `deploy/wxparser-deploy.timer` periodically
-runs `deploy/auto_deploy.sh`, which fast-forwards `main`, re-runs the suite, and restarts the
-services only if green — rolling back on failure.
+with a Postgres service container, ruff error-lint, and **gates on 100% line + branch coverage**.
+**CD** is pull-based (the box has no inbound access): `deploy/wxparser-deploy.timer` runs
+`deploy/auto_deploy.sh` every 10 min, which fast-forwards `main`, re-runs the gated suite, and
+restarts the services only if green — rolling back on failure.
 
 ## License
 
