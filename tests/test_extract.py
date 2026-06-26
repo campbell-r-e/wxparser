@@ -419,6 +419,24 @@ def test_correct_terms_eyes_blows_to_highs_lows():
     assert "high_f" not in sun and sun["low_f"] == 71
 
 
+def test_correct_terms_mined_garbles():
+    # additional consistent mis-hearings found by mining transcripts.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Hives in the upper 70s.") == "Highs in the upper 70s."
+    assert correct_terms("flows in the lower 70s") == "lows in the lower 70s"
+    assert correct_terms("Cants of rain 30%.") == "Chance of rain 30%."
+
+
+def test_correct_terms_close_is_context_scoped():
+    # "close" -> "lows" only in the temperature slot; legit uses are untouched.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Close in the lower 60s.") == "Lows in the lower 60s."
+    assert correct_terms("close around 70") == "lows around 70"
+    # must NOT corrupt legitimate climate phrasing
+    assert correct_terms("temperatures close to normal") == "temperatures close to normal"
+    assert correct_terms("a close call with the storm") == "a close call with the storm"
+
+
 # --- almanac / climate recap extraction ------------------------------------ #
 def test_extract_almanac_full_block():
     out = extract_almanac(

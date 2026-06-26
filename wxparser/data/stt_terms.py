@@ -23,11 +23,13 @@ TERM_CORRECTIONS: dict[str, list[str]] = {
     # ("Sunday night through Wednesday ... eyes in the lower 90s" -> Sunday Night
     # low 95F). "Eyes"/"Blows" never appear in NWR's templated vocabulary, so
     # they're safe to fold like "Pies".
-    "Highs": ["Pies", "Eyes"],
-    "Lows": ["Blows"],
-    # "Chance of Rain" is consistently heard as "Chants of Brain"; neither
-    # "chants" nor "brain" appears in legit NWR vocabulary, so fold each word.
-    "Chance": ["Chants"],
+    # "Eyes"/"Hives" (highs) and "Blows"/"Flows" (lows) all rhyme with the word
+    # they garble and never appear in NWR's templated vocabulary, so fold them.
+    "Highs": ["Pies", "Eyes", "Hives"],
+    "Lows": ["Blows", "Flows"],
+    # "Chance of Rain" is consistently heard as "Chants of Brain" (also "Cants of
+    # rain"); none of these appear in legit NWR vocabulary, so fold each word.
+    "Chance": ["Chants", "Cants"],
     "Rain": ["Brain"],
 }
 
@@ -35,6 +37,13 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(rf"\b(?:{'|'.join(re.escape(v) for v in variants)})\b", re.I), canon)
     for canon, variants in TERM_CORRECTIONS.items()
 ]
+
+# "close" can't be folded globally — it's legit elsewhere ("temperatures close to
+# normal"). But in the temperature slot ("Close in the lower 60s", "Close around
+# 70") it's a misheard "lows", so correct it ONLY when a temp band/value follows.
+_CLOSE_AS_LOWS = re.compile(
+    r"\bclose\b(?=\s+(?:in the (?:lower|low|mid|middle|upper)\b|around\s+\d|near\s+\d))",
+    re.I)
 
 
 def _cased(canon: str):
@@ -47,4 +56,6 @@ def correct_terms(text: str) -> str:
     """Fix known STT word mis-hearings in a transcript, preserving capitalization."""
     for pattern, canon in _PATTERNS:
         text = pattern.sub(_cased(canon), text)
+    text = _CLOSE_AS_LOWS.sub(
+        lambda m: "Lows" if m.group(0)[:1].isupper() else "lows", text)
     return text
