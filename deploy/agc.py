@@ -36,10 +36,12 @@ CAPTURE = "Capture"          # ADC gain, 0-31, fine
 BOOST = "Front Mic Boost"    # coarse, 0-3, ~+10 dB/step
 
 # Targets in dBFS, measured on the published per-segment level. The VAD floor is
-# -35; we keep speech comfortably above it without letting peaks clip.
-PEAK_CLIP = float(os.environ.get("WX_AGC_PEAK_CLIP", "-2.0"))   # peak above -> lower
-RMS_LOW = float(os.environ.get("WX_AGC_RMS_LOW", "-30.0"))      # speech below -> raise
-RMS_HIGH = float(os.environ.get("WX_AGC_RMS_HIGH", "-14.0"))    # speech above -> lower
+# -35. Peak-driven: the radio swings ~18 dB by product (a loud announcement vs
+# normal speech), so we lower ONLY when peaks approach clipping — chasing content
+# loudness would just under-gain the quiet speech we need above the VAD floor.
+PEAK_CLIP = float(os.environ.get("WX_AGC_PEAK_CLIP", "-2.0"))        # peak here -> lower (clipping)
+RMS_LOW = float(os.environ.get("WX_AGC_RMS_LOW", "-30.0"))          # speech this quiet -> raise
+PEAK_HEADROOM = float(os.environ.get("WX_AGC_PEAK_HEADROOM", "-14.0"))  # ...if peaks have this much room
 SILENT_MIN = float(os.environ.get("WX_AGC_SILENT_MIN", "5.0"))  # no segment -> deaf
 STALE_MIN = float(os.environ.get("WX_AGC_STALE_MIN", "5.0"))    # health.json too old
 
@@ -119,12 +121,15 @@ def collect_levels(path: Path, window_s: float, poll_s: float) -> list[tuple[flo
 
 
 def decide(rms_med: float, peak_max: float) -> str | None:
+    # Lower ONLY when peaks approach clipping — never on content loudness. The
+    # radio's loud products would otherwise drag the gain down and starve the
+    # quiet speech we need above the VAD floor.
     if peak_max is not None and peak_max > PEAK_CLIP:
-        return "lower"   # clipping — back off regardless of rms
-    if rms_med < RMS_LOW:
-        return "raise"
-    if rms_med > RMS_HIGH:
         return "lower"
+    # Raise quiet speech, but only if a louder passage in the window has enough
+    # headroom that the step won't push it into clipping.
+    if rms_med < RMS_LOW and (peak_max is None or peak_max < PEAK_HEADROOM):
+        return "raise"
     return None
 
 
