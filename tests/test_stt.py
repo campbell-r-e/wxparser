@@ -19,9 +19,17 @@ def test_audio_ctx_clamped():
 
 
 def test_is_blank():
-    assert is_blank(Transcript(text="", segments=[], language="en"))
-    assert is_blank(Transcript(text="[BLANK_AUDIO]", segments=[], language="en"))
-    assert not is_blank(Transcript(text="Highs around 80", segments=[], language="en"))
+    def t(s):
+        return Transcript(text=s, segments=[], language="en")
+    assert is_blank(t(""))
+    assert is_blank(t("[BLANK_AUDIO]"))
+    assert is_blank(t("(dramatic music)"))
+    assert is_blank(t("I hate it."))            # whisper hallucination
+    assert is_blank(t("Thank you"))
+    assert is_blank(t("you"))
+    assert is_blank(t(","))                     # punctuation-only noise
+    assert not is_blank(t("Highs around 80"))
+    assert not is_blank(t("At Muncie it was 78 degrees"))
 
 
 class _Proc:

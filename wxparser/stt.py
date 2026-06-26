@@ -8,6 +8,7 @@ which we normalise to seconds. Everything is local — no network, ever (PLAN §
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -108,9 +109,22 @@ def transcribe_samples(samples: np.ndarray, cfg: Config) -> Transcript:
         return transcribe(wav_path, cfg)
 
 
+# whisper hallucinates these stock phrases on non-speech audio (silence, music,
+# tones between announcements) — they never appear in an NWR broadcast, so a
+# transcript that is *only* one of them is treated as blank and dropped.
+_HALLUCINATIONS = {
+    "i hate it", "thank you", "thanks for watching", "please subscribe",
+    "subscribe", "bye", "you",
+}
+
+
 def is_blank(transcript: Transcript) -> bool:
-    """whisper emits '[BLANK_AUDIO]' (and similar) for non-speech windows."""
+    """True for non-speech windows: whisper's '[BLANK_AUDIO]', a punctuation-only
+    transcript, or a lone known hallucination phrase."""
     t = transcript.text.strip().lower()
     if not t:
         return True
-    return t in {"[blank_audio]", "(dramatic music)"} or t.startswith("[blank")
+    if t in {"[blank_audio]", "(dramatic music)"} or t.startswith("[blank"):
+        return True
+    core = re.sub(r"[^a-z0-9 ]", "", t).strip()
+    return not core or core in _HALLUCINATIONS

@@ -306,14 +306,32 @@ class ForecastAggregator:
 # --------------------------------------------------------------------------- #
 _CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
 # "At Muncie, it was clear." / "At Muncie, the temperature was ..." -> primary city.
-# STT routinely mis-hears the lead-in "at" as "it"/"in" ("...it Muncie, it was
-# mostly sunny..."), so accept those; the city must still be capitalized and
-# followed by observation framing, so "it was ..." can't match on its own.
+# STT routinely mis-hears the lead-in "at" as "it"/"in"/"ed" ("...it Muncie, it
+# was mostly sunny...", "...Ed Muncie, it was cloudy..."), so accept those; the
+# city must still be capitalized and followed by observation framing.
 _RE_CITY_HEADER = re.compile(
-    rf"\b(?:at|it|in) ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
+    rf"\b(?:at|it|in|ed) ({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
     rf"barometric|wind|dew))", re.I)
-# "... 56 at Anderson, 63 at Portland ..." -> per-city temperatures
-_RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")
+# Regional roundup temperatures, across the phrasings NWR/STT use:
+# NB: these are NOT case-insensitive — _CITY is capital-anchored on purpose, so the
+# matcher can't swallow a leading lowercase word ("and Shelbyville"). Keyword case
+# is handled explicitly instead.
+_RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")      # "63 at Portland"
+_RE_REPORTED = re.compile(rf"\b({_CITY})\s+reported\s+(?:at\s+)?(-?\d{{1,3}})\b")  # "Portland reported 75"
+# "at/Ed Lima, Ohio ... temperature of 71" / "At Cincinnati ... temperature of 72"
+# (number AFTER the city). "temperature OF" marks a roundup city; the home ob uses
+# "temperature WAS N degrees", so this never grabs the primary observation.
+_RE_AT_TEMP = re.compile(
+    rf"\b(?:[Aa]t|[Ee]d|[Ii]t|[Ii]n)\s+({_CITY})\b(?:,\s+[A-Z][a-z]+)?"
+    rf"[^.]*?\b[Tt]emperature of\s+(-?\d{{1,3}})\b")
+
+
+def _nearby_temps(text: str) -> list[tuple[str, int]]:
+    """(city, temperature_f) for every roundup phrasing in `text`."""
+    out: list[tuple[str, int]] = [(c, int(v)) for v, c in _RE_NEARBY.findall(text)]
+    out += [(c, int(v)) for c, v in _RE_REPORTED.findall(text)]
+    out += [(c, int(v)) for c, v in _RE_AT_TEMP.findall(text)]
+    return out
 # "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
 # literal " area" suffix so the city group can't swallow the word "area")
 _RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
@@ -337,10 +355,9 @@ def _roundup_start(text: str) -> int:
     before it can be parsed in isolation. Earliest of a roundup lead-in phrase or
     the first 'NN at <City>' nearby temperature; len(text) if neither is present."""
     idx = len(text)
-    if m := _RE_ROUNDUP_LEADIN.search(text):
-        idx = min(idx, m.start())
-    if m := _RE_NEARBY.search(text):
-        idx = min(idx, m.start())
+    for rx in (_RE_ROUNDUP_LEADIN, _RE_NEARBY, _RE_REPORTED, _RE_AT_TEMP):
+        if m := rx.search(text):
+            idx = min(idx, m.start())
     return idx
 
 
@@ -368,11 +385,14 @@ class CityConditionsAggregator:
         """Returns every (city, condition) reading heard in this text, with the
         current voted value/votes/total. Each is a 'sighting' the store counts."""
         readings: list[dict] = []
-        # Regional-roundup temps ("... 74 at Marion ...") belong to the named cities.
-        nearby = _RE_NEARBY.findall(text)
-        for v, c in nearby:
-            val, city = int(v), _norm_city(c)
-            if -60 <= val <= 130:
+        # Regional-roundup temps belong to the named cities (all three phrasings:
+        # "74 at Marion", "Marion reported 74", "at Marion ... temperature of 74").
+        nearby = _nearby_temps(text)
+        seen: set[tuple[str, int]] = set()
+        for city_raw, val in nearby:
+            city = _norm_city(city_raw)
+            if -60 <= val <= 130 and (city, val) not in seen:
+                seen.add((city, val))
                 readings.append(self._reading(city, "temperature_f", val))
 
         # The home-station observation, when present, leads its segment and can be

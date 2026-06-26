@@ -352,6 +352,38 @@ def test_nearby_list_corrected_before_store():
     assert cities == {"Dayton", "Terre Haute", "Muncie"}
 
 
+def _temps(text):
+    return {r["city"]: r["value"] for r in CityConditionsAggregator().update(text)
+            if r["condition"] == "temperature_f"}
+
+
+def test_roundup_reported_form():
+    assert _temps("Portland reported 75, Richmond reported at 73, and Shelbyville reported 74.") \
+        == {"Portland": 75, "Richmond": 73, "Shelbyville": 74}
+
+
+def test_roundup_temperature_of_form():
+    # number AFTER the city; "at"/"Ed" (STT for "at") both work
+    assert _temps("Ed Lima, Ohio, it was clear with a temperature of 71.") == {"Lima": 71}
+    assert _temps("At Cincinnati, rain was falling with a temperature of 72.") == {"Cincinnati": 72}
+    # and the home city's sky is NOT polluted by the roundup city's "it was ..."
+    out = CityConditionsAggregator(primary_city="Muncie").update(
+        "Ed Lima, Ohio, it was partly cloudy, with a temperature of 71.")
+    assert not any(r["city"] == "Muncie" for r in out)
+
+
+def test_roundup_dedup_same_city_value():
+    out = CityConditionsAggregator().update("74 at Marion. Marion reported 74.")
+    assert sum(1 for r in out if r["city"] == "Marion") == 1
+
+
+def test_ed_muncie_header():
+    out = {(r["city"], r["condition"]): r["value"] for r in
+           CityConditionsAggregator().update(
+               "Ed Muncie, it was cloudy. The temperature was 76 degrees.")}
+    assert out[("Muncie", "temperature_f")] == 76 and out[("Muncie", "sky")] == "cloudy"
+
+
 def test_correct_terms_pies_to_highs():
     from wxparser.data.stt_terms import correct_terms
     assert correct_terms("Pies around 80.") == "Highs around 80."
