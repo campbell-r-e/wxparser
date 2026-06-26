@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from datetime import timedelta
 
 import pg8000.native as pg
 
@@ -42,15 +43,16 @@ cities = [r[0] for r in c.run("SELECT DISTINCT city FROM forecasts")]
 changes = 0
 for city in cities:
     latest = c.run("SELECT max(issued_at) FROM forecasts WHERE city=:c", c=city)[0][0]
+    window_start = latest - timedelta(hours=WINDOW_HOURS)
     periods = [r[0] for r in c.run(
         "SELECT period FROM forecasts WHERE city=:c AND issued_at=:i", c=city, i=latest)]
     for period in periods:
         for f in FIELDS:
             rows = c.run(
                 "SELECT " + f + " FROM forecasts "
-                "WHERE city=:c AND period=:p AND issued_at > :i - (:w || ' hours')::interval "
+                "WHERE city=:c AND period=:p AND issued_at > :s "
                 "ORDER BY issued_at",
-                c=city, p=period, i=latest, w=str(WINDOW_HOURS))
+                c=city, p=period, s=window_start)
             consensus = mode([r[0] for r in rows])
             cur = c.run("SELECT " + f + " FROM forecasts "
                         "WHERE city=:c AND period=:p AND issued_at=:i",
