@@ -17,7 +17,14 @@ import re
 
 # canonical term -> consistent STT mis-hearings folded into it
 TERM_CORRECTIONS: dict[str, list[str]] = {
-    "Highs": ["Pies"],
+    # "Highs"/"Lows" label the forecast temps; a garble either drops the number
+    # entirely (the high/low regexes look for the literal word) or, worse, lets a
+    # grouped period's daytime high leak onto a night period as an impossible low
+    # ("Sunday night through Wednesday ... eyes in the lower 90s" -> Sunday Night
+    # low 95F). "Eyes"/"Blows" never appear in NWR's templated vocabulary, so
+    # they're safe to fold like "Pies".
+    "Highs": ["Pies", "Eyes"],
+    "Lows": ["Blows"],
     # "Chance of Rain" is consistently heard as "Chants of Brain"; neither
     # "chants" nor "brain" appears in legit NWR vocabulary, so fold each word.
     "Chance": ["Chants"],

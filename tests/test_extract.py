@@ -403,6 +403,22 @@ def test_correct_terms_chants_of_brain_to_chance_of_rain():
     assert correct_terms("a chants of brain") == "a chance of rain"
 
 
+def test_correct_terms_eyes_blows_to_highs_lows():
+    # STT garbles "highs"->"eyes" and "lows"->"blows" in grouped extended-period
+    # forecasts; uncorrected, the daytime high band leaks onto the night period as
+    # an impossible low (observed: Sunday Night low 95F).
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("eyes in the lower 90s") == "highs in the lower 90s"
+    assert correct_terms("Blows in the lower 70s") == "Lows in the lower 70s"
+    # end-to-end: after correction the grouped period routes correctly — the 90s
+    # high is dropped from the night period and the real low is recovered.
+    fc = ForecastAggregator()
+    fc.update(correct_terms("for Sunday night through Wednesday, mostly clear, hot, "
+                            "blows in the lower 70s, eyes in the lower 90s."))
+    sun = {p["period"]: p for p in fc.snapshot()}["Sunday Night"]
+    assert "high_f" not in sun and sun["low_f"] == 71
+
+
 # --- almanac / climate recap extraction ------------------------------------ #
 def test_extract_almanac_full_block():
     out = extract_almanac(
