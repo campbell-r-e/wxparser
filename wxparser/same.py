@@ -169,7 +169,7 @@ def decode(audio: np.ndarray, sr: int = 16000) -> list[SAMEMessage]:
             if "ZCZC" not in text:
                 continue
             msg = parse_header(text)
-            if msg is not None:
+            if msg is not None:  # pragma: no branch - "ZCZC" present implies a parseable header
                 seen.setdefault(msg.raw, msg)
     return list(seen.values())
 

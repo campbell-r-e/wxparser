@@ -1,4 +1,5 @@
 [run]
+branch = True
 source = wxparser
 omit =
     wxparser/__init__.py

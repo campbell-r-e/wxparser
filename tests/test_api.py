@@ -79,6 +79,7 @@ def test_all_json_and_text_endpoints(tmp_path):
         assert {"observations", "forecasts", "alerts", "transcripts"} <= set(exp)
         active = _get(H + "/alerts/active")["alerts"]
         assert active and active[0]["authoritative"] is True
+        assert _get(H + "/alerts/active?details=0")["alerts"]   # details-skip branch
         assert _get(H + "/alerts/history")["total"] == 1
         assert _get(H + "/alerts/history?details=1")["alerts"][0]["source"] == "same"
         assert "details" in _get(H + "/alerts/details")

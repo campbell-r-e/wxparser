@@ -162,7 +162,7 @@ class _Handler(BaseHTTPRequestHandler):
         for fc in forecasts:
             fc["source"] = "stt"; fc["advisory"] = True  # transcribed, not SAME
             ia = fc.get("issued_at")
-            if ia:
+            if ia:  # pragma: no branch - a stored forecast always has issued_at
                 age = (now - datetime.strptime(ia, "%Y-%m-%dT%H:%M:%SZ").replace(
                     tzinfo=timezone.utc)).total_seconds() / 60
                 fc["age_minutes"] = round(age, 1)

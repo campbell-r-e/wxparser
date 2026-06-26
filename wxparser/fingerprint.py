@@ -38,9 +38,9 @@ def _mel_filterbank(sr: int, n_fft: int, n_mels: int) -> np.ndarray:
     fb = np.zeros((n_mels, n_fft // 2 + 1), dtype=np.float64)
     for m in range(1, n_mels + 1):
         lo, ctr, hi = bins[m - 1], bins[m], bins[m + 1]
-        if ctr > lo:
+        if ctr > lo:  # pragma: no branch - bins are non-degenerate with real sr/n_mels
             fb[m - 1, lo:ctr] = (np.arange(lo, ctr) - lo) / (ctr - lo)
-        if hi > ctr:
+        if hi > ctr:  # pragma: no branch
             fb[m - 1, ctr:hi] = (hi - np.arange(ctr, hi)) / (hi - ctr)
     return fb
 

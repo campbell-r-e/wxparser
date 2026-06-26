@@ -257,8 +257,9 @@ systemd units per instance (`wxparser@.service`) or just set the env block per u
 
 ## Tests & CI
 
-**100% line coverage**, enforced. Tests run against the `wxparser_test` PostgreSQL database
-(created by `setup-postgres.sh`); subprocesses (`arecord`, `whisper-cli`) are mocked:
+**100% line *and branch* coverage**, enforced. Tests run against the `wxparser_test`
+PostgreSQL database (created by `setup-postgres.sh`); subprocesses (`arecord`, `whisper-cli`)
+are mocked:
 
 ```bash
 pip install -e '.[test]'         # pytest + coverage

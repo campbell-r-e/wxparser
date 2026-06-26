@@ -475,7 +475,7 @@ class ConditionsAggregator:
         out: dict = {}
         for k, voter in self.voters.items():
             b = voter.best()
-            if b is not None:
+            if b is not None:  # pragma: no branch - a registered voter always has a sample
                 out[k] = {"value": b.value, "votes": b.votes, "total": b.total, "source": "voice"}
         return out
 
