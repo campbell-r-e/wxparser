@@ -66,29 +66,25 @@ def set_ctl(ctl: str, value: int) -> None:
                    capture_output=True, text=True)
 
 
+# Front Mic Boost is the effective control on this card (~+10 dB/step); Capture
+# (~2 dB across its whole 0-31 range) barely moves the level, so it's only a fine
+# trim once Boost is railed. Driving Boost first means a hot/quiet feed (e.g. a
+# battery swap) converges in a step or two instead of crawling uselessly through
+# the Capture range. When Boost moves, Capture is re-centred so it has fine-trim
+# headroom both ways at the rails.
 def raise_gain(cap: int, boost: int) -> tuple[int, int]:
-    if cap + CAP_STEP <= CAP_MAX:
-        return cap + CAP_STEP, boost
     if boost < BOOST_MAX:
-        return CAP_MID, boost + 1       # ADC railed: take a coarse boost step
+        return CAP_MID, boost + 1
+    if cap + CAP_STEP <= CAP_MAX:
+        return cap + CAP_STEP, boost    # Boost maxed: fine-trim up with Capture
     return cap, boost                   # already at max gain
 
 
 def lower_gain(cap: int, boost: int) -> tuple[int, int]:
-    if cap - CAP_STEP >= CAP_MIN:
-        return cap - CAP_STEP, boost
     if boost > BOOST_MIN:
         return CAP_MID, boost - 1
-    return cap, boost
-
-
-def raise_gain_coarse(cap: int, boost: int) -> tuple[int, int]:
-    """Deaf recovery prefers a coarse Boost step (~+10 dB) so a silent feed is
-    pulled back above the VAD floor in a couple of runs, not half an hour."""
-    if boost < BOOST_MAX:
-        return cap, boost + 1
-    if cap + CAP_STEP <= CAP_MAX:
-        return cap + CAP_STEP, boost
+    if cap - CAP_STEP >= CAP_MIN:
+        return cap - CAP_STEP, boost     # Boost at 0: fine-trim down with Capture
     return cap, boost
 
 
@@ -155,8 +151,9 @@ def main() -> int:
 
     if seg_age is None or seg_age > SILENT_MIN:
         # Deaf: no recent segment, so no level to read. Ratchet up blindly until
-        # audio clears the VAD floor and segments (and a level) reappear.
-        new_cap, new_boost = raise_gain_coarse(cap, boost)
+        # audio clears the VAD floor and segments (and a level) reappear (Boost
+        # first, so a silent feed recovers in a couple of runs).
+        new_cap, new_boost = raise_gain(cap, boost)
         if (new_cap, new_boost) == (cap, boost):
             log(f"deaf (last segment {seg_age}m ago) at max gain "
                 f"(Capture={cap}, Boost={boost}) — no signal? likely radio/cable")
