@@ -221,26 +221,41 @@ class ForecastAggregator:
 
     A segment that starts with a period name ("Tonight", "Saturday") opens a
     period; subsequent segments attach highs/lows/precip/sky to the open period
-    until the next header. Periods are keyed by name so a fresh airing updates in
-    place rather than duplicating.
+    until the next header. Each (period, field) is **majority-voted** over a
+    rolling window (like the conditions aggregator) so a single STT-garbled airing
+    can't overwrite the consensus — yet a genuine NWS revision still wins once it
+    dominates recent airings.
     """
 
-    def __init__(self, area: str = "Muncie"):
-        self.periods: dict[str, dict] = {}
+    _FIELDS = ("high_f", "low_f", "precip_pct", "sky")
+
+    def __init__(self, area: str = "Muncie", maxlen: int = 15):
+        self.maxlen = maxlen
+        self.order: list[str] = []   # period names in first-seen order
+        self.voters: dict[tuple[str, str], _FieldVoter] = {}
         self._current: str | None = None
         self.city: str = area  # area the current forecast covers ("...for the X area")
 
+    def _vote(self, period: str, field: str, value) -> None:
+        if period not in self.order:
+            self.order.append(period)
+        self.voters.setdefault((period, field), _FieldVoter(self.maxlen)).add(value)
+
+    def _has(self, period: str, field: str) -> bool:
+        v = self.voters.get((period, field))
+        return bool(v and v.samples)
+
     def prime(self, periods: list[dict]) -> None:
-        """Restore periods from a stored forecast so a restart keeps /forecast."""
+        """Restore periods from a stored forecast so a restart keeps /forecast.
+        The stored consensus seeds each voter as one sample; live airings vote on
+        top of it."""
         for p in periods:
             name = p.get("period")
             if not name:
                 continue
-            entry = {"period": name}
-            for k in ("high_f", "low_f", "precip_pct", "sky"):
+            for k in self._FIELDS:
                 if p.get(k) is not None:
-                    entry[k] = p[k]
-            self.periods[name] = entry
+                    self._vote(name, k, p[k])
 
     def update(self, text: str) -> bool:
         # Climate outlook / almanac recaps are not the daily forecast.
@@ -274,7 +289,6 @@ class ForecastAggregator:
         for period, chunk in spans:
             if period is None:
                 continue
-            entry = self.periods.setdefault(period, {"period": period})
             fields = extract_forecast_fields(chunk)
             # A "near steady temperature in the X" reading has no high/low label;
             # it's the high on a day period, the low on a night period.
@@ -283,22 +297,31 @@ class ForecastAggregator:
             # only a low. The opposite slot in a chunk is a leak from an adjacent
             # period (e.g. a grouped "Sunday night through Wednesday ... highs in
             # the 90s"), so drop it and route an unlabeled steady temp to the slot
-            # the period actually carries.
+            # the period actually carries (only as a fallback — never over a
+            # period that already has a labeled vote).
             if _is_night_period(period):
                 fields.pop("high_f", None)
-                if steady is not None and "low_f" not in fields and entry.get("low_f") is None:
+                if steady is not None and "low_f" not in fields and not self._has(period, "low_f"):
                     fields["low_f"] = steady
             else:
                 fields.pop("low_f", None)
-                if steady is not None and "high_f" not in fields and entry.get("high_f") is None:
+                if steady is not None and "high_f" not in fields and not self._has(period, "high_f"):
                     fields["high_f"] = steady
-            if fields:
-                entry.update(fields)
+            for k, v in fields.items():
+                self._vote(period, k, v)
                 changed = True
         return changed
 
     def snapshot(self) -> list[dict]:
-        return list(self.periods.values())
+        out: list[dict] = []
+        for name in self.order:
+            entry: dict = {"period": name}
+            for k in self._FIELDS:
+                voter = self.voters.get((name, k))
+                if voter and voter.samples:
+                    entry[k] = voter.best().value
+            out.append(entry)
+        return out
 
 
 # --------------------------------------------------------------------------- #

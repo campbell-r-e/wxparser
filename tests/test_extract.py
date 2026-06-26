@@ -141,6 +141,27 @@ def test_night_period_never_gets_a_high():
     assert s["Sunday Night"]["low_f"] == 68
 
 
+def test_forecast_votes_reject_oneoff_garble():
+    # the consensus must win: a single garbled airing (Sunday high heard as "lower
+    # 70s" once) can't overwrite the well-voted value ("mid 80s" five times). This
+    # is the bug the audit found — latest-airing-wins served 71 over a voted 85.
+    fc = ForecastAggregator()
+    for _ in range(5):
+        fc.update("Sunday, mostly sunny. Highs in the mid 80s.")
+    fc.update("Sunday, mostly sunny. Highs in the lower 70s.")
+    assert {p["period"]: p for p in fc.snapshot()}["Sunday"]["high_f"] == 85
+
+
+def test_forecast_revision_wins_once_it_dominates():
+    # a genuine revision still takes over once it dominates the recent window.
+    fc = ForecastAggregator()
+    for _ in range(3):
+        fc.update("Saturday, sunny. Highs in the upper 80s.")   # 88
+    for _ in range(10):
+        fc.update("Saturday, cloudy. Highs in the lower 70s.")  # revised to 71
+    assert {p["period"]: p for p in fc.snapshot()}["Saturday"]["high_f"] == 71
+
+
 def test_precip_word_number_and_comma():
     assert extract_forecast_fields("Chance of rain eighty percent.")["precip_pct"] == 80
     assert extract_forecast_fields("Chance of rain, 80%.")["precip_pct"] == 80
