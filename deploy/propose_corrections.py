@@ -168,9 +168,10 @@ def main() -> int:
     # extract._DECADE_WORDS.
     known = {d.lower() for d in _DECADE_WORDS}
     dec = Counter()
+    _RANGE = {"and", "to", "or", "the", "through", "into"}  # "lower and upper 70s" etc.
     for m in re.finditer(r"\bin the (?:lower|low|mid|middle|upper)\s+([a-z]+)", low):
         t = m.group(1)
-        if t not in known and not re.match(r"\d{1,3}s$", t):
+        if t not in known and t not in _RANGE and not re.match(r"\d{1,3}s$", t):
             dec[t] += 1
     dec_cand = [(t, n) for t, n in dec.most_common() if n >= args.min_count]
     if dec_cand:
