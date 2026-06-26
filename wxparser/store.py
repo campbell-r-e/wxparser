@@ -26,6 +26,7 @@ import re
 
 from .extract import (
     _RE_PERIOD_HDR,
+    extract_almanac,
     extract_forecast_fields,
     extract_observation,
 )
@@ -85,7 +86,12 @@ def classify(text: str) -> str:
     obs = extract_observation(text)
     if any(obs.get(k) is not None for k in _COND_FIELDS) or _RE_ROUNDUP.search(text):
         return "current_conditions"
-    # 3) forecast: a period header, an extracted high/low/precip, or the
+    # 3) climate/almanac recap (sunrise/sunset, YTD precip, degree days). Checked
+    #    before the forecast guess because the conditions/forecast aggregators skip
+    #    this block, so it would otherwise fall through to "unknown".
+    if extract_almanac(text):
+        return "almanac"
+    # 4) forecast: a period header, an extracted high/low/precip, or the
     #    unmistakable forecast-narrative phrasing between the labelled lines.
     if _RE_PERIOD_HDR.search(text) is not None:
         return "zone_forecast"

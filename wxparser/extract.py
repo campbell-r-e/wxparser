@@ -501,6 +501,127 @@ class ConditionsAggregator:
 
 
 # --------------------------------------------------------------------------- #
+# Climate / almanac recap extraction
+# --------------------------------------------------------------------------- #
+# The loop's climate-summary segment quotes the day's almanac: year-to-date
+# precipitation and its departure from normal, sunrise/sunset, and degree days.
+# The conditions/forecast aggregators deliberately *skip* this block (it quotes
+# normal/past values, not live weather — see _RE_RECAP / _RE_FC_OUTLOOK); this
+# extractor is the one place that actually captures it.
+#
+# A spoken clock time, across the renderings STT produces: "9:15 PM", "9.15pm"
+# (colon heard as a period), "6 AM" (no minutes).
+_ALM_TIME = r"(\d{1,2}(?:[:.\s]\d{2})?\s*[ap]\.?\s?m\.?)"
+_RE_SUNRISE = re.compile(rf"sunrise[^.]*?\bat\s+{_ALM_TIME}", re.I)
+_RE_SUNSET = re.compile(rf"sunset[^.]*?\bat\s+{_ALM_TIME}", re.I)
+# "total precipitation for/from the year now/still stands at 17.39 inches"
+_RE_PRECIP_YEAR = re.compile(
+    r"precipitation (?:for|from) the year\s+(?:now |still )?stands? at\s+"
+    r"(\d{1,3}\.\d{1,2})", re.I)
+# "...which is 2.72 inches below normal" — signed: below -> deficit (negative).
+_RE_PRECIP_DEPART = re.compile(
+    r"(\d{1,3}\.\d{1,2})\s*inch(?:es)?\s+(below|above)\s+normal", re.I)
+# "normal precipitation total for the seven days is around 1.10 inches"
+_RE_NORMAL_PRECIP = re.compile(
+    r"normal precipitation total for the (?:seven days|7 days|week)\s+is\s+"
+    r"(?:around\s+)?(\d{1,3}\.\d{1,2})", re.I)
+# Yesterday's heating/cooling degree days ("there were no/5 heating degree days").
+# Anchored on were/was so the season-to-date total ("this leaves 288 ...") can't
+# be mistaken for the daily value.
+_RE_HDD = re.compile(r"(?:were|was)\s+(no|\d{1,3})\s+heating degree days?", re.I)
+_RE_CDD = re.compile(r"(?:were|was)\s+(no|\d{1,3})\s+cooling degree days?", re.I)
+
+_ALMANAC_RANGE = {
+    "precip_year_in": (0.0, 200.0),
+    "precip_departure_in": (-100.0, 100.0),
+    "normal_precip_week_in": (0.0, 20.0),
+    "heating_degree_days": (0, 100),
+    "cooling_degree_days": (0, 100),
+}
+# fields the store persists as numbers; sunrise/sunset are kept as text.
+ALMANAC_NUMERIC = frozenset(_ALMANAC_RANGE)
+
+
+def _norm_clock(s: str) -> str:
+    """Normalise a spoken time ("9.15pm", "6 AM") to "H:MM AM/PM"."""
+    s = s.strip().lower()
+    mer = "PM" if re.search(r"p\.?\s?m", s) else "AM"
+    if m := re.search(r"(\d{1,2})[:.\s]+(\d{2})", s):
+        return f"{int(m.group(1))}:{m.group(2)} {mer}"
+    m = re.search(r"(\d{1,2})", s)  # the _ALM_TIME pattern guarantees a leading digit
+    return f"{int(m.group(1))}:00 {mer}"
+
+
+def _degree_days(token: str) -> int:
+    return 0 if token.lower() == "no" else int(token)
+
+
+def extract_almanac(text: str) -> dict:
+    """Return whatever climate/almanac fields are present in this text.
+
+    Empty when the segment isn't a climate recap, so classify()/callers can use a
+    truthy result as the detector.
+    """
+    out: dict = {}
+    if m := _RE_SUNRISE.search(text):
+        out["sunrise"] = _norm_clock(m.group(1))
+    if m := _RE_SUNSET.search(text):
+        out["sunset"] = _norm_clock(m.group(1))
+    if m := _RE_PRECIP_YEAR.search(text):
+        out["precip_year_in"] = float(m.group(1))
+    if m := _RE_PRECIP_DEPART.search(text):
+        v = float(m.group(1))
+        out["precip_departure_in"] = -v if m.group(2).lower() == "below" else v
+    if m := _RE_NORMAL_PRECIP.search(text):
+        out["normal_precip_week_in"] = float(m.group(1))
+    if m := _RE_HDD.search(text):
+        out["heating_degree_days"] = _degree_days(m.group(1))
+    if m := _RE_CDD.search(text):
+        out["cooling_degree_days"] = _degree_days(m.group(1))
+    for k, (lo, hi) in _ALMANAC_RANGE.items():
+        if k in out and not (lo <= out[k] <= hi):
+            del out[k]
+    return out
+
+
+class AlmanacAggregator:
+    """Majority-votes each almanac field across re-hearings of the climate recap.
+
+    Single-site (the home station's climate summary), so unlike the city
+    aggregator there's no city key — just field -> voted value.
+    """
+
+    def __init__(self, maxlen: int = 15):
+        self.maxlen = maxlen
+        self.voters: dict[str, _FieldVoter] = {}
+
+    def update(self, text: str) -> list[dict]:
+        """Returns every almanac field heard in this text with its voted value."""
+        readings: list[dict] = []
+        for field, val in extract_almanac(text).items():
+            voter = self.voters.setdefault(field, _FieldVoter(self.maxlen))
+            voter.add(val)
+            best = voter.best()
+            readings.append({"field": field, "value": best.value,
+                             "votes": best.votes, "total": best.total})
+        return readings
+
+    def snapshot(self) -> dict:
+        out: dict = {}
+        for field, voter in self.voters.items():
+            b = voter.best()
+            if b is not None:  # pragma: no branch - a registered voter always has a sample
+                out[field] = {"value": b.value, "votes": b.votes,
+                              "total": b.total, "source": "voice"}
+        return out
+
+    def prime(self, readings: list[dict]) -> None:
+        """Seed voters from stored latest almanac so a restart keeps state."""
+        for r in readings:
+            self.voters.setdefault(r["field"], _FieldVoter(self.maxlen)).add(r["value"])
+
+
+# --------------------------------------------------------------------------- #
 # Spoken warning / statement narrative -> structured details (Phase 7)
 # --------------------------------------------------------------------------- #
 # The SAME digital header gives the event type, counties, and expiry. The spoken

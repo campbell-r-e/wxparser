@@ -14,6 +14,8 @@ Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
     GET /conditions/{condition}           -> every city's latest value for it
     GET /conditions/history?condition=&city=&from=&to=&limit=&offset=
                                           -> historical readings (paginated)
+    GET /almanac                          -> climate recap: sunrise/sunset, YTD
+                                             precip + departure, degree days
     GET /forecast                         -> latest forecast (+ staleness)
     GET /forecast/history?from=&to=&city=&limit=&offset=
                                           -> historical forecast predictions
@@ -218,8 +220,10 @@ class _Handler(BaseHTTPRequestHandler):
              if r["city"].lower() != city.lower()], dict(q, fresh="")))
         forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
         alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
+        almanac = mark_trust(self._annotate_age(
+            self.db.latest_almanac(self._min(q)), dict(q, fresh="")))
         return {"generated_at": _now_iso(), "station": self.cfg.station, "city": city,
-                "conditions": conds, "roundup": roundup,
+                "conditions": conds, "roundup": roundup, "almanac": almanac,
                 "forecast": forecast, "alerts": alerts}
 
     def do_GET(self) -> None:  # noqa: N802
@@ -233,7 +237,7 @@ class _Handler(BaseHTTPRequestHandler):
                     "/now", "/bulletin", "/sitrep", "/aprs",
                     "/cities", "/city/{city}",
                     "/conditions", "/conditions/{condition}", "/conditions/history",
-                    "/forecast", "/forecast/history",
+                    "/almanac", "/forecast", "/forecast/history",
                     "/transcripts", "/export?since=", "/stream",
                     "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
             elif path == "/stream":
@@ -288,6 +292,11 @@ class _Handler(BaseHTTPRequestHandler):
                 cities = mark_trust(self._annotate_age(self.db.latest_for_condition(cond, m), q))
                 self._send({"condition": cond, "min_sightings": m,
                             "stale_after_min": self._stale_after(q), "cities": cities})
+            elif path == "/almanac":
+                rows = mark_trust(self._annotate_age(
+                    self.db.latest_almanac(self._min(q)), dict(q, fresh="")))
+                self._send({"generated_at": _now_iso(), "min_sightings": self._min(q),
+                            "stale_after_min": self._stale_after(q), "almanac": rows})
             elif path == "/forecast":
                 self._send({"forecasts": self._annotate_forecast_age(
                     self.db.latest_forecasts(), q)})
@@ -321,13 +330,15 @@ class _Handler(BaseHTTPRequestHandler):
                 fcs = self.db.forecasts_since(since, limit)
                 als = self.db.alerts_since(since, limit)
                 ads = self.db.alert_details_since(since, limit)
+                alm = self.db.almanac_since(since, limit)
                 trs = reports_since(self.cfg, since, limit)
                 sections = {"observations": obs, "forecasts": fcs, "alerts": als,
-                            "alert_details": ads, "transcripts": trs}
+                            "alert_details": ads, "almanac": alm, "transcripts": trs}
                 stamps = ([r["captured_at"] for r in obs]
                           + [r["issued_at"] for r in fcs]
                           + [r["captured_at"] for r in als]
                           + [r["captured_at"] for r in ads]
+                          + [r["captured_at"] for r in alm]
                           + [r.get("captured_at", "") for r in trs])
                 stamps = [s for s in stamps if s]
                 self._send({"since": since,
@@ -367,7 +378,8 @@ class _Handler(BaseHTTPRequestHandler):
                                "cities": len(self.db.cities()),
                                "active_alerts": len(self.db.get_active_alerts()),
                                "total_alerts": total_alerts,
-                               "forecast_cities": len(self.db.latest_forecasts())})
+                               "forecast_cities": len(self.db.latest_forecasts()),
+                               "almanac_fields": len(self.db.latest_almanac())})
                 # fail loud: non-200 so a monitor can alarm on HTTP status alone.
                 code = 200 if health["status"] == "ok" else 503
                 self._send(health, code)

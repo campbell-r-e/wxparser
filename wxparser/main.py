@@ -39,7 +39,12 @@ from .capture import stream_frames
 from .config import CONFIG, Config
 from .db import Database
 from .dedup import TextDeduper
-from .extract import CityConditionsAggregator, ForecastAggregator, extract_alert_details
+from .extract import (
+    AlmanacAggregator,
+    CityConditionsAggregator,
+    ForecastAggregator,
+    extract_alert_details,
+)
 from .fingerprint import Fingerprinter, NoveltyGate
 from .health import Heartbeat
 from .notify import post_webhook
@@ -138,6 +143,7 @@ def _stt_worker(
     deduper: TextDeduper,
     aggregator: CityConditionsAggregator,
     forecast: ForecastAggregator,
+    almanac: AlmanacAggregator,
     db: Database | None,
     hb: Heartbeat | None = None,
 ) -> None:
@@ -177,6 +183,12 @@ def _stt_worker(
                 db.write_forecast(forecast.snapshot(), now, city=forecast.city)
                 if hb is not None:
                     hb.touch("last_extraction_at")
+            for r in almanac.update(text):
+                if db is not None:
+                    db.record_almanac(r, now)
+                if hb is not None:
+                    hb.touch("last_extraction_at")
+                print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if saved is not None and db is not None:
                 # structure the spoken narrative of warnings/statements so it can
@@ -213,6 +225,7 @@ def run_live(cfg: Config, once: bool = False) -> int:
         print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
     forecast = ForecastAggregator()
+    almanac = AlmanacAggregator()
     db = Database(cfg)
     print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)
     # prime aggregators from the store so a restart keeps state
@@ -224,14 +237,19 @@ def run_live(cfg: Config, once: bool = False) -> int:
         if fc["city"] == forecast.city:
             forecast.prime(fc["periods"])
             break
-    if readings or fcs:
-        print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas)", flush=True)
+    alm = db.latest_almanac_readings()
+    if alm:
+        almanac.prime(alm)
+    if readings or fcs or alm:
+        print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas, "
+              f"{len(alm)} almanac fields)", flush=True)
     hb = Heartbeat(cfg)
     hb.flush()  # publish "starting" immediately so /health isn't down on boot
     q: "queue.PriorityQueue" = queue.PriorityQueue()
     seq = itertools.count()  # tie-breaker so PriorityQueue never compares payloads
     worker = threading.Thread(
-        target=_stt_worker, args=(q, cfg, once, deduper, aggregator, forecast, db, hb), daemon=True
+        target=_stt_worker,
+        args=(q, cfg, once, deduper, aggregator, forecast, almanac, db, hb), daemon=True
     )
     worker.start()
 

@@ -147,6 +147,28 @@ def test_observations_and_forecasts_since():
     assert len(db.forecasts_since("2026-06-24T19:00:00Z", 10)) == 0
 
 
+def test_almanac_roundtrip_min_sightings_and_since():
+    db = _db()
+    # numeric field heard twice -> surfaces under min_sightings=2
+    db.record_almanac({"field": "precip_year_in", "value": 17.39, "votes": 1, "total": 1},
+                      "2026-06-24T06:00:00Z")
+    db.record_almanac({"field": "precip_year_in", "value": 17.39, "votes": 2, "total": 2},
+                      "2026-06-24T07:00:00Z")
+    # text field heard once
+    db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, "2026-06-24T06:00:00Z")
+    latest = {r["field"]: r for r in db.latest_almanac()}
+    assert latest["precip_year_in"]["value"] == 17.39 and latest["precip_year_in"]["sightings"] == 2
+    assert latest["sunrise"]["value"] == "6:14 AM"            # text round-trips
+    # min_sightings gates the once-heard field out
+    gated = {r["field"] for r in db.latest_almanac(min_sightings=2)}
+    assert "precip_year_in" in gated and "sunrise" not in gated
+    # priming readings + incremental export
+    primed = {r["field"]: r["value"] for r in db.latest_almanac_readings()}
+    assert primed["precip_year_in"] == 17.39 and primed["sunrise"] == "6:14 AM"
+    since = db.almanac_since("2026-06-24T06:30:00Z", 10)
+    assert [r["value"] for r in since] == [17.39]             # strictly after, ascending
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

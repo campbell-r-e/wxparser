@@ -146,6 +146,33 @@ city names; override per request with `?min=1`.
 
 ---
 
+## 3a. Almanac — `/almanac`
+
+The climate-recap segment of the broadcast loop carries the day's almanac. It's
+voted and trust-annotated like conditions (transcribed → `advisory`), and is also
+embedded in `/now` under an `almanac` key.
+
+```bash
+curl -s $H/almanac
+```
+
+```jsonc
+{ "generated_at": "...", "min_sightings": 2, "stale_after_min": 120,
+  "almanac": [
+    { "field": "precip_year_in",        "value": 17.39, "advisory": true, "trust": 0.83, ... },
+    { "field": "precip_departure_in",   "value": -2.72 },   // signed: below normal
+    { "field": "sunrise",               "value": "6:14 AM" },
+    { "field": "sunset",                "value": "9:15 PM" },
+    { "field": "normal_precip_week_in", "value": 1.10 },
+    { "field": "heating_degree_days",   "value": 0 },
+    { "field": "cooling_degree_days",   "value": 6 } ] }
+```
+
+Fields are sightings-gated and stale-flagged exactly like `/conditions`; history flows
+through `/export` (an `almanac` section). Sunrise/sunset are text; the rest are numeric.
+
+---
+
 ## 4. History & pagination
 
 The history endpoints expose the full append-only record and **never silently truncate** —
@@ -176,7 +203,7 @@ done
 Same pattern for `GET /forecast/history?from=&to=&city=&limit=&offset=` and
 `GET /transcripts?from=&to=&q=&product=&limit=&offset=` (`q=` is a case-insensitive text
 search; `product=` filters on `product_type` — `current_conditions`, `zone_forecast`,
-`hazardous_weather_outlook`, …). `from`/`to` are inclusive ISO-8601.
+`almanac`, `hazardous_weather_outlook`, …). `from`/`to` are inclusive ISO-8601.
 
 ---
 
@@ -190,7 +217,7 @@ watermark to advance.
 { "since": "2026-06-25T20:00:00Z", "next_since": "2026-06-25T21:13:32Z", "more": false,
   "limit": 500,
   "observations": [ ... ], "forecasts": [ ... ], "alerts": [ ... ],
-  "alert_details": [ ... ], "transcripts": [ ... ] }
+  "alert_details": [ ... ], "almanac": [ ... ], "transcripts": [ ... ] }
 ```
 
 Drain the whole store by looping until `more` is false, advancing `since` each time:
@@ -274,7 +301,8 @@ process publishes a heartbeat the API reads.
   "pipeline": { "last_segment_at": "...", "last_novel_at": "...", "last_stt_ok_at": "...",
                 "last_extraction_at": "...", "segments": 412, "novel": 38, "repeat": 374,
                 "queue_depth": 0, "capture_restarts": 0, "stt_errors": 0 },
-  "conditions": 7, "cities": 19, "active_alerts": 0, "total_alerts": 3, "forecast_cities": 1 }
+  "conditions": 7, "cities": 19, "active_alerts": 0, "total_alerts": 3,
+  "forecast_cities": 1, "almanac_fields": 7 }
 ```
 
 | status | meaning | HTTP |

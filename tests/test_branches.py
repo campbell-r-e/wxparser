@@ -12,6 +12,7 @@ import wxparser.main as main
 from wxparser.config import Config
 from wxparser.dedup import TextDeduper
 from wxparser.extract import (
+    AlmanacAggregator,
     CityConditionsAggregator,
     ConditionsAggregator,
     ForecastAggregator,
@@ -162,6 +163,7 @@ def test_stt_worker_none_db_hb(tmp_path, monkeypatch):
     texts = iter([
         "At Muncie, the temperature was 80 degrees. Tonight, lows in the lower 60s.",
         "Tornado warning for Delaware County until 630 PM. Take cover spotter activation.",
+        "Sunrise today is at 6.13 AM and sunset is at 9.15 PM.",  # almanac, db/hb None branches
     ])
     monkeypatch.setattr(main, "transcribe_samples", lambda s, c: _t(next(texts)))
     q = _q.PriorityQueue()
@@ -172,9 +174,10 @@ def test_stt_worker_none_db_hb(tmp_path, monkeypatch):
         duration_s = 1.0
     q.put((0, next(seq), (Seg(), "d")))
     q.put((0, next(seq), (Seg(), "d")))
+    q.put((0, next(seq), (Seg(), "d")))
     q.put((0, next(seq), None))
     main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), None, None)   # db None, hb None
+                     ForecastAggregator(), AlmanacAggregator(), None, None)   # db None, hb None
 
 
 def test_worker_error_without_hb(tmp_path, monkeypatch):
@@ -191,7 +194,8 @@ def test_worker_error_without_hb(tmp_path, monkeypatch):
     q.put((0, 0, (Seg(), "d")))
     q.put((0, 1, None))
     main._stt_worker(q, Config(out_dir=tmp_path), False, TextDeduper(Config()),
-                     CityConditionsAggregator(), ForecastAggregator(), None, None)  # error, hb None
+                     CityConditionsAggregator(), ForecastAggregator(),
+                     AlmanacAggregator(), None, None)  # error, hb None
 
 
 def test_worker_db_yes_hb_none(tmp_path, monkeypatch):
@@ -217,7 +221,7 @@ def test_worker_db_yes_hb_none(tmp_path, monkeypatch):
     q.put((0, next(seq), (Seg(), "d")))
     q.put((0, next(seq), None))
     main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), db, None)     # db yes, hb None
+                     ForecastAggregator(), AlmanacAggregator(), db, None)     # db yes, hb None
     assert db.all_conditions_for_city("Muncie")
 
 

@@ -19,6 +19,8 @@ import pg8000.native
 
 from .config import CONFIG, Config
 
+from .extract import ALMANAC_NUMERIC
+
 _NUMERIC_CONDITIONS = {
     "temperature_f", "dewpoint_f", "humidity_pct", "pressure_in", "wind_speed_mph",
 }
@@ -92,6 +94,29 @@ _SCHEMA = [
         text TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS ix_ad_time ON alert_details(captured_at)",
+    # Climate/almanac recap (single-site): latest voted value per field plus an
+    # append-only history. Mirrors the city_conditions/city_observations split but
+    # without a city key (the home station's daily climate summary).
+    """CREATE TABLE IF NOT EXISTS almanac (
+        field TEXT PRIMARY KEY,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        votes INTEGER,
+        total INTEGER,
+        sightings INTEGER NOT NULL DEFAULT 0,
+        first_seen TIMESTAMPTZ,
+        last_seen TIMESTAMPTZ
+    )""",
+    """CREATE TABLE IF NOT EXISTS almanac_observations (
+        captured_at TIMESTAMPTZ NOT NULL,
+        field TEXT NOT NULL,
+        value_num DOUBLE PRECISION,
+        value_text TEXT,
+        votes INTEGER,
+        total INTEGER,
+        PRIMARY KEY (captured_at, field)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_alm_obs ON almanac_observations(field, captured_at)",
 ]
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -259,6 +284,55 @@ class Database:
             lo=json.dumps(details.get("locations")) if details.get("locations") else None,
             sp=bool(details.get("spotter_activation")), tx=text,
         )
+
+    def record_almanac(self, reading: dict, captured_at: str) -> None:
+        """Record one heard almanac field: bump its sightings/latest value and
+        append a history row. Mirrors record_reading without a city key."""
+        ca = _parse_iso(captured_at)
+        field = reading["field"]
+        num = float(reading["value"]) if field in ALMANAC_NUMERIC else None
+        txt = None if field in ALMANAC_NUMERIC else str(reading["value"])
+        votes, total = reading.get("votes"), reading.get("total")
+        self._run(
+            "INSERT INTO almanac"
+            "(field,value_num,value_text,votes,total,sightings,first_seen,last_seen) "
+            "VALUES(:f,:num,:txt,:votes,:total,1,:ca,:ca) "
+            "ON CONFLICT (field) DO UPDATE SET "
+            "value_num=EXCLUDED.value_num, value_text=EXCLUDED.value_text, "
+            "votes=EXCLUDED.votes, total=EXCLUDED.total, "
+            "sightings=almanac.sightings+1, last_seen=EXCLUDED.last_seen",
+            f=field, num=num, txt=txt, votes=votes, total=total, ca=ca,
+        )
+        self._run(
+            "INSERT INTO almanac_observations"
+            "(captured_at,field,value_num,value_text,votes,total) "
+            "VALUES(:ca,:f,:num,:txt,:votes,:total) "
+            "ON CONFLICT (captured_at,field) DO NOTHING",
+            ca=ca, f=field, num=num, txt=txt, votes=votes, total=total,
+        )
+
+    def latest_almanac(self, min_sightings: int = 1) -> list[dict]:
+        """Latest voted value for every almanac field (sightings-gated)."""
+        rows = self._query(
+            "SELECT field,value_num,value_text,votes,total,sightings,last_seen "
+            "FROM almanac WHERE sightings >= :m ORDER BY field", m=min_sightings)
+        return [{"field": r["field"], "value": _value(r), "captured_at": _ts(r["last_seen"]),
+                 "votes": r["votes"], "total": r["total"], "sightings": r["sightings"]}
+                for r in rows]
+
+    def latest_almanac_readings(self) -> list[dict]:
+        """field -> value for priming the aggregator on restart."""
+        rows = self._query("SELECT field, value_num, value_text FROM almanac")
+        return [{"field": r["field"], "value": _value(r)} for r in rows]
+
+    def almanac_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        rows = self._query(
+            "SELECT captured_at,field,value_num,value_text,votes,total "
+            "FROM almanac_observations WHERE captured_at > :s "
+            "ORDER BY captured_at LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=limit, off=offset)
+        return [{"field": r["field"], "value": _value(r), "captured_at": _ts(r["captured_at"]),
+                 "votes": r["votes"], "total": r["total"]} for r in rows]
 
     def alert_details_between(self, frm: str, to: str) -> list[dict]:
         """Structured spoken-alert details captured in [frm, to] (newest first)."""
@@ -480,7 +554,8 @@ class Database:
         return [{"city": r["city"], "condition": r["condition"], "value": _value(r)} for r in rows]
 
     def clear(self) -> None:
-        self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts, alert_details")
+        self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts, "
+                  "alert_details, almanac, almanac_observations")
 
     def close(self) -> None:
         with self._lock:

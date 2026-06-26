@@ -34,6 +34,12 @@ def test_classify_conditions_forecast_unknown():
     assert classify("This is KJY93 Muncie all hazards radio.") == "unknown"
 
 
+def test_classify_almanac():
+    assert classify("Sunrise today is at 6.13 AM and sunset is at 9.15 PM.") == "almanac"
+    assert classify("The total precipitation for the year now stands at 17.39 inches, "
+                    "which is 2.72 inches below normal.") == "almanac"
+
+
 def test_build_report_fields():
     cfg = Config()
     r = build_report(_t("Highs around 80."), cfg, duration_s=12.34, fingerprint="abc",

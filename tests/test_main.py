@@ -89,6 +89,8 @@ def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
     # a forecast for a non-home area so the priming loop hits its no-match branch
     db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-24T18:00:00Z",
                       city="Anderson")
+    # a stored almanac field so run_live's almanac-prime branch runs
+    db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, "2026-06-24T06:00:00Z")
     cfg.reports_jsonl.write_text(
         '{"id":"p","captured_at":"2026-06-24T00:00:00Z","product_type":"zone_forecast",'
         '"text":"earlier forecast"}\n', encoding="utf-8")
@@ -110,7 +112,11 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
     import queue as _q
 
     from wxparser.db import Database
-    from wxparser.extract import CityConditionsAggregator, ForecastAggregator
+    from wxparser.extract import (
+        AlmanacAggregator,
+        CityConditionsAggregator,
+        ForecastAggregator,
+    )
     from wxparser.health import Heartbeat
     main._STOP.clear()
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
@@ -120,6 +126,7 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
         "At Muncie, the temperature was 80 degrees. Tonight, lows in the lower 60s.",  # OBS + forecast
         "At Muncie, the temperature was 81 degrees. Tonight, lows in the lower 60s with showers.",  # update (supersedes)
         "Tornado warning for Delaware County until 630 PM. Take cover now spotter activation.",  # alert detail
+        "Sunrise today is at 6.13 AM and sunset is at 9.15 PM.",                       # almanac
         "[BLANK_AUDIO]",                                                               # blank
     ])
     monkeypatch.setattr(main, "transcribe_samples", lambda s, c: _t(next(texts)))
@@ -129,14 +136,15 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
     class Seg:
         samples = np.zeros(16000, dtype=np.int16)
         duration_s = 1.0
-    for _ in range(4):
+    for _ in range(5):
         q.put((0, next(seq), (Seg(), "d")))
-    q.put((0, next(seq), None))                  # poison pill (after the 4 segments)
+    q.put((0, next(seq), None))                  # poison pill (after the 5 segments)
     main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), db, Heartbeat(cfg))
-    # OBS, forecast, and an alert detail were all written
+                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    # OBS, forecast, an alert detail, and an almanac field were all written
     assert db.all_conditions_for_city("Muncie")
     assert db.alert_details_between("2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
+    assert {r["field"] for r in db.latest_almanac()} >= {"sunrise", "sunset"}
 
 
 def test_emit_alert_with_db(tmp_path):
@@ -152,7 +160,11 @@ def test_emit_alert_with_db(tmp_path):
 def test_stt_worker_survives_transcribe_error(tmp_path, monkeypatch):
     import queue as _q
 
-    from wxparser.extract import CityConditionsAggregator, ForecastAggregator
+    from wxparser.extract import (
+        AlmanacAggregator,
+        CityConditionsAggregator,
+        ForecastAggregator,
+    )
     main._STOP.clear()
     cfg = Config(out_dir=tmp_path)
 
@@ -168,14 +180,18 @@ def test_stt_worker_survives_transcribe_error(tmp_path, monkeypatch):
     q.put((0, 0, (_Seg(), "digest")))
     q.put((0, 1, None))                                    # poison AFTER the segment
     # swallows the STT error (covers the except path, incl. the heartbeat update)
-    main._stt_worker(q, cfg, False, TextDeduper(cfg),
-                     CityConditionsAggregator(), ForecastAggregator(), None, Heartbeat(cfg))
+    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
+                     ForecastAggregator(), AlmanacAggregator(), None, Heartbeat(cfg))
 
 
 def test_stt_worker_handles_empty_queue():
     import queue as _q
 
-    from wxparser.extract import CityConditionsAggregator, ForecastAggregator
+    from wxparser.extract import (
+        AlmanacAggregator,
+        CityConditionsAggregator,
+        ForecastAggregator,
+    )
     main._STOP.clear()
 
     class _Q:
@@ -187,7 +203,8 @@ def test_stt_worker_handles_empty_queue():
             return (0, 0, None)                            # then poison -> break
         def task_done(self): pass
     main._stt_worker(_Q(), Config(), False, TextDeduper(Config()),
-                     CityConditionsAggregator(), ForecastAggregator(), None)
+                     CityConditionsAggregator(), ForecastAggregator(),
+                     AlmanacAggregator(), None)
 
 
 def test_run_live_breaks_when_stopped(tmp_path, monkeypatch):

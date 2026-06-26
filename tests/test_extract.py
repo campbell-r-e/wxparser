@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from wxparser.extract import (
+    AlmanacAggregator,
     CityConditionsAggregator,
     ConditionsAggregator,
     ForecastAggregator,
     extract_alert_details,
+    extract_almanac,
     extract_forecast_fields,
     extract_observation,
     parse_temp_value,
@@ -399,3 +401,52 @@ def test_correct_terms_chants_of_brain_to_chance_of_rain():
     from wxparser.data.stt_terms import correct_terms
     assert correct_terms("Chants of Brain 90% for Friday") == "Chance of Rain 90% for Friday"
     assert correct_terms("a chants of brain") == "a chance of rain"
+
+
+# --- almanac / climate recap extraction ------------------------------------ #
+def test_extract_almanac_full_block():
+    out = extract_almanac(
+        "The total precipitation for the year now stands at 17.39 inches, which is "
+        "2.72 inches below normal. Sunset tonight is at 9.15pm. Sunrise tomorrow is at 6.14am.")
+    assert out == {"sunrise": "6:14 AM", "sunset": "9:15 PM",
+                   "precip_year_in": 17.39, "precip_departure_in": -2.72}
+
+
+def test_extract_almanac_time_forms_and_above_normal():
+    # colon form, no-minutes form, and an above-normal (positive) departure
+    out = extract_almanac(
+        "Sunrise today is at 6:13 AM and sunset is at 9 PM. The total precipitation "
+        "from the year still stands at 30.00 inches, which is 1.20 inches above normal.")
+    assert out["sunrise"] == "6:13 AM" and out["sunset"] == "9:00 PM"
+    assert out["precip_departure_in"] == 1.2
+
+
+def test_extract_almanac_degree_days_and_normal_week():
+    # "no" -> 0, and the season-to-date total ("this leaves 288") is NOT the daily value
+    out = extract_almanac(
+        "There were no heating degree days yesterday. This leaves 288 heating degree days. "
+        "The normal precipitation total for the seven days is around 1.10 inches.")
+    assert out["heating_degree_days"] == 0 and out["normal_precip_week_in"] == 1.1
+    assert extract_almanac("There were 6 cooling degree days yesterday.")[
+        "cooling_degree_days"] == 6
+
+
+def test_extract_almanac_ignores_non_climate_and_range():
+    assert extract_almanac("At Muncie, the temperature was 76 degrees with cloudy skies.") == {}
+    assert extract_almanac("Tonight, mostly cloudy with a chance of rain 50%.") == {}
+    # out-of-range YTD precip is dropped by the range check
+    assert "precip_year_in" not in extract_almanac(
+        "precipitation for the year now stands at 999.00 inches")
+
+
+def test_almanac_aggregator_votes_primes_snapshots():
+    agg = AlmanacAggregator()
+    agg.update("Sunrise tomorrow is at 6.14am.")
+    agg.update("Sunrise tomorrow is at 6.14am.")
+    agg.update("Sunrise tomorrow is at 7.00am.")          # outvoted
+    snap = agg.snapshot()
+    assert snap["sunrise"]["value"] == "6:14 AM" and snap["sunrise"]["votes"] == 2
+    # prime a fresh aggregator from stored latest readings
+    primed = AlmanacAggregator()
+    primed.prime([{"field": "sunset", "value": "9:15 PM"}])
+    assert primed.snapshot()["sunset"]["value"] == "9:15 PM"

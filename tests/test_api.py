@@ -35,6 +35,10 @@ def _server(tmp_path):
     db.write_alert_detail("r1", "2026-06-24T12:00:00Z", "tornado_warning",
                           {"until": "6:30 PM", "threats": ["tornado"],
                            "spotter_activation": True}, "take cover now")
+    for ca in ("2026-06-24T12:00:00Z", "2026-06-24T12:30:00Z"):  # heard twice -> surfaces
+        db.record_almanac({"field": "precip_year_in", "value": 17.39,
+                           "votes": 2, "total": 2}, ca)
+        db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, ca)
     (tmp_path / "reports.jsonl").write_text(json.dumps(
         {"id": "t1", "captured_at": "2026-06-24T12:00:00Z",
          "product_type": "zone_forecast", "text": "tonight clear"}) + "\n", encoding="utf-8")
@@ -57,10 +61,14 @@ def _get(url):
 def test_all_json_and_text_endpoints(tmp_path):
     srv, H = _server(tmp_path)
     try:
-        assert len(_get(H + "/")["endpoints"]) == 18
+        assert len(_get(H + "/")["endpoints"]) == 19
         now = _get(H + "/now")
         assert now["station"] and now["conditions"] and now["alerts"]
         assert now["conditions"][0]["advisory"] is True
+        assert {r["field"] for r in now["almanac"]} >= {"precip_year_in", "sunrise"}
+        alm = _get(H + "/almanac")["almanac"]
+        assert {r["field"]: r["value"] for r in alm}["precip_year_in"] == 17.39
+        assert alm[0]["advisory"] is True            # transcribed -> advisory/trust block
         assert "WX BULLETIN" in _get(H + "/bulletin")
         assert "SITUATION REPORT" in _get(H + "/sitrep")
         assert _get(H + "/aprs")["weather_report"].startswith("_")
@@ -76,14 +84,17 @@ def test_all_json_and_text_endpoints(tmp_path):
         assert "total" in _get(H + "/forecast/history")
         assert _get(H + "/transcripts")["total"] == 1
         exp = _get(H + "/export?since=2026-01-01T00:00:00Z")
-        assert {"observations", "forecasts", "alerts", "transcripts"} <= set(exp)
+        assert {"observations", "forecasts", "alerts", "almanac", "transcripts"} <= set(exp)
+        assert exp["almanac"]                        # almanac rows in the watermark feed
         active = _get(H + "/alerts/active")["alerts"]
         assert active and active[0]["authoritative"] is True
         assert _get(H + "/alerts/active?details=0")["alerts"]   # details-skip branch
         assert _get(H + "/alerts/history")["total"] == 1
         assert _get(H + "/alerts/history?details=1")["alerts"][0]["source"] == "same"
         assert "details" in _get(H + "/alerts/details")
-        assert _get(H + "/health")["status"] in ("ok", "degraded", "down")
+        health = _get(H + "/health")
+        assert health["status"] in ("ok", "degraded", "down")
+        assert health["almanac_fields"] >= 2
     finally:
         srv.shutdown()
 
