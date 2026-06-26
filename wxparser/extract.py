@@ -344,7 +344,7 @@ _CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
 # that ob's temperature still attaches to the home city (else, when a roundup
 # follows in the same segment, the home reading is dropped entirely).
 _HOME_LEADIN = (r"(?:(?:at|it|in|ed)\s+"
-                r"|at\s+\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?,?\s+(?:at\s+|ed\s+)?)")
+                r"|at\s+\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?,?\s+(?:(?:at|it|in|ed)\s+)?)")
 _RE_CITY_HEADER = re.compile(
     rf"\b{_HOME_LEADIN}({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
     rf"barometric|wind|dew)|[\w\s,]{{0,40}}?were reported)", re.I)
