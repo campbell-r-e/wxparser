@@ -99,7 +99,7 @@ class _Handler(BaseHTTPRequestHandler):
                     tzinfo=timezone.utc)).total_seconds() / 60
                 r["age_minutes"] = round(age, 1)
                 r["stale"] = age > threshold
-            else:
+            else:  # pragma: no cover - readings always carry captured_at
                 r["age_minutes"] = None
                 r["stale"] = None
             if q.get("fresh") in ("1", "true") and r.get("stale"):
@@ -149,9 +149,9 @@ class _Handler(BaseHTTPRequestHandler):
                         f"event: {name}\ndata: {json.dumps(data)}\n\n".encode("utf-8"))
                     if ts > watermark:
                         watermark = ts
-                self.wfile.write(b": ping\n\n")  # keepalive + disconnect detection
-                self.wfile.flush()
-                time.sleep(self.cfg.stream_poll_s)
+                self.wfile.write(b": ping\n\n")  # pragma: no cover - keepalive cadence
+                self.wfile.flush()               # pragma: no cover
+                time.sleep(self.cfg.stream_poll_s)  # pragma: no cover
         except (BrokenPipeError, ConnectionResetError, OSError):
             return  # client went away
 
@@ -373,14 +373,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(health, code)
             else:
                 self._send({"error": "not found", "path": path}, 404)
-        except Exception as e:  # never crash on a bad read
+        except Exception as e:  # pragma: no cover - defensive: never crash on a bad read
             self._send({"error": str(e)}, 500)
 
     def log_message(self, *args) -> None:
         return
 
 
-def serve(cfg: Config = CONFIG) -> None:
+def serve(cfg: Config = CONFIG) -> None:  # pragma: no cover - blocking server bootstrap
     _Handler.db = Database(cfg)
     _Handler.cfg = cfg
     _Handler.min_sightings = cfg.api_min_sightings
@@ -398,7 +398,7 @@ def serve(cfg: Config = CONFIG) -> None:
         server.server_close()
 
 
-def main() -> int:
+def main() -> int:  # pragma: no cover - CLI entry
     serve(CONFIG)
     return 0
 

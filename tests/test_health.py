@@ -4,10 +4,27 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from wxparser.config import CONFIG
-from wxparser.health import assess
+from wxparser.config import CONFIG, Config
+from wxparser.health import Heartbeat, assess
 
 _NOW = datetime(2026, 6, 25, 18, 0, 0, tzinfo=timezone.utc)
+
+
+def test_heartbeat_roundtrip(tmp_path):
+    cfg = Config(out_dir=tmp_path)
+    hb = Heartbeat(cfg)
+    assert Heartbeat.read(cfg) is None            # nothing flushed yet
+    hb.touch("last_segment_at")
+    hb.incr("segments"); hb.incr("segments")
+    hb.set(queue_depth=3)
+    hb.flush()
+    d = Heartbeat.read(cfg)
+    assert d["segments"] == 2 and d["queue_depth"] == 3
+    assert d["last_segment_at"] is not None and d["updated_at"] is not None
+
+
+def test_heartbeat_read_missing_is_none(tmp_path):
+    assert Heartbeat.read(Config(out_dir=tmp_path / "absent")) is None
 
 
 def _ago(mins: float) -> str:

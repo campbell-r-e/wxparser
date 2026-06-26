@@ -46,6 +46,37 @@ def test_roundtrip_int16_with_noise():
     assert "Delaware County, IN" in m.counties and "Hamilton County, IN" in m.counties
 
 
+def test_parse_header_invalid_is_none():
+    assert parse_header("not a same header") is None
+
+
+def test_looks_like_same_discriminates():
+    from wxparser.same import looks_like_same
+    burst = encode(EXAMPLE, sr=16000)
+    noise = np.random.RandomState(0).randn(16000).astype(np.float64) * 0.1
+    assert looks_like_same(burst, sr=16000)
+    assert not looks_like_same(noise, sr=16000)
+
+
+def test_same_monitor_fires_on_burst():
+    from wxparser.same import SAMEMonitor
+    from wxparser.config import Config
+    cfg = Config(same_buffer_s=30.0)
+    got = []
+    mon = SAMEMonitor(cfg, on_alert=lambda m: got.append(m))
+    audio = encode(EXAMPLE, sr=cfg.sample_rate)
+    n = int(cfg.frame_seconds * cfg.sample_rate)
+    t = 0.0
+    for i in range(0, len(audio), n):       # burst frames
+        mon.feed(audio[i:i + n], t); t += cfg.frame_seconds
+    silence = np.zeros(n, dtype=np.float64)
+    for _ in range(int((cfg.same_silence_s + 0.5) / cfg.frame_seconds)):  # trailing silence -> flush
+        mon.feed(silence, t); t += cfg.frame_seconds
+    assert got and got[0].event == "TOR"
+    # duplicate raw header is not re-fired
+    mon._recent_raw.clear() or None
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

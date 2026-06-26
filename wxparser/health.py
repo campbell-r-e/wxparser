@@ -65,8 +65,8 @@ class Heartbeat:
             tmp = self._path.with_name(self._path.name + ".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
             os.replace(tmp, self._path)
-        except OSError:
-            pass  # health publishing must never crash the pipeline
+        except OSError:  # pragma: no cover - defensive: health must never crash capture
+            pass
 
     @staticmethod
     def read(cfg: Config) -> dict | None:

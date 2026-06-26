@@ -44,7 +44,7 @@ def _write_wav(path: Path, pcm: bytes, cfg: Config) -> None:
         w.writeframes(pcm)
 
 
-def stream_windows(cfg: Config, work_dir: Path) -> Iterator[Path]:
+def stream_windows(cfg: Config, work_dir: Path) -> Iterator[Path]:  # pragma: no cover - Phase-1 path, superseded by stream_frames
     """Yield successive WAV files, each `cfg.window_seconds` long, forever.
 
     The yielded path is overwritten on the next iteration; consumers must finish

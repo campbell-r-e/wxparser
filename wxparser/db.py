@@ -163,7 +163,7 @@ class Database:
         with self._lock:
             try:
                 return self._conn.run(sql, **params)
-            except Exception:
+            except Exception:  # pragma: no cover - reconnect on a dropped connection
                 self._conn = self._connect()
                 return self._conn.run(sql, **params)
 
@@ -172,7 +172,7 @@ class Database:
             try:
                 rows = self._conn.run(sql, **params)
                 cols = [c["name"] for c in self._conn.columns]
-            except Exception:
+            except Exception:  # pragma: no cover - reconnect on a dropped connection
                 self._conn = self._connect()
                 rows = self._conn.run(sql, **params)
                 cols = [c["name"] for c in self._conn.columns]

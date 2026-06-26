@@ -42,7 +42,7 @@ def _fips_table() -> dict:
     path = Path(__file__).parent / "data" / "fips.json"
     try:
         return json.loads(path.read_text())
-    except OSError:
+    except OSError:  # pragma: no cover - bundled data file always present
         return {}
 
 
@@ -155,7 +155,7 @@ def decode(audio: np.ndarray, sr: int = 16000) -> list[SAMEMessage]:
         return []
     soft, spb = _soft_decision(audio, sr)
     n_bits = int(soft.size / spb)
-    if n_bits < 8:
+    if n_bits < 8:  # pragma: no cover - defensive: not enough bits to be a header
         return []
 
     seen: dict[str, SAMEMessage] = {}

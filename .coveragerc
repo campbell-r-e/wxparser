@@ -1,0 +1,13 @@
+[run]
+source = wxparser
+omit =
+    wxparser/__init__.py
+
+[report]
+show_missing = True
+fail_under = 100
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise AssertionError
+    raise NotImplementedError

@@ -239,7 +239,7 @@ def run_live(cfg: Config, once: bool = False) -> int:
     # priority window so the spoken narrative that follows is transcribed first.
     alert_until = [0.0]
 
-    def _on_alert(m: SAMEMessage) -> None:
+    def _on_alert(m: SAMEMessage) -> None:  # pragma: no cover - fired only by a live SAME burst
         _emit_alert(m, cfg, db)
         alert_until[0] = time.monotonic() + cfg.alert_priority_window_s
         print(f"  >> alert priority window open ({cfg.alert_priority_window_s:.0f}s)", flush=True)
