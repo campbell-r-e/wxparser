@@ -316,10 +316,16 @@ class ForecastAggregator:
         out: list[dict] = []
         for name in self.order:
             entry: dict = {"period": name}
+            conf: dict = {}
             for k in self._FIELDS:
                 voter = self.voters.get((name, k))
                 if voter and voter.samples:
-                    entry[k] = voter.best().value
+                    best = voter.best()
+                    entry[k] = best.value
+                    # vote agreement (0-1): low => the airings disagree, so this
+                    # value is at risk of being an STT mishear (off by a lot).
+                    conf[k] = round(best.votes / best.total, 2)
+            entry["confidence"] = conf
             out.append(entry)
         return out
 

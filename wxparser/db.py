@@ -67,6 +67,7 @@ _SCHEMA = [
         precip_pct INTEGER,
         sky TEXT,
         source TEXT DEFAULT 'voice',
+        confidence JSONB,
         PRIMARY KEY (issued_at, city, period)
     )""",
     "CREATE INDEX IF NOT EXISTS ix_fc_time ON forecasts(issued_at)",
@@ -252,16 +253,19 @@ class Database:
     def write_forecast(self, periods: list[dict], issued_at: str, city: str = "Muncie") -> None:
         issued_dt = _parse_iso(issued_at)
         for p in periods:
+            conf = p.get("confidence")
             self._run(
                 "INSERT INTO forecasts"
-                "(issued_at,city,period,high_f,low_f,precip_pct,sky,source) "
-                "VALUES(:ia,:city,:pd,:hi,:lo,:pp,:sky,:src) "
+                "(issued_at,city,period,high_f,low_f,precip_pct,sky,source,confidence) "
+                "VALUES(:ia,:city,:pd,:hi,:lo,:pp,:sky,:src,CAST(:cf AS jsonb)) "
                 "ON CONFLICT (issued_at,city,period) DO UPDATE SET "
                 "high_f=EXCLUDED.high_f, low_f=EXCLUDED.low_f, "
-                "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source",
+                "precip_pct=EXCLUDED.precip_pct, sky=EXCLUDED.sky, source=EXCLUDED.source, "
+                "confidence=EXCLUDED.confidence",
                 ia=issued_dt, city=city, pd=p["period"],
                 hi=p.get("high_f"), lo=p.get("low_f"), pp=p.get("precip_pct"),
                 sky=p.get("sky"), src=p.get("source", "voice"),
+                cf=json.dumps(conf) if conf else None,
             )
 
     def write_alert(self, record: dict) -> None:
@@ -435,12 +439,13 @@ class Database:
             mx = self._query("SELECT MAX(issued_at) AS m FROM forecasts WHERE city=:city", city=city)
             issued = mx[0]["m"]
             rows = self._query(
-                "SELECT period,high_f,low_f,precip_pct,sky,source "
+                "SELECT period,high_f,low_f,precip_pct,sky,source,confidence "
                 "FROM forecasts WHERE city=:city AND issued_at=:ia ORDER BY period",
                 city=city, ia=issued,
             )
             for r in rows:
                 self._with_window(r, issued)
+                r["confidence"] = _as_obj(r["confidence"])
             rows.sort(key=lambda r: (r["valid_from"] is None, str(r["valid_from"])))
             out.append({"city": city, "issued_at": _ts(issued), "periods": rows})
         return out
@@ -464,12 +469,13 @@ class Database:
                          limit: int = 1000, offset: int = 0) -> list[dict]:
         where, params = self._fc_where(frm, to, city)
         rows = self._query(
-            f"SELECT issued_at,city,period,high_f,low_f,precip_pct,sky "
+            f"SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
             f"FROM forecasts {where} ORDER BY issued_at DESC, city, period LIMIT :lim OFFSET :off",
             lim=limit, off=offset, **params)
         for r in rows:
             self._with_window(r, r["issued_at"])
             r["issued_at"] = _ts(r["issued_at"])
+            r["confidence"] = _as_obj(r["confidence"])
         return rows
 
     # --- readers: alerts -------------------------------------------------- #
@@ -542,12 +548,13 @@ class Database:
 
     def forecasts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(
-            "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky "
+            "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
             "FROM forecasts WHERE issued_at > :s ORDER BY issued_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
         for r in rows:
             self._with_window(r, r["issued_at"])
             r["issued_at"] = _ts(r["issued_at"])
+            r["confidence"] = _as_obj(r["confidence"])
         return rows
 
     def alerts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:

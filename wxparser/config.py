@@ -145,6 +145,10 @@ class Config:
     # aired it (infrequently-named cities/fields drift from reality between
     # airings). Clients can override per request with ?stale_after=.
     condition_stale_after_min: int = int(_env("WX_STALE_AFTER_MIN", "60"))
+    # a voted reading whose winning value holds less than this share of the recent
+    # airings is flagged `uncertain` (the airings disagree — likely an STT mishear,
+    # at risk of being off by a lot). Clients see the flag and can distrust it.
+    confidence_min: float = float(_env("WX_CONFIDENCE_MIN", "0.6"))
     # when linking a SAME alert to its spoken-detail transcripts, also include
     # ones captured this many seconds before the digital burst (a heads-up can
     # precede the tones); the window runs to the alert's expiry.

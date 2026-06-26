@@ -162,6 +162,26 @@ def test_forecast_revision_wins_once_it_dominates():
     assert {p["period"]: p for p in fc.snapshot()}["Saturday"]["high_f"] == 71
 
 
+def test_forecast_confidence_flags_contested_value():
+    # vote agreement is exposed per field; a contested low (heard two ways nearly
+    # equally) lands below the uncertain threshold so consumers can distrust it.
+    fc = ForecastAggregator()
+    for _ in range(8):
+        fc.update("Tonight, clear. Lows in the lower 60s.")   # 61 x8
+    for _ in range(7):
+        fc.update("Tonight, clear. Lows in the mid 70s.")     # 75 x7
+    p = {x["period"]: x for x in fc.snapshot()}["Tonight"]
+    assert p["low_f"] == 61 and p["confidence"]["low_f"] < 0.6
+
+
+def test_forecast_confidence_full_when_consistent():
+    fc = ForecastAggregator()
+    for _ in range(5):
+        fc.update("Saturday, sunny. Highs in the mid 80s.")   # 85 x5, unanimous
+    p = {x["period"]: x for x in fc.snapshot()}["Saturday"]
+    assert p["high_f"] == 85 and p["confidence"]["high_f"] == 1.0
+
+
 def test_precip_word_number_and_comma():
     assert extract_forecast_fields("Chance of rain eighty percent.")["precip_pct"] == 80
     assert extract_forecast_fields("Chance of rain, 80%.")["precip_pct"] == 80

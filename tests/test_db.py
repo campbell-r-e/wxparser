@@ -67,6 +67,17 @@ def test_forecast_city_and_latest():
     assert p["low_f"] == 61 and p["valid_from"] is not None
 
 
+def test_forecast_confidence_roundtrip():
+    db = _db()
+    db.write_forecast([{"period": "Tonight", "low_f": 61,
+                        "confidence": {"low_f": 0.53}}], "2026-06-24T18:00:00Z")
+    p = db.latest_forecasts()[0]["periods"][0]
+    assert p["low_f"] == 61 and p["confidence"] == {"low_f": 0.53}
+    # a forecast written without confidence round-trips as None (not an error)
+    db.write_forecast([{"period": "Tonight", "low_f": 62}], "2026-06-24T19:00:00Z")
+    assert db.latest_forecasts()[0]["periods"][0]["confidence"] is None
+
+
 def test_forecast_history_between_dates():
     db = _db()
     db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-23T12:00:00Z", city="Muncie")

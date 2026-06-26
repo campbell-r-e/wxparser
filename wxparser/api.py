@@ -90,7 +90,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _annotate_age(self, rows: list, q: dict) -> list:
         """Add age_minutes + stale to each reading (by captured_at); ?fresh=1
-        drops the stale ones."""
+        drops the stale ones. (Conditions already carry an agreement/confidence
+        trust block via trust.mark; forecasts get theirs in _annotate_forecast_age.)"""
         threshold = self._stale_after(q)
         now = datetime.now(timezone.utc)
         out = []
@@ -169,6 +170,10 @@ class _Handler(BaseHTTPRequestHandler):
                     tzinfo=timezone.utc)).total_seconds() / 60
                 fc["age_minutes"] = round(age, 1)
                 fc["stale"] = age > threshold
+            # per-period: which fields the airings disagreed on (low vote agreement)
+            for p in fc.get("periods", []):
+                conf = p.get("confidence") or {}
+                p["uncertain"] = [f for f, c in conf.items() if c < self.cfg.confidence_min]
         return forecasts
 
     @staticmethod

@@ -27,7 +27,10 @@ def _server(tmp_path):
     db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 78},
                       "2026-06-24T12:30:00Z")
     db.write_forecast([{"period": "Tonight", "low_f": 61, "precip_pct": 50,
-                        "sky": "mostly cloudy"}], "2026-06-24T18:00:00Z")
+                        "sky": "mostly cloudy",
+                        "confidence": {"low_f": 0.4, "precip_pct": 1.0}},
+                       {"period": "Saturday", "high_f": 80, "sky": "sunny"}],
+                      "2026-06-24T18:00:00Z")
     db.write_alert({"id": "a1", "captured_at": "2026-06-24T12:00:00Z",
                     "alert": {"event": "TOR", "event_label": "Tornado Warning",
                               "areas": ["Delaware"], "counties": ["Delaware County, IN"],
@@ -80,7 +83,14 @@ def test_all_json_and_text_endpoints(tmp_path):
         assert temp["cities"][0]["trust"] is not None and "confidence" in temp["cities"][0]
         hist = _get(H + "/conditions/history?condition=temperature&limit=1")
         assert hist["total"] >= 1 and "next_offset" in hist
-        assert _get(H + "/forecast")["forecasts"][0]["advisory"] is True
+        fc = _get(H + "/forecast")["forecasts"][0]
+        assert fc["advisory"] is True
+        periods = {p["period"]: p for p in fc["periods"]}
+        # contested low_f (agreement 0.4) -> flagged uncertain; confident precip not
+        assert periods["Tonight"]["confidence"]["low_f"] == 0.4
+        assert periods["Tonight"]["uncertain"] == ["low_f"]
+        # a period stored without confidence is handled gracefully (no flags)
+        assert periods["Saturday"]["uncertain"] == []
         assert "total" in _get(H + "/forecast/history")
         assert _get(H + "/transcripts")["total"] == 1
         exp = _get(H + "/export?since=2026-01-01T00:00:00Z")
