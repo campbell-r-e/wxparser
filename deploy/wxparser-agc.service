@@ -1,0 +1,14 @@
+[Unit]
+Description=wxparser — capture AGC (keep the input level in the decoder's sweet spot)
+After=wxparser.service
+Wants=wxparser.service
+
+[Service]
+Type=oneshot
+# Runs as root: `amixer` adjusts the card and `alsactl store` writes
+# /var/lib/alsa/asound.state so the gain survives a reboot. Reads the pipeline's
+# world-readable health.json for the level — it never opens the audio device, so
+# it does not contend with the capture service's arecord.
+Environment=WX_OUT_DIR=/home/creed/wxparser/transcripts
+WorkingDirectory=/home/creed/wxparser
+ExecStart=/usr/bin/python3 /home/creed/wxparser/deploy/agc.py

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the wxparser capture AGC every 3 minutes
+
+[Timer]
+# Frequent + gentle: one small gain step per run with a wide dead band converges
+# without oscillating, and a deaf feed recovers within a few runs.
+OnBootSec=2min
+OnUnitActiveSec=3min
+
+[Install]
+WantedBy=timers.target

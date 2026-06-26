@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from wxparser.config import Config
-from wxparser.segment import _frame_dbfs, segment_stream
+from wxparser.segment import _frame_dbfs, segment_level_dbfs, segment_stream
 
 
 def _frames(pattern: str, cfg: Config):
@@ -21,6 +21,13 @@ def test_frame_dbfs():
     assert _frame_dbfs(np.array([], dtype=np.int16)) == -120.0
     assert _frame_dbfs(np.zeros(64, dtype=np.int16)) == -120.0
     assert _frame_dbfs(np.full(64, 8000, dtype=np.int16)) > -35.0
+
+
+def test_segment_level_dbfs():
+    assert segment_level_dbfs(np.array([], dtype=np.int16)) == (-120.0, -120.0)
+    assert segment_level_dbfs(np.zeros(64, dtype=np.int16)) == (-120.0, -120.0)
+    rms_db, peak_db = segment_level_dbfs(np.full(64, 16384, dtype=np.int16))
+    assert peak_db >= rms_db and -7.0 < peak_db < -5.0   # 16384/32768 = -6.0 dBFS
 
 
 def test_yields_one_speech_segment():

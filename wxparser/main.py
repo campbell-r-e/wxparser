@@ -49,7 +49,7 @@ from .fingerprint import Fingerprinter, NoveltyGate
 from .health import Heartbeat
 from .notify import post_webhook
 from .same import SAMEMessage, SAMEMonitor
-from .segment import Segment, segment_stream
+from .segment import Segment, segment_level_dbfs, segment_stream
 from .store import (
     ALERT_PRODUCTS,
     append_report,
@@ -274,6 +274,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
                 break
             n_seg += 1
             hb.touch("last_segment_at")  # a segment means the radio/capture is alive
+            rms_db, peak_db = segment_level_dbfs(seg.samples)
+            hb.set(last_segment_dbfs=rms_db, last_segment_peak_dbfs=peak_db)
             vec, digest = fp.compute(seg.samples)
             sim = gate.best_similarity(vec)
             if sim >= cfg.fp_similarity_threshold:

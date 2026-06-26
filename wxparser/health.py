@@ -44,6 +44,8 @@ class Heartbeat:
             "segments": 0, "novel": 0, "repeat": 0,
             "stt_errors": 0, "capture_restarts": 0,
             "queue_depth": 0,
+            "last_segment_dbfs": None,       # speech RMS level of the last segment
+            "last_segment_peak_dbfs": None,  # peak level (clipping headroom) — AGC
         }
 
     def set(self, **kw) -> None:

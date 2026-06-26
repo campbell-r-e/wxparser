@@ -41,6 +41,20 @@ def _frame_dbfs(frame: np.ndarray) -> float:
     return 20.0 * np.log10(rms)
 
 
+def segment_level_dbfs(samples: np.ndarray) -> tuple[float, float]:
+    """(rms_dbfs, peak_dbfs) of an int16 PCM segment. Published per segment to the
+    heartbeat so the AGC backstop can keep capture gain in the decoder's sweet
+    spot (speech above the VAD floor, peaks below clipping)."""
+    if samples.size == 0:
+        return -120.0, -120.0
+    x = np.abs(samples.astype(np.float64) / 32768.0)
+    rms = float(np.sqrt(np.mean(x * x)))
+    peak = float(np.max(x))
+    rms_db = 20.0 * np.log10(rms) if rms > 1e-9 else -120.0
+    peak_db = 20.0 * np.log10(peak) if peak > 1e-9 else -120.0
+    return round(rms_db, 1), round(peak_db, 1)
+
+
 def segment_stream(
     frames: Iterable[tuple[np.ndarray, float]], cfg: Config
 ) -> Iterator[Segment]:
