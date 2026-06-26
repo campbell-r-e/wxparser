@@ -119,6 +119,14 @@ _SCHEMA = [
     "CREATE INDEX IF NOT EXISTS ix_alm_obs ON almanac_observations(field, captured_at)",
 ]
 
+# A fixed advisory-lock key serializes schema creation across the co-starting
+# wxparser and wxparser-api processes. `CREATE ... IF NOT EXISTS` is NOT race-safe
+# against a concurrent create — both sides probe the catalog, both try to create,
+# and one loses a pg_catalog unique insert (SQLSTATE 23505 on pg_type). Holding
+# this lock means only one process builds the schema at a time; the other waits,
+# then its IF NOT EXISTS statements cleanly no-op.
+_SCHEMA_LOCK_KEY = 0x77787061  # "wxpa"
+
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
@@ -175,8 +183,12 @@ class Database:
         self._database = database or cfg.pg_database
         self._lock = threading.Lock()
         self._conn = self._connect()
-        for stmt in _SCHEMA:
-            self._conn.run(stmt)
+        self._conn.run("SELECT pg_advisory_lock(CAST(:k AS bigint))", k=_SCHEMA_LOCK_KEY)
+        try:
+            for stmt in _SCHEMA:
+                self._conn.run(stmt)
+        finally:
+            self._conn.run("SELECT pg_advisory_unlock(CAST(:k AS bigint))", k=_SCHEMA_LOCK_KEY)
 
     def _connect(self) -> pg8000.native.Connection:
         return pg8000.native.Connection(
