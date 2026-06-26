@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: wxparser
+          POSTGRES_DB: wxparser
+          POSTGRES_HOST_AUTH_METHOD: trust   # matches the box's local-trust setup
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      WX_PG_HOST: localhost                  # reach the service container
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pg8000 pytest coverage ruff
+
+      - name: Create test database
+        run: |
+          python - <<'PY'
+          import pg8000.native as p
+          c = p.Connection(user="wxparser", host="localhost", database="wxparser")
+          c.run("CREATE DATABASE wxparser_test")
+          PY
+
+      - name: Lint (errors only)
+        run: ruff check --select E9,F63,F7,F82 wxparser tests
+
+      - name: Tests + 100% coverage gate
+        run: |
+          coverage run -m pytest -q
+          coverage report      # fails the build if total < fail_under (100) per .coveragerc

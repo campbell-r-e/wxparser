@@ -16,6 +16,9 @@ requires-python = ">=3.9"
 #    nothing copyleft is imported (§2.2). PostgreSQL itself runs locally (§2.1).
 dependencies = ["numpy>=1.24", "pg8000>=1.31"]
 
+[project.optional-dependencies]
+test = ["pytest>=7", "coverage>=7"]
+
 [project.scripts]
 wxparser = "wxparser.main:main"
 wxparser-api = "wxparser.api:main"

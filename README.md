@@ -255,19 +255,23 @@ no shared state, no contention. A consumer (dashboard, mesh publisher) fans out 
 `:PORT/now` (or pages `/export?since=` per instance) and merges by `station`. Template the
 systemd units per instance (`wxparser@.service`) or just set the env block per unit.
 
-## Tests
+## Tests & CI
 
-Run against the `wxparser_test` PostgreSQL database (created by `setup-postgres.sh`):
+**100% line coverage**, enforced. Tests run against the `wxparser_test` PostgreSQL database
+(created by `setup-postgres.sh`); subprocesses (`arecord`, `whisper-cli`) are mocked:
 
 ```bash
-python3 -m tests.test_same      # SAME encode/decode round-trip (clean + noisy)
-python3 -m tests.test_extract   # multi-city extraction + repeat-voting + forecast
-python3 -m tests.test_db        # PostgreSQL store, history, pagination, export readers
-python3 -m tests.test_health    # fail-loud pipeline health assessment
-python3 -m tests.test_trust     # STT trust scoring
-python3 -m tests.test_notify    # opt-in webhook push
-python3 -m tests.test_formats   # EmComm bulletin / sitrep / APRS formats
+pip install -e '.[test]'         # pytest + coverage
+createdb wxparser_test           # once
+coverage run -m pytest           # whole suite (137 tests)
+coverage report                  # fails under 100% (see .coveragerc)
 ```
+
+**CI** (`.github/workflows/ci.yml`) runs the suite on every push/PR across Python 3.11–3.12
+with a Postgres service container, lints for real errors (ruff), and **gates on 100% coverage**.
+**CD** is pull-based (the box has no inbound access): `deploy/wxparser-deploy.timer` periodically
+runs `deploy/auto_deploy.sh`, which fast-forwards `main`, re-runs the suite, and restarts the
+services only if green — rolling back on failure.
 
 ## License
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=wxparser pull-based CD — test new main and deploy if green
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=creed
+Group=creed
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/creed/wxparser
+ExecStart=/home/creed/wxparser/deploy/auto_deploy.sh
