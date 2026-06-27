@@ -147,6 +147,33 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
     assert {r["field"] for r in db.latest_almanac()} >= {"sunrise", "sunset"}
 
 
+def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch):
+    # once=True + a saved segment must set _STOP and exit the loop -- covered here
+    # deterministically rather than via the inherently racy run_live(once=True).
+    import itertools
+    import queue as _q
+
+    from wxparser.db import Database
+    from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
+    from wxparser.health import Heartbeat
+    main._STOP.clear()
+    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    db = Database(cfg)
+    db.clear()
+    monkeypatch.setattr(main, "transcribe_samples",
+                        lambda s, c: _t("At Muncie, the temperature was 80 degrees."))
+    q = _q.PriorityQueue()
+
+    class Seg:
+        samples = np.zeros(16000, dtype=np.int16)
+        duration_s = 1.0
+    q.put((0, next(itertools.count()), (Seg(), "d")))   # one saveable segment
+    main._stt_worker(q, cfg, True, TextDeduper(cfg), CityConditionsAggregator(),
+                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    assert main._STOP.is_set()                           # once + save -> stop set, loop exits
+    main._STOP.clear()
+
+
 def test_emit_alert_with_db(tmp_path):
     from wxparser.db import Database
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
