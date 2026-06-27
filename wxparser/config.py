@@ -11,32 +11,28 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .profile import PROFILE
+
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-# Local place-name vocabulary for the whisper prompt (KJY93 / east-central
-# Indiana coverage). Kept to ~50 tokens so it fits whisper_prompt_max_ctx without
-# truncation. Prioritizes the county + town names that appear in *warnings* (the
-# regional-roundup cities are already handled by data.place_names corrections).
-_DEFAULT_STT_PROMPT = (
-    "NOAA Weather Radio for east central Indiana. Counties: Delaware, Madison, "
-    "Henry, Randolph, Jay, Blackford, Grant, Wayne, Tipton, Hamilton, Howard. "
-    "Towns: Muncie, Anderson, Marion, Portland, Winchester, New Castle, Richmond, "
-    "Yorktown, Albany, Dunkirk, Alexandria, Gas City, Hartford City."
-)
+# The whisper vocabulary prompt is region-specific, so it comes from the active
+# station profile (profile.py / WX_PROFILE), not hard-coded here. Kept to ~50
+# tokens so it fits whisper_prompt_max_ctx without truncation.
+_DEFAULT_STT_PROMPT = PROFILE["stt_prompt"]
 
 
 @dataclass(frozen=True)
 class Config:
     # --- Station (KJY93 Muncie, IN) ---
-    station: str = _env("WX_STATION", "KJY93")
-    frequency_mhz: float = float(_env("WX_FREQ_MHZ", "162.425"))
+    station: str = _env("WX_STATION", PROFILE["station"])
+    frequency_mhz: float = float(_env("WX_FREQ_MHZ", str(PROFILE["frequency_mhz"])))
     # the station's home city — standalone "the temperature was N" sentences (no
     # "at <City>") attach here, even when the spectrally-identical city header
     # ("At Muncie, it was ...") gets skipped by the novelty gate.
-    primary_city: str = _env("WX_PRIMARY_CITY", "Muncie")
+    primary_city: str = _env("WX_PRIMARY_CITY", PROFILE["primary_city"])
 
     # --- Audio capture (ALSA via arecord subprocess) ---
     alsa_device: str = _env("WX_ALSA_DEVICE", "plughw:0,0")
