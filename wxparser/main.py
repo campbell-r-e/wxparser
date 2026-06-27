@@ -43,15 +43,14 @@ from .extract import (
     AlmanacAggregator,
     CityConditionsAggregator,
     ForecastAggregator,
-    extract_alert_details,
 )
 from .fingerprint import Fingerprinter, NoveltyGate
 from .health import Heartbeat
 from .notify import post_webhook
+from .pipeline import apply_readings, write_alert_detail_if_any
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_level_dbfs, segment_stream
 from .store import (
-    ALERT_PRODUCTS,
     append_report,
     build_alert,
     build_report,
@@ -172,34 +171,20 @@ def _stt_worker(
         else:
             text = transcript.text
             now = _utc_now_iso()
-            # vote BEFORE dedup so boundary-shifted repeats still contribute readings
-            for r in aggregator.update(text):
-                if db is not None:
-                    db.record_reading(r, now)
-                if hb is not None:
-                    hb.touch("last_extraction_at")
+            # vote BEFORE dedup so boundary-shifted repeats still contribute readings.
+            # apply_readings is the SAME step reprocess replays over the stored
+            # transcripts, so the DB stays a re-derivable projection of them.
+            summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb)
+            for r in summary["readings"]:
                 print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
-            if forecast.update(text) and db is not None:
-                db.write_forecast(forecast.snapshot(), now, city=forecast.city)
-                if hb is not None:
-                    hb.touch("last_extraction_at")
-            for r in almanac.update(text):
-                if db is not None:
-                    db.record_almanac(r, now)
-                if hb is not None:
-                    hb.touch("last_extraction_at")
+            for r in summary["almanac"]:
                 print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
             saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
             if saved is not None and db is not None:
-                # structure the spoken narrative of warnings/statements so it can
-                # be linked to the SAME header at query time
-                details = extract_alert_details(text)
-                if details or saved["product_type"] in ALERT_PRODUCTS:
-                    db.write_alert_detail(
-                        saved["id"], now, saved["product_type"], details, text)
-                    if details:
-                        print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}",
-                              flush=True)
+                details = write_alert_detail_if_any(
+                    text, now, saved["id"], saved["product_type"], db)
+                if details:
+                    print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}", flush=True)
             if once and saved is not None:
                 _STOP.set()
         if hb is not None:
