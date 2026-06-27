@@ -97,6 +97,14 @@ def test_alert_active_then_expires():
     assert len(db.get_active_alerts(now="2026-06-24T07:00:00Z")) == 0
 
 
+def test_write_alert_tolerates_missing_purge():
+    db = _db()
+    # purge_minutes present-but-None must not crash (expires == captured)
+    db.write_alert({"id": "a2", "captured_at": "2026-06-24T06:00:00Z",
+                    "alert": {"event": "RWT", "purge_minutes": None, "raw": "ZCZC"}})
+    assert db.alerts_history(None, None, None, 10, 0)[0] == 1
+
+
 def test_period_window_weekday_night():
     issued = datetime(2026, 6, 24, 12, 0, 0, tzinfo=timezone.utc)
     vf, vt = period_window("Saturday Night", issued)

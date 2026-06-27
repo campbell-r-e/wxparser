@@ -57,3 +57,45 @@ def test_stream_frames_yields_and_counts_retries(monkeypatch):
     assert len(frames) == 3
     assert frames[0][0].shape[0] == fb // 2          # int16 samples per frame
     assert len(retries) >= 1                          # crossed an EOF -> respawn
+
+
+def test_stream_frames_stops_immediately_without_spawning(monkeypatch):
+    cfg = Config()
+    spawned = []
+    monkeypatch.setattr(capture.subprocess, "Popen",
+                        lambda *a, **k: spawned.append(1) or _Proc(_Stdout([])))
+    frames = list(capture.stream_frames(cfg, should_stop=lambda: True))
+    assert frames == [] and spawned == []            # never even opened arecord
+
+
+def test_stream_frames_stops_mid_stream(monkeypatch):
+    cfg = Config()
+    fb = int(cfg.frame_seconds * cfg.sample_rate) * 2 * cfg.channels
+    monkeypatch.setattr(capture.subprocess, "Popen",
+                        lambda *a, **k: _Proc(_Stdout([b"\x00" * fb] * 5)))
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return calls["n"] >= 3                        # stop after the 2nd yielded frame
+    frames = list(capture.stream_frames(cfg, should_stop=should_stop))
+    assert len(frames) == 2                           # unwound promptly, not forever
+
+
+def test_stream_frames_stops_at_retry_without_backoff(monkeypatch):
+    cfg = Config(capture_retry_backoff_s=5.0)         # long backoff that must NOT block
+    monkeypatch.setattr(capture.subprocess, "Popen",
+                        lambda *a, **k: _Proc(_Stdout([])))   # immediate EOF -> retry path
+    calls = {"n": 0}
+
+    def should_stop():
+        calls["n"] += 1
+        return calls["n"] > 1                         # false at loop top, true before retry sleep
+    frames = list(capture.stream_frames(cfg, should_stop=should_stop))
+    assert frames == []                               # exited at the retry check, no 5s sleep
+
+
+def test_sleep_unless():
+    capture._sleep_unless(5.0, lambda: True)          # stop already set -> returns at once
+    capture._sleep_unless(0.0, lambda: False)         # zero duration -> no loop
+    capture._sleep_unless(0.25, lambda: False)        # actually sleeps a slice or two

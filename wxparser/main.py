@@ -193,6 +193,7 @@ def _stt_worker(
 
 
 def run_live(cfg: Config, once: bool = False) -> int:
+    _STOP.clear()  # reset the module-global stop flag so a re-run isn't a no-op
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     print(
@@ -251,7 +252,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
     if monitor is not None:
         print("  (SAME alert decoding enabled)", flush=True)
 
-    frames = stream_frames(cfg, on_retry=lambda: hb.incr("capture_restarts"))
+    frames = stream_frames(cfg, on_retry=lambda: hb.incr("capture_restarts"),
+                           should_stop=_STOP.is_set)
     n_seg = n_new = n_repeat = 0
     try:
         for seg in segment_stream(_tee_to_same(frames, monitor), cfg):

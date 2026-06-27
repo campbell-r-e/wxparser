@@ -15,12 +15,18 @@ import json
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pg8000.exceptions
 import pg8000.native
 
 from .config import CONFIG, Config
 
 from .data.same_events import event_label
 from .extract import ALMANAC_NUMERIC
+
+# A dropped/broken connection is worth a one-shot reconnect+retry; a SQL or data
+# error is NOT (retrying just hides the bug, and for a non-idempotent statement
+# like the sightings bump it could double-apply). Catch only connection failures.
+_CONN_ERRORS = (pg8000.exceptions.InterfaceError, OSError)
 
 _NUMERIC_CONDITIONS = {
     "temperature_f", "dewpoint_f", "humidity_pct", "pressure_in", "wind_speed_mph",
@@ -207,7 +213,7 @@ class Database:
         with self._lock:
             try:
                 return self._conn.run(sql, **params)
-            except Exception:  # pragma: no cover - reconnect on a dropped connection
+            except _CONN_ERRORS:  # pragma: no cover - reconnect on a dropped connection
                 self._conn = self._connect()
                 return self._conn.run(sql, **params)
 
@@ -216,7 +222,7 @@ class Database:
             try:
                 rows = self._conn.run(sql, **params)
                 cols = [c["name"] for c in self._conn.columns]
-            except Exception:  # pragma: no cover - reconnect on a dropped connection
+            except _CONN_ERRORS:  # pragma: no cover - reconnect on a dropped connection
                 self._conn = self._connect()
                 rows = self._conn.run(sql, **params)
                 cols = [c["name"] for c in self._conn.columns]
@@ -250,7 +256,8 @@ class Database:
             ca=ca, city=reading["city"], cond=cond, num=num, txt=txt, votes=votes, total=total,
         )
 
-    def write_forecast(self, periods: list[dict], issued_at: str, city: str = "Muncie") -> None:
+    def write_forecast(self, periods: list[dict], issued_at: str, city: str | None = None) -> None:
+        city = city or self._cfg.primary_city   # no hard-coded station city
         issued_dt = _parse_iso(issued_at)
         for p in periods:
             conf = p.get("confidence")
@@ -271,7 +278,7 @@ class Database:
     def write_alert(self, record: dict) -> None:
         a = record["alert"]
         captured = _parse_iso(record["captured_at"])
-        expires = captured + timedelta(minutes=a.get("purge_minutes", 0))
+        expires = captured + timedelta(minutes=a.get("purge_minutes") or 0)  # tolerate None
         self._run(
             "INSERT INTO alerts(id,captured_at,event,areas,counties,"
             "purge_minutes,issued_raw,station,raw,expires_at) "

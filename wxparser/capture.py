@@ -44,49 +44,36 @@ def _write_wav(path: Path, pcm: bytes, cfg: Config) -> None:
         w.writeframes(pcm)
 
 
-def stream_windows(cfg: Config, work_dir: Path) -> Iterator[Path]:  # pragma: no cover - Phase-1 path, superseded by stream_frames
-    """Yield successive WAV files, each `cfg.window_seconds` long, forever.
-
-    The yielded path is overwritten on the next iteration; consumers must finish
-    with it (transcribe) before requesting the next window.
-    """
-    work_dir.mkdir(parents=True, exist_ok=True)
-    bytes_per_window = int(cfg.window_seconds * cfg.sample_rate) * 2 * cfg.channels
-    wav_path = work_dir / "window.wav"
-
-    proc = subprocess.Popen(_arecord_cmd(cfg), stdout=subprocess.PIPE)
-    if proc.stdout is None:  # pragma: no cover - defensive
-        raise RuntimeError("arecord produced no stdout pipe")
-    try:
-        while True:
-            pcm = _read_exact(proc.stdout, bytes_per_window)
-            if pcm is None:
-                returncode = proc.poll()
-                raise RuntimeError(f"arecord stream ended (returncode={returncode})")
-            _write_wav(wav_path, pcm, cfg)
-            yield wav_path
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:  # pragma: no cover
-            proc.kill()
+def _sleep_unless(seconds: float, should_stop) -> None:
+    """Sleep up to `seconds`, waking early (<=0.2s slices) if should_stop() goes
+    true — so a shutdown during the retry backoff isn't blocked for the full delay
+    (which previously let SIGTERM time out and the process get SIGABRT-killed
+    mid-arecord, resetting the sound card)."""
+    slept = 0.0
+    while slept < seconds and not should_stop():
+        step = min(0.2, seconds - slept)
+        time.sleep(step)
+        slept += step
 
 
-def stream_frames(cfg: Config, on_retry=None) -> Iterator[tuple[np.ndarray, float]]:
+def stream_frames(cfg: Config, on_retry=None,
+                  should_stop=None) -> Iterator[tuple[np.ndarray, float]]:
     """Yield (int16 mono frame, frame_start_seconds) continuously from the radio.
 
     Frames are `cfg.frame_seconds` long and feed the streaming segmenter. The
     monotonically increasing timestamp lets the segmenter assign wall-clock-ish
     offsets to detected speech segments. `on_retry` (if given) is called once per
-    arecord re-spawn so the watchdog can count capture restarts.
+    arecord re-spawn so the watchdog can count capture restarts. `should_stop` (if
+    given) lets the loop unwind promptly on shutdown — mid-stream and during the
+    retry backoff — instead of only between speech segments.
     """
+    should_stop = should_stop or (lambda: False)
     frame_samples = max(1, int(cfg.frame_seconds * cfg.sample_rate))
     frame_bytes = frame_samples * 2 * cfg.channels
     sample_index = 0
     failures = 0
 
-    while True:
+    while not should_stop():
         proc = subprocess.Popen(_arecord_cmd(cfg), stdout=subprocess.PIPE)
         if proc.stdout is None:  # pragma: no cover - defensive
             raise RuntimeError("arecord produced no stdout pipe")
@@ -99,6 +86,8 @@ def stream_frames(cfg: Config, on_retry=None) -> Iterator[tuple[np.ndarray, floa
                 frame = np.frombuffer(raw, dtype="<i2")
                 yield frame, sample_index / cfg.sample_rate
                 sample_index += frame_samples
+                if should_stop():
+                    return
         finally:
             proc.terminate()
             try:
@@ -106,6 +95,8 @@ def stream_frames(cfg: Config, on_retry=None) -> Iterator[tuple[np.ndarray, floa
             except subprocess.TimeoutExpired:  # pragma: no cover
                 proc.kill()
 
+        if should_stop():
+            return
         failures += 1
         if on_retry is not None:
             on_retry()
@@ -118,7 +109,7 @@ def stream_frames(cfg: Config, on_retry=None) -> Iterator[tuple[np.ndarray, floa
             f" in {cfg.capture_retry_backoff_s}s",
             file=sys.stderr, flush=True,
         )
-        time.sleep(cfg.capture_retry_backoff_s)
+        _sleep_unless(cfg.capture_retry_backoff_s, should_stop)
 
 
 def write_wav(path: Path, pcm_int16: np.ndarray, cfg: Config) -> None:
