@@ -317,6 +317,27 @@ def test_home_header_tolerates_at_misheard_as_it():
     assert ("Indianapolis", "temperature_f") in m
 
 
+def test_home_header_was_reported_singular_with_roundup():
+    # live regression (2026-06-27): the home ob airs as "<sky> WAS reported" (singular
+    # subject, e.g. "fog was reported"), but the header only accepted "were reported".
+    # With a roundup in the same segment, Muncie's whole home block (humidity/wind/
+    # pressure — the home-only fields) was dropped, freezing them for hours while temp
+    # stayed fresh via the roundup. The header must accept "was reported" too.
+    agg = CityConditionsAggregator()
+    out = agg.update(
+        "At 6 a.m., it Muncie, fog was reported. The temperature was 68 degrees, "
+        "and the relative humidity 93%. The wind was east at 5 miles an hour. "
+        "Elsewhere across Indiana, fog was reported with a temperature of 70 at "
+        "Terre Haute and 67 at Portland."
+    )
+    m = {(r["city"], r["condition"]): r["value"] for r in out}
+    assert m[("Muncie", "temperature_f")] == 68
+    assert m[("Muncie", "humidity_pct")] == 93      # the home-only field that was frozen
+    assert m[("Muncie", "wind")] == "east at 5"
+    assert m[("Terre Haute", "temperature_f")] == 70  # roundup still works
+    assert m[("Portland", "temperature_f")] == 67
+
+
 def test_recap_it_was_n_degrees_extracts_temp():
     # the 1 p.m. recap "...it Muncie, it was 76 degrees..." lacks the word
     # "temperature"; it must still yield the home temp, but "it was mostly sunny"

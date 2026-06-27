@@ -345,7 +345,7 @@ _HOME_LEADIN = (r"(?:(?:at|it|in|ed)\s+"
                 r"|at\s+\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?,?\s+(?:(?:at|it|in|ed)\s+)?)")
 _RE_CITY_HEADER = re.compile(
     rf"\b{_HOME_LEADIN}({_CITY})\s*,?\s+(?:it (?:was|is)|the (?:temperature|sky|relative|"
-    rf"barometric|wind|dew)|[\w\s,]{{0,40}}?were reported)", re.I)
+    rf"barometric|wind|dew)|[\w\s,]{{0,40}}?(?:was|were) reported)", re.I)
 # Regional roundup temperatures, across the phrasings NWR/STT use:
 # NB: these are NOT case-insensitive — _CITY is capital-anchored on purpose, so the
 # matcher can't swallow a leading lowercase word ("and Shelbyville"). Keyword case
