@@ -66,7 +66,7 @@ def test_run_live_once(tmp_path, monkeypatch):
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
     main._STOP.clear()
     monkeypatch.setattr(main, "stream_frames",
-                        lambda c, on_retry=None: _frames("s" + "S" * 70 + "s" * 60, c))
+                        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
     monkeypatch.setattr(main, "transcribe_samples", lambda samples, c: _t("Highs around 80."))
     # covers the producer loop + worker wiring; the save itself is racy on shutdown
     # (the poison pill out-prioritises a 1-segment backlog by design) and is covered
@@ -95,7 +95,7 @@ def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
         '{"id":"p","captured_at":"2026-06-24T00:00:00Z","product_type":"zone_forecast",'
         '"text":"earlier forecast"}\n', encoding="utf-8")
 
-    def frames(c, on_retry=None):
+    def frames(c, on_retry=None, should_stop=None):
         # 15 leading silence each so both segments get the FULL 10-frame pre-roll
         # and are byte-identical -> the second trips the novelty gate as a repeat.
         p = "s" * 15 + "S" * 70 + "s" * 60
@@ -210,7 +210,7 @@ def test_stt_worker_handles_empty_queue():
 def test_run_live_breaks_when_stopped(tmp_path, monkeypatch):
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
     monkeypatch.setattr(main, "stream_frames",
-                        lambda c, on_retry=None: _frames("s" + "S" * 70 + "s" * 60, c))
+                        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
     monkeypatch.setattr(main, "transcribe_samples", lambda s, c: _t("x"))
     main._STOP.set()                                      # already stopped -> first seg hits break
     assert main.run_live(cfg, once=False) == 0
