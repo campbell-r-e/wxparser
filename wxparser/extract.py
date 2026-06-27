@@ -253,7 +253,7 @@ class ForecastAggregator:
         # Climate outlook / almanac recaps are not the daily forecast.
         if _RE_FC_OUTLOOK.search(text):
             return False
-        changed = False
+        before = self._values()
         if m := _RE_FC_AREA.search(text):
             self.city = _norm_city(m.group(1))
             # A fresh forecast pass ("...the forecast for the Muncie area...")
@@ -277,7 +277,6 @@ class ForecastAggregator:
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
                 spans.append((name, text[m.start(): end]))
                 self._current = name
-                changed = True
         for period, chunk in spans:
             if period is None:
                 continue
@@ -301,8 +300,15 @@ class ForecastAggregator:
                     fields["high_f"] = steady
             for k, v in fields.items():
                 self._vote(period, k, v)
-                changed = True
-        return changed
+        # True only when a voted VALUE actually changed — so the store isn't
+        # rewritten a full issuance per airing just because vote tallies ticked.
+        return self._values() != before
+
+    def _values(self) -> dict:
+        """The voted value of each (period, field) — no confidence/tallies, for
+        change detection."""
+        return {(name, k): self.voters[(name, k)].best().value
+                for name in self.order for k in self._FIELDS if self._has(name, k)}
 
     def snapshot(self) -> list[dict]:
         out: list[dict] = []

@@ -69,3 +69,11 @@ def test_degraded_when_worker_wedged():
     r = assess(hb, CONFIG, _NOW)
     assert r["status"] == "degraded"
     assert any("wedged" in c for c in r["checks"])
+
+
+def test_age_min_tolerates_corrupt_timestamp():
+    from wxparser.health import _age_min
+    now = datetime(2026, 6, 26, tzinfo=timezone.utc)
+    assert _age_min("not-a-date", now) is None        # corrupt -> None, no crash
+    assert _age_min(None, now) is None                # missing -> None
+    assert _age_min("2026-06-26T00:00:00Z", now) is not None   # valid -> float

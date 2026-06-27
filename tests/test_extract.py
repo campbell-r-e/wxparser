@@ -173,6 +173,15 @@ def test_forecast_confidence_flags_contested_value():
     assert p["low_f"] == 61 and p["confidence"]["low_f"] < 0.6
 
 
+def test_forecast_update_dedupes_unchanged():
+    # update() returns True only when a voted value actually changed, so the store
+    # isn't rewritten a full issuance per airing.
+    fc = ForecastAggregator()
+    assert fc.update("Tonight, clear. Lows in the lower 60s.") is True    # 61: new value
+    assert fc.update("Tonight, clear. Lows in the lower 60s.") is False   # identical -> no write
+    assert fc.update("Saturday, sunny. Highs in the mid 80s.") is True    # new period -> write
+
+
 def test_forecast_confidence_full_when_consistent():
     fc = ForecastAggregator()
     for _ in range(5):

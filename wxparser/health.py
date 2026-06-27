@@ -25,7 +25,10 @@ def _now() -> str:
 def _age_min(ts, now: datetime) -> float | None:
     if not ts:
         return None
-    then = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    try:
+        then = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:  # a corrupt timestamp in health.json must not crash /health
+        return None
     return (now - then).total_seconds() / 60.0
 
 

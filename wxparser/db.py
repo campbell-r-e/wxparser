@@ -140,6 +140,18 @@ _SCHEMA = [
 # then its IF NOT EXISTS statements cleanly no-op.
 _SCHEMA_LOCK_KEY = 0x77787061  # "wxpa"
 
+# Idempotent migrations to bring a PRE-EXISTING database up to the current schema
+# (CREATE TABLE IF NOT EXISTS never alters an existing table). A fresh DB already
+# matches via _SCHEMA, so each of these is a no-op there. Run under the same
+# advisory lock right after the CREATEs. Append new ALTERs here as the schema
+# evolves rather than hand-running them on the box.
+_MIGRATIONS = [
+    "ALTER TABLE forecasts DROP COLUMN IF EXISTS valid_from",
+    "ALTER TABLE forecasts DROP COLUMN IF EXISTS valid_to",
+    "ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS confidence JSONB",
+    "ALTER TABLE alerts DROP COLUMN IF EXISTS event_label",
+]
+
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
@@ -199,6 +211,8 @@ class Database:
         self._conn.run("SELECT pg_advisory_lock(CAST(:k AS bigint))", k=_SCHEMA_LOCK_KEY)
         try:
             for stmt in _SCHEMA:
+                self._conn.run(stmt)
+            for stmt in _MIGRATIONS:
                 self._conn.run(stmt)
         finally:
             self._conn.run("SELECT pg_advisory_unlock(CAST(:k AS bigint))", k=_SCHEMA_LOCK_KEY)

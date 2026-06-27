@@ -42,7 +42,7 @@ def _fips_table() -> dict:
     path = Path(__file__).parent / "data" / "fips.json"
     try:
         return json.loads(path.read_text())
-    except OSError:  # pragma: no cover - bundled data file always present
+    except (OSError, ValueError):  # pragma: no cover - bundled data file always present/valid
         return {}
 
 
