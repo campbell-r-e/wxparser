@@ -131,12 +131,17 @@ class _Handler(BaseHTTPRequestHandler):
         """Server-Sent Events live feed (LAN-safe push — consumers connect *in*,
         nothing is sent outbound). Polls the since-readers and emits new alerts,
         observations, and forecasts as they land, ordered by capture time."""
+        watermark = since or _now_iso()
+        try:  # validate before committing a 200 event-stream (else a bad since
+            datetime.strptime(watermark, "%Y-%m-%dT%H:%M:%SZ")  # would error mid-stream)
+        except ValueError:
+            self._send({"error": "since= must be ISO-8601 (e.g. 2026-06-24T12:00:00Z)"}, 400)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
-        watermark = since or _now_iso()
         try:
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
@@ -155,8 +160,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b": ping\n\n")  # pragma: no cover - keepalive cadence
                 self.wfile.flush()               # pragma: no cover
                 time.sleep(self.cfg.stream_poll_s)  # pragma: no cover
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return  # client went away
+        except Exception:
+            # client went away, or a mid-stream DB error — close the (already
+            # committed) stream; never fall through to the generic handler, which
+            # would write a second HTTP response onto the event-stream socket.
+            return
 
     def _annotate_forecast_age(self, forecasts: list, q: dict) -> list:
         """Add age_minutes + stale to each forecast issuance (by issued_at)."""

@@ -72,3 +72,12 @@ def test_aprs_bulletins():
     assert b.startswith(":BLN1WX   :")
     assert "Tornado Warning" in b and "til 2230Z" in b and "SPOTTERS" in b
     assert len(b.split(":", 2)[2]) <= 67   # APRS bulletin body cap
+
+
+def test_formatters_tolerate_missing_values():
+    # present-but-absent / empty conditions must not crash the formatters
+    from wxparser.formats import _conditions_line, _period_line, aprs_weather
+    assert _conditions_line({}) == "no current data"          # temp/humidity None branches
+    snap = {"conditions": [], "generated_at": "2026-06-26T18:00:00Z", "station": "X"}
+    assert aprs_weather(snap).startswith("_")                  # no temp/humidity/pressure
+    assert _period_line({}) == "?: (no data)"                 # missing period key

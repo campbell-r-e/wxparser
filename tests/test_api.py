@@ -121,6 +121,7 @@ def test_error_codes(tmp_path):
     try:
         assert code("/export") == 400               # missing since
         assert code("/conditions/history") == 400    # missing condition
+        assert code("/stream?since=notadate") == 400  # bad since rejected before the 200 stream
         assert code("/nope") == 404
         # bad numeric params fall back to defaults (covers the parse-except paths)
         assert _get(H + "/transcripts?limit=abc&offset=xyz")["limit"] >= 1

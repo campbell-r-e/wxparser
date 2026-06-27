@@ -44,14 +44,16 @@ def _spotters(alert: dict) -> bool:
 
 def _conditions_line(cb: dict) -> str:
     parts = []
-    if "temperature_f" in cb:
-        parts.append(f"Temp {int(round(cb['temperature_f']['value']))}F")
+    t = cb.get("temperature_f", {}).get("value")
+    if t is not None:
+        parts.append(f"Temp {int(round(t))}F")
     if "sky" in cb:
         parts.append(f"Sky {cb['sky']['value']}")
     if "wind" in cb:
         parts.append(f"Wind {cb['wind']['value']}")
-    if "humidity_pct" in cb:
-        parts.append(f"Humidity {int(round(cb['humidity_pct']['value']))}%")
+    h = cb.get("humidity_pct", {}).get("value")
+    if h is not None:
+        parts.append(f"Humidity {int(round(h))}%")
     if "pressure_in" in cb:
         trend = cb.get("pressure_trend", {}).get("value", "")
         parts.append(f"Pressure {cb['pressure_in']['value']} {trend}".strip())
@@ -68,7 +70,8 @@ def _period_line(p: dict) -> str:
         hl.append(p["sky"])
     if p.get("precip_pct") is not None:
         hl.append(f"rain {p['precip_pct']}%")
-    return f"{p['period']}: " + ", ".join(hl) if hl else f"{p['period']}: (no data)"
+    period = p.get("period", "?")
+    return f"{period}: " + ", ".join(hl) if hl else f"{period}: (no data)"
 
 
 def _periods(snap: dict) -> list[dict]:
@@ -173,11 +176,13 @@ def aprs_weather(snap: dict) -> str:
     deg = _DIR_DEG.get((cb.get("wind", {}).get("value", "").split() or [""])[0].lower())
     spd = cb.get("wind_speed_mph", {}).get("value")
     s = f"_{mdhm}c{f3(deg)}s{f3(spd)}g...t{_t3(cb.get('temperature_f', {}).get('value'))}"
-    if "humidity_pct" in cb:
-        h = int(round(cb["humidity_pct"]["value"]))
+    hv = cb.get("humidity_pct", {}).get("value")
+    if hv is not None:
+        h = int(round(hv))
         s += f"h{0 if h >= 100 else h:02d}"
-    if "pressure_in" in cb:
-        s += f"b{int(round(cb['pressure_in']['value'] * 33.8639 * 10)):05d}"
+    pv = cb.get("pressure_in", {}).get("value")
+    if pv is not None:
+        s += f"b{int(round(pv * 33.8639 * 10)):05d}"
     return s
 
 
