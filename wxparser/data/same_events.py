@@ -74,7 +74,6 @@ EVENT_CODES: dict[str, str] = {
     "CEM": "Civil Emergency Message",
     "LAE": "Local Area Emergency",
     "ADR": "Administrative Message",
-    "AVW2": "Avalanche Warning",
     "BLU": "Blue Alert",
     "CAE": "Child Abduction Emergency",
     "DMO": "Practice/Demo Warning",

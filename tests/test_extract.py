@@ -12,7 +12,6 @@ from wxparser.extract import (
     extract_forecast_fields,
     extract_observation,
     parse_temp_value,
-    period_header,
     words_to_int,
 )
 
@@ -217,11 +216,6 @@ def test_forecast_3_to_7_day_is_not_skipped_as_outlook():
     assert s["Sunday"]["high_f"] == 85
     assert "high_f" not in s["Saturday Night"]
 
-
-def test_period_header():
-    assert period_header("Tonight, partly cloudy.") == "Tonight"
-    assert period_header("Saturday night, clear.") == "Saturday Night"
-    assert period_header("Lows in the 60s.") is None
 
 
 def test_forecast_aggregator_builds_periods():

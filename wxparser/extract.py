@@ -114,9 +114,6 @@ def extract_observation(text: str) -> dict:
 # Zone-forecast extraction (Phase 6)
 # --------------------------------------------------------------------------- #
 _DAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-_RE_PERIOD = re.compile(
-    rf"^\s*(today|tonight|this afternoon|this evening|this morning|overnight|"
-    rf"(?:{_DAYS})(?: night)?|rest of (?:today|tonight))\b", re.I)
 # Period names as they appear *anywhere* in the narrative.
 _PERIOD_NAME = (
     rf"this (?:afternoon|evening|morning)|tonight|today|overnight"
@@ -204,11 +201,6 @@ def extract_forecast_fields(text: str) -> dict:
     if m := _RE_SKY.search(text):
         out["sky"] = m.group(1).lower()
     return out
-
-
-def period_header(text: str) -> str | None:
-    m = _RE_PERIOD.search(text)
-    return m.group(1).strip().title() if m else None
 
 
 def _is_night_period(name: str) -> bool:
