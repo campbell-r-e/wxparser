@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -56,6 +57,18 @@ def test_transcribe_parses_and_corrects(monkeypatch):
     t = stt.transcribe_samples(np.zeros(16000, dtype=np.int16), Config())
     assert t.text == "Highs around 80."          # "Pies"->"Highs" correction applied
     assert len(t.segments) == 1 and t.language == "en"
+
+
+def test_transcribe_with_enhance_enabled(monkeypatch):
+    # stt_enhance=True routes the segment through enhance.py before whisper
+    payload = {"transcription": [
+        {"text": " Highs around 80.", "offsets": {"from": 0, "to": 1000}},
+    ], "result": {"language": "en"}}
+    monkeypatch.setattr(stt.subprocess, "run", _fake_run(payload))
+    cfg = dataclasses.replace(Config(), stt_enhance=True)
+    samples = (3000 * np.sin(2 * np.pi * 700 * np.arange(8000) / 16000)).astype(np.int16)
+    t = stt.transcribe_samples(samples, cfg)
+    assert t.text == "Highs around 80."
 
 
 def test_transcribe_nonzero_exit_raises(monkeypatch):

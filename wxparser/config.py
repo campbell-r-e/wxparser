@@ -110,6 +110,20 @@ class Config:
     # is set we keep a small bounded context instead.
     whisper_prompt_max_ctx: int = int(_env("WX_PROMPT_MAX_CTX", "64"))
 
+    # --- Optional speech enhancement (OFF by default; see enhance.py) ---
+    # A mild DSP chain (mains-hum notches + low-pass + spectral subtraction +
+    # level-matched makeup) applied to each segment before STT. An A/B whisper
+    # test showed it never hurt and occasionally fixed a word on this station's
+    # line noise; the benefit is marginal, so it's OFF by default — set
+    # WX_STT_ENHANCE=1 to A/B it on a new deployment. Tune mains_hz to 50 outside
+    # North America. Boosting beyond the input level REGRESSED STT, so the chain
+    # only restores the original level — these knobs shape the noise floor, not gain.
+    stt_enhance: bool = _env("WX_STT_ENHANCE", "0") == "1"
+    stt_enhance_mains_hz: float = float(_env("WX_STT_ENHANCE_MAINS_HZ", "60"))
+    stt_enhance_lowpass_hz: float = float(_env("WX_STT_ENHANCE_LOWPASS_HZ", "3800"))
+    stt_enhance_alpha: float = float(_env("WX_STT_ENHANCE_ALPHA", "2.0"))
+    stt_enhance_floor: float = float(_env("WX_STT_ENHANCE_FLOOR", "0.12"))
+
     # --- Phase 3: text dedup (second-line guard) ---
     # High, so only near-exact repeats are dropped. On short templated forecasts a
     # changed number ("80"->"82") only drops similarity to ~0.95, and must survive

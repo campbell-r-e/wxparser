@@ -103,6 +103,10 @@ def transcribe_samples(samples: np.ndarray, cfg: Config) -> Transcript:
     """Transcribe an int16 mono numpy segment by staging it to a temp WAV."""
     from .capture import write_wav  # local import avoids a circular import at load
 
+    if cfg.stt_enhance:
+        from .enhance import enhance  # optional mild DSP pre-clean (off by default)
+
+        samples = enhance(samples, cfg)
     with tempfile.TemporaryDirectory(prefix="wxparser-stt-") as tmp:
         wav_path = Path(tmp) / "segment.wav"
         write_wav(wav_path, samples, cfg)
