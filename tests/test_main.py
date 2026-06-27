@@ -209,10 +209,14 @@ def test_stt_worker_handles_empty_queue():
 
 def test_run_live_breaks_when_stopped(tmp_path, monkeypatch):
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
-    monkeypatch.setattr(main, "stream_frames",
-                        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
+
+    def frames(c, on_retry=None, should_stop=None):
+        # run_live clears _STOP on entry, so simulate the stop arriving just after
+        # startup (as capture begins) -> the producer's first segment hits the break.
+        main._STOP.set()
+        return _frames("s" + "S" * 70 + "s" * 60, c)
+    monkeypatch.setattr(main, "stream_frames", frames)
     monkeypatch.setattr(main, "transcribe_samples", lambda s, c: _t("x"))
-    main._STOP.set()                                      # already stopped -> first seg hits break
     assert main.run_live(cfg, once=False) == 0
     main._STOP.clear()
 
