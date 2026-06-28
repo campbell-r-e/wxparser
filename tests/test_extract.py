@@ -515,6 +515,19 @@ def test_correct_terms_close_is_context_scoped():
     assert correct_terms("a close call with the storm") == "a close call with the storm"
 
 
+def test_correct_terms_eased_is_context_scoped():
+    # "east" wind direction mis-heard as "eased" ("the wind was eased at 7 miles
+    # an hour", "eased winds around 5") -> corrected only in wind position.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("The wind was eased at 7 miles an hour.") == \
+        "The wind was east at 7 miles an hour."
+    assert correct_terms("Eased winds around 5 miles an hour.") == \
+        "East winds around 5 miles an hour."
+    # must NOT corrupt legitimate uses of "eased"
+    assert correct_terms("winds eased overnight") == "winds eased overnight"
+    assert correct_terms("the threat eased at 7 p.m.") == "the threat eased at 7 p.m."
+
+
 # --- almanac / climate recap extraction ------------------------------------ #
 def test_extract_almanac_full_block():
     out = extract_almanac(

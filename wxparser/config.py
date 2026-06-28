@@ -144,6 +144,15 @@ class Config:
     # process itself is down.
     health_audio_silent_min: int = int(_env("WX_HEALTH_AUDIO_SILENT_MIN", "5"))
     health_heartbeat_stale_min: int = int(_env("WX_HEALTH_HEARTBEAT_STALE_MIN", "3"))
+    # "STT worker wedged" needs a REAL backlog, not a single just-queued segment:
+    # on a looping broadcast the novelty gate can idle STT for many minutes, then
+    # one novel segment lands (queue_depth 1) while last_stt_ok is still old — that
+    # is idle-then-busy, not wedged, and clears within a cycle. A genuine wedge (a
+    # decoder repetition-loop stuck on one segment while audio keeps flowing) piles
+    # segments up, so require queue_depth above 1 AND a dedicated, looser staleness
+    # window before flagging — avoids the overnight false positives.
+    health_stt_wedged_min: int = int(_env("WX_HEALTH_STT_WEDGED_MIN", "10"))
+    health_stt_wedged_queue: int = int(_env("WX_HEALTH_STT_WEDGED_QUEUE", "1"))
     # Outbound push (roadmap). OFF by default so the box stays fully offline; set a
     # URL (e.g. a LAN mesh gateway) to POST each new SAME alert as JSON. The SSE
     # /stream endpoint needs nothing here — consumers connect inbound.

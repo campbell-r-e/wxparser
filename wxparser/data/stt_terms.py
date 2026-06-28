@@ -45,6 +45,14 @@ _CLOSE_AS_LOWS = re.compile(
     r"\bclose\b(?=\s+(?:in the (?:lower|low|mid|middle|upper)\b|around\s+\d|near\s+\d))",
     re.I)
 
+# "east" in the wind slot is mis-heard as "eased" ("The wind was eased at 7 miles
+# an hour", "eased winds around 5"), dropping the wind direction. Can't fold
+# globally — "eased" is legit ("winds eased", "the threat eased at 7 p.m."). So
+# correct it ONLY in wind-direction position: directly before "winds" or before
+# an "at N miles" speed (which a non-wind "eased at 7 p.m." never matches).
+_EASED_AS_EAST = re.compile(
+    r"\beased\b(?=\s+(?:winds?\b|at\s+\d+\s+miles?\b))", re.I)
+
 
 def _cased(canon: str):
     def repl(m: re.Match) -> str:
@@ -58,4 +66,6 @@ def correct_terms(text: str) -> str:
         text = pattern.sub(_cased(canon), text)
     text = _CLOSE_AS_LOWS.sub(
         lambda m: "Lows" if m.group(0)[:1].isupper() else "lows", text)
+    text = _EASED_AS_EAST.sub(
+        lambda m: "East" if m.group(0)[:1].isupper() else "east", text)
     return text

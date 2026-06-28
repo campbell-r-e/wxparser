@@ -56,19 +56,45 @@ def test_degraded_when_audio_silent():
 
 
 def test_not_wedged_during_startup_grace():
-    # just booted: a segment queued, first STT still running -> not yet wedged
+    # just booted: segments queued, first STT still running -> not yet wedged
+    # (stt_ref_age falls back to the recent process start, well under the window)
     hb = {"updated_at": _ago(0.2), "started_at": _ago(0.4),
-          "last_segment_at": _ago(0.3), "last_stt_ok_at": None, "queue_depth": 1}
+          "last_segment_at": _ago(0.3), "last_stt_ok_at": None, "queue_depth": 2}
+    assert assess(hb, CONFIG, _NOW)["status"] == "ok"
+
+
+def test_idle_then_single_segment_not_wedged():
+    # looping broadcast idled STT for 30m, then ONE novel segment queues (q=1):
+    # idle-then-busy, drains within a cycle -> NOT wedged (the overnight false
+    # positive: a single just-queued segment is below the wedged-queue floor).
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+          "last_stt_ok_at": _ago(30), "queue_depth": 1}
+    assert assess(hb, CONFIG, _NOW)["status"] == "ok"
+
+
+def test_backlog_with_fresh_stt_not_wedged():
+    # post-restart catch-up: queue building (q=4) but STT actively draining
+    # (last ok 3m, under the wedge window) -> not wedged
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+          "last_stt_ok_at": _ago(3), "queue_depth": 4}
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
 
 
 def test_degraded_when_worker_wedged():
-    # backlog queued but nothing transcribed recently -> STT worker stuck
+    # a REAL backlog (q>1) stuck with nothing transcribed past the wedge window
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": _ago(10), "queue_depth": 3}
+          "last_stt_ok_at": _ago(15), "queue_depth": 3}
     r = assess(hb, CONFIG, _NOW)
     assert r["status"] == "degraded"
     assert any("wedged" in c for c in r["checks"])
+
+
+def test_wedged_when_no_stt_reference():
+    # backlog queued but neither last_stt_ok nor started_at to measure progress
+    # from -> can't prove the worker is draining, so fail loud
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+          "last_stt_ok_at": None, "queue_depth": 2}
+    assert assess(hb, CONFIG, _NOW)["status"] == "degraded"
 
 
 def test_age_min_tolerates_corrupt_timestamp():
