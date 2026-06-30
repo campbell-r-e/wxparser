@@ -42,7 +42,7 @@ CORRECTIONS: dict[str, list[str]] = {
         "Terrell Hope", "Terre Hope", "Terreld", "Terre Hoeck", "Terrejo",
         "Terrellton", "Terre Hogue", "Terahoe", "Terre Ljogt", "Terahood",
         "Terre Hoe", "Terre Hoeg", "Terroch", "Terrema Hope", "Terre",
-        "Terrellot", "Terahook",
+        "Terrellot", "Terahook", "Terre Hote",
     ],
     # "... at Champaign, Illinois ..." — homophones of the French word.
     "Champaign": [
@@ -63,7 +63,7 @@ CORRECTIONS: dict[str, list[str]] = {
     ],
     # "Shelbyville" clipped to its first two syllables.
     "Shelbyville": [
-        "Shelby",
+        "Shelby", "And Shelbyville",
     ],
     # "... at Lima, Ohio ..." — pronounced "LYE-muh", so it scatters badly.
     # By far the worst-mangled name: confirmed by context, every one of these
