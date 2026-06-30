@@ -33,22 +33,55 @@ CORRECTIONS: dict[str, list[str]] = {
         "Munsie", "Munsy", "Monsey", "Munce", "Mun See", "Muns",
     ],
     # "... at Terre Haute ..." — whisper-tiny mangles the silent-final-syllable.
+    # "Terre Haute reports a temperature of..." also scatters into "Terrell Hope
+    # report(s)..." and the "Terre Ho-" / "Tera-" cluster below.
     "Terre Haute": [
         "Terrehold", "Terrehald", "Terrehalt", "Terrahold", "Terrahaut",
         "Terrell", "Terrelld", "Terrellt", "Terre Hold", "Terre Halt",
         "Terreault",  # "...79 Edterreault and 80 Ed Evansville..."
+        "Terrell Hope", "Terre Hope", "Terreld", "Terre Hoeck", "Terrejo",
+        "Terrellton", "Terre Hogue", "Terahoe", "Terre Ljogt", "Terahood",
+        "Terre Hoe", "Terre Hoeg", "Terroch", "Terrema Hope", "Terre",
+        "Terrellot", "Terahook",
     ],
     # "... at Champaign, Illinois ..." — homophones of the French word.
     "Champaign": [
-        "Champagne", "Campaign", "Champ Pain", "Sham Pain",
+        "Champagne", "Campaign", "Champ Pain", "Sham Pain", "Champion",
+    ],
+    # "... at Bloomington ..." — unambiguous "Bloom-" prefix garbles.
+    "Bloomington": [
+        "Blumant", "Bloomingville",
+    ],
+    # Conjunction-leak garbles: the decoder folds the preceding "and"/"at"/"Ed"
+    # into the city token ("...and 80 Ed Evansville...").
+    "Evansville": [
+        "In Evansville", "And Evansville", "Ed Evansville",
+    ],
+    # "Indianapolis" heard as the two-word "Indian Apple".
+    "Indianapolis": [
+        "Indian Apple",
+    ],
+    # "Shelbyville" clipped to its first two syllables.
+    "Shelbyville": [
+        "Shelby",
     ],
     # "... at Lima, Ohio ..." — pronounced "LYE-muh", so it scatters badly.
+    # By far the worst-mangled name: confirmed by context, every one of these
+    # sits in the post-Champaign / "just outside Indiana" slot that the clean
+    # runs decode as "Lima, Ohio" ("...69 at Champaign, Illinois, 67 at Lima...").
     "Lima": [
         "Lyle", "Laima", "Laimo", "Loomo", "Lulule", "Lulevel",
         "Lyme", "Lima Ohio", "Leema",
         "Limo", "Lime",  # "...Lima, Ohio, just outside Indiana, it was sunny..."
         "La Mile", "La",  # post-Champaign slot (parallels "...69 at Lyle...")
         "Lyma",
+        # "...67 at Lionel Hill..." / "...67 at Lionel..." family.
+        "Lionel", "Lionel Hill", "Lionel Hyle", "Lionel High",
+        "Lamel Hyle", "Lamel Highl",
+        # "...and 70 at Blime a while..." (spurious leading 'B').
+        "Blime", "Blame",
+        # "...Just outside Indiana, Ed Lyman..." / "...71 in Lyman..."
+        "Lyman", "Lymo", "Lymele", "Mlima", "Mllema", "Limee",
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [
@@ -62,7 +95,7 @@ CORRECTIONS: dict[str, list[str]] = {
     # the decoder collapses the name to a fragment ("...at Blue or more?", or
     # "...73 at Luhl" parallel to the clean "...73 at Louisville").
     "Louisville": [
-        "Blue", "Luhl",
+        "Blue", "Luhl", "And Louisville",
     ],
     # "... at Portland ..." (Portland, IN) — slot after Marion ("63 at Portland"
     # heard as "63 at Ridgebrough").
@@ -76,6 +109,31 @@ CORRECTIONS: dict[str, list[str]] = {
         "Deepan", "Deep", "Deepin", "Deepen",
     ],
 }
+
+# --- non-city hallucinations to delete outright --------------------------- #
+# Tokens whisper emits in a city slot that are NOT garbles of any real station
+# in the roundup — forecast prose ("They have danger..."/"They include portions
+# of..."), bare conjunctions/fragments, state names, and plausible-but-wrong
+# cities the decoder invents. Unlike CORRECTIONS these map to no real city, so
+# they are deleted rather than renamed. Matched case-insensitively against the
+# WHOLE city string, so e.g. "South" never touches "South Bend". Keep this
+# CONSERVATIVE — only add a token once you've confirmed it is not a real city.
+JUNK_CITIES: list[str] = [
+    "They", "South", "South Ed", "City", "County", "You", "Sh", "Ch",
+    "Line", "Pardon", "Ridge", "Shire", "Wood", "Dave", "Mary", "Moore",
+    "Lewis", "Beep", "Mattie", "Jampinee", "Chandler", "Fordland", "Lawford",
+    "Maris", "The Maddy", "Sarah Holt", "Sarah Hope",
+    # state names / out-of-feed cities the decoder invents in a temp slot
+    "Indiana", "Indian", "Ohio", "Nevada", "San Diego", "San Andi",
+    "Cleveland", "Liverpool", "Madison", "Huntsville", "Burlington",
+    "Blue Ridge",
+    # "Whi-" cluster: tail-of-sentence garble with no consistent target
+    "Whivl", "Whivol", "Whivolm", "Whittle", "Whill", "Whill Hall",
+    "Weville", "Wille", "Willem", "Willow", "Wilv", "Evans Hill",
+    # "Luev-" cluster: ambiguous between Lima and Louisville, so drop rather
+    # than risk folding a reading into the wrong real city.
+    "Luev", "Luevo", "Luevle", "Luell", "Luellington", "Luever", "Luv",
+]
 
 # (table, [key columns other than city]) — the non-city half of each PK, used
 # to detect a collision before renaming.
@@ -145,10 +203,25 @@ def _merge_table(conn, table: str, keys: list[str], good: str, bad: str) -> int:
     return n
 
 
+def _drop_junk(conn, table: str, junk: str) -> int:
+    """Delete rows whose city == junk (case-insensitive). Returns rows removed."""
+    n = conn.run(
+        f"SELECT COUNT(*) FROM {table} WHERE LOWER(city)=LOWER(:junk)",
+        junk=junk,
+    )[0][0]
+    if n:
+        conn.run(
+            f"DELETE FROM {table} WHERE LOWER(city)=LOWER(:junk)",
+            junk=junk,
+        )
+    return n
+
+
 def main() -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = _connect()
     total = 0
+    dropped = 0
     try:
         for good, variants in CORRECTIONS.items():
             for bad in variants:
@@ -157,10 +230,16 @@ def main() -> None:
                     if n:
                         total += n
                         print(f"[{stamp}] {table}: {n:>4} row(s) '{bad}' -> '{good}'")
+        for junk in JUNK_CITIES:
+            for table, _keys in TABLES:
+                n = _drop_junk(conn, table, junk)
+                if n:
+                    dropped += n
+                    print(f"[{stamp}] {table}: {n:>4} junk row(s) '{junk}' deleted")
     finally:
         conn.close()
-    if total:
-        print(f"[{stamp}] done — corrected {total} row(s).")
+    if total or dropped:
+        print(f"[{stamp}] done — corrected {total} row(s), dropped {dropped} junk row(s).")
     else:
         print(f"[{stamp}] done — nothing to correct.")
 
