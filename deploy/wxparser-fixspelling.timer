@@ -1,8 +1,9 @@
 [Unit]
-Description=Run wxparser city-name autocorrect nightly at midnight
+Description=Run wxparser city-name autocorrect every minute (write-time fix is primary; this mops up history + anything the slot pass misses)
 
 [Timer]
-OnCalendar=*-*-* 00:00:00
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
 Persistent=true
 
 [Install]
