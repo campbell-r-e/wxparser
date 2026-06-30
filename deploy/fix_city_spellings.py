@@ -82,6 +82,7 @@ CORRECTIONS: dict[str, list[str]] = {
         "Blime", "Blame",
         # "...Just outside Indiana, Ed Lyman..." / "...71 in Lyman..."
         "Lyman", "Lymo", "Lymele", "Mlima", "Mllema", "Limee",
+        "Lymel", "Lymal Hyle", "Delimah", "Llamville",
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [
