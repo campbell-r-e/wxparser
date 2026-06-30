@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections import Counter, deque
 
-from .data.place_names import correct_place
+from .data.place_names import correct_place, is_known_city, resolve_slot
 from dataclasses import dataclass
 
 # --- small spoken-number parser (whisper sometimes spells numbers out) ------- #
@@ -361,10 +361,29 @@ _RE_AT_TEMP = re.compile(
 
 
 def _nearby_temps(text: str) -> list[tuple[str, int]]:
-    """(city, temperature_f) for every roundup phrasing in `text`."""
-    out: list[tuple[str, int]] = [(c, int(v)) for v, c in _RE_NEARBY.findall(text)]
-    out += [(c, int(v)) for c, v in _RE_REPORTED.findall(text)]
-    out += [(c, int(v)) for c, v in _RE_AT_TEMP.findall(text)]
+    """(city, temperature_f) for every roundup phrasing in `text`, in textual
+    order. Each city is first folded through the alias map (_norm_city); any that
+    is STILL unknown is then recovered from its slot when possible — e.g. the
+    entry right after "Champaign, Illinois" is Lima — so novel mis-hearings land
+    under the right city without needing a catalogued spelling."""
+    # (pos, city_raw, temp) for every phrasing, merged into one ordered stream.
+    raw: list[tuple[int, str, int]] = []
+    for m in _RE_NEARBY.finditer(text):
+        raw.append((m.start(), m.group(2), int(m.group(1))))
+    for m in _RE_REPORTED.finditer(text):
+        raw.append((m.start(), m.group(1), int(m.group(2))))
+    for m in _RE_AT_TEMP.finditer(text):
+        raw.append((m.start(), m.group(1), int(m.group(2))))
+    raw.sort(key=lambda r: r[0])
+
+    out: list[tuple[str, int]] = []
+    prev_city: str | None = None
+    for pos, city_raw, temp in raw:
+        city = _norm_city(city_raw)
+        if not is_known_city(city):
+            city = resolve_slot(prev_city, text, pos) or city
+        out.append((city, temp))
+        prev_city = city
     return out
 # "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
 # literal " area" suffix so the city group can't swallow the word "area")

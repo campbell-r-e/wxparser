@@ -3,6 +3,19 @@
   "frequency_mhz": 162.425,
   "primary_city": "Muncie",
   "stt_prompt": "NOAA Weather Radio for east central Indiana. Counties: Delaware, Madison, Henry, Randolph, Jay, Blackford, Grant, Wayne, Tipton, Hamilton, Howard. Towns: Muncie, Anderson, Marion, Portland, Winchester, New Castle, Richmond, Yorktown, Albany, Dunkirk, Alexandria, Gas City, Hartford City.",
+  "roundup_cities": [
+    "Muncie", "Anderson", "Marion", "Portland", "Richmond", "Shelbyville",
+    "Indianapolis", "Lafayette", "Fort Wayne", "South Bend", "Terre Haute",
+    "Bloomington", "Evansville", "Chicago", "Champaign", "Lima", "Cincinnati",
+    "Dayton", "Louisville", "New Castle", "Winchester", "Yorktown", "Albany",
+    "Dunkirk", "Alexandria", "Gas City", "Hartford City"
+  ],
+  "slot_anchors": {
+    "Champaign": "Lima"
+  },
+  "roundup_leadins": {
+    "just outside indiana": "Lima"
+  },
   "place_corrections": {
     "Muncie": [
       "Monthsy",

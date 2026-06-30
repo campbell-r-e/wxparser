@@ -444,6 +444,32 @@ def test_roundup_dedup_same_city_value():
     assert sum(1 for r in out if r["city"] == "Marion") == 1
 
 
+def test_slot_resolves_novel_garble_after_champaign_anchor():
+    # The entry right after "Champaign, Illinois" is Lima. A garble we have NEVER
+    # catalogued must still land under Lima via the positional anchor, not a
+    # spelling list — this is what ends the whack-a-mole.
+    assert _temps("69 at Champaign, Illinois, 67 at Zorblax and 71 at Dayton.") \
+        == {"Champaign": 69, "Lima": 67, "Dayton": 71}
+
+
+def test_slot_resolves_novel_garble_in_just_outside_indiana_leadin():
+    assert _temps("Just outside Indiana, Ed Quixotle, sunny with a temperature of 73.") \
+        == {"Lima": 73}
+
+
+def test_slot_does_not_remap_unknown_outside_a_known_slot():
+    # An unknown city that is NOT in an anchored slot is left untouched (better a
+    # harmless phantom than a wrong real-city reading).
+    assert _temps("80 at Anderson, 75 at Wuzzle and 70 at Marion.") \
+        == {"Anderson": 80, "Wuzzle": 75, "Marion": 70}
+
+
+def test_slot_leaves_known_city_after_anchor_untouched():
+    # A roster city following the anchor must not be force-mapped to Lima.
+    assert _temps("69 at Champaign, Illinois, 70 at Cincinnati.") \
+        == {"Champaign": 69, "Cincinnati": 70}
+
+
 def test_ed_muncie_header():
     out = {(r["city"], r["condition"]): r["value"] for r in
            CityConditionsAggregator().update(
