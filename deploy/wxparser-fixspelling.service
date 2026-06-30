@@ -1,5 +1,5 @@
 [Unit]
-Description=wxparser — nightly city-name autocorrect (Munsee -> Muncie, etc.)
+Description=wxparser — city-name autocorrect backstop (Munsee -> Muncie, etc.)
 After=postgresql.service
 Wants=postgresql.service
 
