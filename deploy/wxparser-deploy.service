@@ -10,4 +10,7 @@ Group=creed
 Environment=HOME=/home/creed
 Environment=PYTHONUNBUFFERED=1
 WorkingDirectory=/home/creed/wxparser
-ExecStart=/home/creed/wxparser/deploy/auto_deploy.sh
+# Invoke bash explicitly rather than exec'ing the script directly: systemd's
+# execve() of a script living under the 0700 $HOME fails with EACCES (203/EXEC),
+# so run the interpreter (a world-accessible binary) and let it read the script.
+ExecStart=/usr/bin/bash /home/creed/wxparser/deploy/auto_deploy.sh

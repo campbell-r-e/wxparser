@@ -420,6 +420,14 @@ def _norm_city(name: str) -> str:
     return correct_place(name.strip().title())
 
 
+def _wind_speed_from_phrase(phrase: str) -> int:
+    """Speed implied by a voted wind phrase: 'west at 8' -> 8, 'calm' (or any
+    phrase without a trailing '... at N') -> 0. Keeps wind_speed_mph locked to
+    the winning wind direction instead of voting it as an independent field."""
+    m = re.search(r" at (\d{1,3})$", phrase)
+    return int(m.group(1)) if m else 0
+
+
 class CityConditionsAggregator:
     """City-agnostic current-conditions extraction with per-(city,condition) voting.
 
@@ -469,8 +477,21 @@ class CityConditionsAggregator:
         # skip climate-summary/almanac recaps — they quote yesterday's or normal
         # highs/lows, not live conditions, and would poison the primary readings.
         if primary_block and not _RE_RECAP.search(primary_block):
-            for cond, val in extract_observation(primary_block).items():
+            obs = extract_observation(primary_block)
+            # wind_speed_mph is NOT voted on its own — it's derived from the voted
+            # wind phrase below. Voted independently, the two windows can disagree
+            # (a tie breaking the speed to 0 while the phrase wins "west at 8"),
+            # yielding wind="west at 8" with wind_speed_mph=0.
+            obs.pop("wind_speed_mph", None)
+            for cond, val in obs.items():
                 readings.append(self._reading(self.primary_city, cond, val))
+            wind = next((r for r in readings if r["condition"] == "wind"), None)
+            if wind is not None:
+                readings.append({
+                    "city": self.primary_city, "condition": "wind_speed_mph",
+                    "value": _wind_speed_from_phrase(str(wind["value"])),
+                    "votes": wind["votes"], "total": wind["total"],
+                })
         return readings
 
     def _reading(self, city: str, condition: str, value) -> dict:

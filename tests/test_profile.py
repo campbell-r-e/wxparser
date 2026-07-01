@@ -45,3 +45,13 @@ def test_missing_required_keys_raise(tmp_path):
 def test_profile_path_resolution():
     assert profile.profile_path("indiana") == profile.PROFILE_DIR / "indiana.json"
     assert profile.profile_path("/tmp/wny.json").name == "wny.json"   # explicit path used as-is
+
+
+def test_resolve_slot_without_leadins_returns_none(monkeypatch):
+    # a profile that configures no lead-in phrases (roundup_leadins absent) must
+    # skip the phrase scan entirely: an unknown entry with no anchoring prev_city
+    # can't be recovered, so resolve_slot returns None.
+    from wxparser.data import place_names as pn
+
+    monkeypatch.setattr(pn, "ROUNDUP_LEADINS", {})
+    assert pn.resolve_slot(None, "an unknown roundup city here", 12) is None

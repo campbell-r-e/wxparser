@@ -295,10 +295,33 @@ def test_primary_obs_with_trailing_roundup_in_same_segment():
     m = {(r["city"], r["condition"]): r["value"] for r in out}
     assert m[("Muncie", "temperature_f")] == 76
     assert m[("Muncie", "wind")] == "southwest at 8"
+    assert m[("Muncie", "wind_speed_mph")] == 8      # derived from the voted phrase
     assert m[("Muncie", "sky")] == "partly sunny"
     assert m[("Muncie", "pressure_in")] == 29.97
     assert m[("Muncie", "pressure_trend")] == "falling"
     assert m[("Marion", "temperature_f")] == 74
+
+
+def test_wind_speed_follows_voted_direction():
+    # regression: wind (phrase) and wind_speed_mph were voted as independent
+    # fields over the same window, so a tie could break the speed to 0 while the
+    # phrase won "west at 8" — surfacing wind="west at 8" with wind_speed_mph=0.
+    # wind_speed_mph is now derived from the winning phrase, always consistent.
+    agg = CityConditionsAggregator()
+    for _ in range(3):
+        agg.update("At Muncie, it was sunny. The wind was calm.")
+    out = []
+    for _ in range(5):
+        out = agg.update("At Muncie, it was sunny. The wind was west at 8 miles an hour.")
+    m = {(r["city"], r["condition"]): r["value"] for r in out}
+    assert m[("Muncie", "wind")] == "west at 8"
+    assert m[("Muncie", "wind_speed_mph")] == 8      # follows the phrase, not a 0 tie-break
+
+    # when calm wins the vote, the derived speed is 0
+    calm = CityConditionsAggregator().update("At Muncie, it was clear. The wind was calm.")
+    cm = {(r["city"], r["condition"]): r["value"] for r in calm}
+    assert cm[("Muncie", "wind")] == "calm"
+    assert cm[("Muncie", "wind_speed_mph")] == 0
 
 
 def test_home_header_tolerates_at_misheard_as_it():
