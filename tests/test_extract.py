@@ -431,6 +431,7 @@ def test_norm_city_autocorrects_stt_mishearings():
     assert _norm_city("Terrell Hook") == "Terre Haute"   # small.en garble variant
     assert _norm_city("Lyle") == "Lima"
     assert _norm_city("South End") == "South Bend"
+    assert _norm_city("Soft End") == "South Bend"        # small.en garble variant
     assert _norm_city("Deepan") == "Dayton"
     # an unrecognized name is just title-cased, not mangled
     assert _norm_city("anderson") == "Anderson"
