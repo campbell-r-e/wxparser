@@ -482,11 +482,20 @@ def test_slot_resolves_novel_garble_in_just_outside_indiana_leadin():
         == {"Lima": 73}
 
 
+def test_slot_resolves_garble_via_extended_anchor_chain():
+    # The mined roundup order gives a full anchor chain, so a garble in ANY
+    # anchored slot lands under the right city without a spelling entry — the
+    # entry after Dayton is Cincinnati, and the one after Anderson is Indianapolis.
+    assert _temps("71 at Dayton, 70 at Blorptown.") == {"Dayton": 71, "Cincinnati": 70}
+    assert _temps("80 at Anderson, 75 at Wuzzle.") == {"Anderson": 80, "Indianapolis": 75}
+
+
 def test_slot_does_not_remap_unknown_outside_a_known_slot():
     # An unknown city that is NOT in an anchored slot is left untouched (better a
-    # harmless phantom than a wrong real-city reading).
-    assert _temps("80 at Anderson, 75 at Wuzzle and 70 at Marion.") \
-        == {"Anderson": 80, "Wuzzle": 75, "Marion": 70}
+    # harmless phantom than a wrong real-city reading). Louisville ends the mined
+    # chain, so it has no anchor.
+    assert _temps("80 at Louisville, 75 at Wuzzle.") \
+        == {"Louisville": 80, "Wuzzle": 75}
 
 
 def test_slot_leaves_known_city_after_anchor_untouched():

@@ -11,7 +11,21 @@
     "Dunkirk", "Alexandria", "Gas City", "Hartford City"
   ],
   "slot_anchors": {
-    "Champaign": "Lima"
+    "Anderson": "Indianapolis",
+    "Indianapolis": "Marion",
+    "Marion": "Portland",
+    "Portland": "Richmond",
+    "Richmond": "Shelbyville",
+    "South Bend": "Fort Wayne",
+    "Fort Wayne": "Lafayette",
+    "Lafayette": "Terre Haute",
+    "Terre Haute": "Bloomington",
+    "Bloomington": "Evansville",
+    "Chicago": "Champaign",
+    "Champaign": "Lima",
+    "Lima": "Dayton",
+    "Dayton": "Cincinnati",
+    "Cincinnati": "Louisville"
   },
   "roundup_leadins": {
     "just outside indiana": "Lima"
