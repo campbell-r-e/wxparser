@@ -138,6 +138,16 @@ class Config:
     repetition_min_words: int = int(_env("WX_REP_MIN_WORDS", "12"))
     repetition_unique_ratio: float = float(_env("WX_REP_UNIQUE_RATIO", "0.35"))
 
+    # A transcript whose mean STT token-confidence (stt.avg_confidence) is below
+    # this is too unreliable to vote into conditions/forecast/almanac — a mangled
+    # reading could sway an aggregate. It's still STORED (raw record kept), just
+    # not voted; applied in the shared pipeline so live + reprocess stay
+    # consistent. Set from the observed spread: routine transcripts sit ~0.85-0.95
+    # and garbles land <0.5. A confidence of exactly 0.0 means "unmeasured"
+    # (pre -ojf transcripts) and is never gated, so a full reprocess of old
+    # history isn't wiped. 0 disables the gate entirely.
+    stt_confidence_floor: float = float(_env("WX_STT_CONF_FLOOR", "0.5"))
+
     # --- Phase 3: text dedup (second-line guard) ---
     # High, so only near-exact repeats are dropped. On short templated forecasts a
     # changed number ("80"->"82") only drops similarity to ~0.95, and must survive

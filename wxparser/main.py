@@ -174,7 +174,14 @@ def _stt_worker(
             # vote BEFORE dedup so boundary-shifted repeats still contribute readings.
             # apply_readings is the SAME step reprocess replays over the stored
             # transcripts, so the DB stays a re-derivable projection of them.
-            summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb)
+            # Skip voting on low-confidence transcripts (still stored, just not
+            # voted) so a mangled reading can't sway the aggregates.
+            summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb,
+                                     confidence=transcript.avg_confidence,
+                                     confidence_floor=cfg.stt_confidence_floor)
+            if summary.get("low_confidence"):
+                print(f"  . low-conf {transcript.avg_confidence:.2f} — stored, not voted",
+                      flush=True)
             for r in summary["readings"]:
                 print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
             for r in summary["almanac"]:

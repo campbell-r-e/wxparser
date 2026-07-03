@@ -64,7 +64,12 @@ def reprocess(cfg: Config, db: Database, path=None) -> dict:
                 stats["blank"] += 1
                 continue
             ca = rec.get("captured_at")
-            apply_readings(text, ca, aggregator, forecast, almanac, db)
+            conf = (rec.get("stt") or {}).get("avg_confidence")
+            summary = apply_readings(text, ca, aggregator, forecast, almanac, db,
+                                     confidence=conf,
+                                     confidence_floor=cfg.stt_confidence_floor)
+            if summary.get("low_confidence"):
+                stats["low_conf_skipped"] += 1
             write_alert_detail_if_any(text, ca, rec.get("id"), rec.get("product_type"), db)
             stats["transcripts"] += 1
     return dict(stats)

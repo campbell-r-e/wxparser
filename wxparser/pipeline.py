@@ -19,9 +19,23 @@ from .store import ALERT_PRODUCTS
 
 def apply_readings(text: str, captured_at, aggregator: CityConditionsAggregator,
                    forecast: ForecastAggregator, almanac: AlmanacAggregator,
-                   db, hb=None) -> dict:
+                   db, hb=None, *, confidence: float | None = None,
+                   confidence_floor: float = 0.0) -> dict:
     """Vote this transcript's conditions/forecast/almanac into the aggregators and
-    persist the results, stamped with captured_at. Returns a summary for logging."""
+    persist the results, stamped with captured_at. Returns a summary for logging.
+
+    When confidence_floor > 0 and this transcript's measured STT confidence falls
+    below it, the values are skipped entirely (returned summary flags
+    `low_confidence`) so a mangled reading can't sway the aggregates — the raw
+    transcript is still stored by the caller, just not voted. A confidence of
+    exactly 0.0 means "unmeasured" (pre -ojf transcripts) and is never gated, so
+    replaying old history through reprocess isn't wiped. Both the live worker and
+    reprocess pass the same (confidence, floor), keeping the DB a faithful
+    projection of the transcript store."""
+    if (confidence is not None and confidence_floor > 0.0
+            and 0.0 < confidence < confidence_floor):
+        return {"readings": [], "forecast": False, "almanac": [],
+                "low_confidence": True}
     readings = []
     for r in aggregator.update(text):
         if db is not None:
