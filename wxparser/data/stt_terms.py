@@ -26,7 +26,7 @@ TERM_CORRECTIONS: dict[str, list[str]] = {
     # "Eyes"/"Hives" (highs) and "Blows"/"Flows" (lows) all rhyme with the word
     # they garble and never appear in NWR's templated vocabulary, so fold them.
     "Highs": ["Pies", "Eyes", "Hives"],
-    "Lows": ["Blows", "Flows"],
+    "Lows": ["Blows", "Flows", "Lowes"],
     # "Chance of Rain" is consistently heard as "Chants of Brain" (also "Cants of
     # rain"); none of these appear in legit NWR vocabulary, so fold each word.
     "Chance": ["Chants", "Cants"],

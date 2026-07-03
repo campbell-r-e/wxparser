@@ -552,6 +552,7 @@ def test_correct_terms_mined_garbles():
     from wxparser.data.stt_terms import correct_terms
     assert correct_terms("Hives in the upper 70s.") == "Highs in the upper 70s."
     assert correct_terms("flows in the lower 70s") == "lows in the lower 70s"
+    assert correct_terms("Lowes in the mid-sixties") == "Lows in the mid-sixties"
     assert correct_terms("Cants of rain 30%.") == "Chance of rain 30%."
 
 
