@@ -428,6 +428,7 @@ def test_norm_city_autocorrects_stt_mishearings():
     from wxparser.extract import _norm_city
     assert _norm_city("Monthsy") == "Muncie"
     assert _norm_city("terrell") == "Terre Haute"
+    assert _norm_city("Terrell Hook") == "Terre Haute"   # small.en garble variant
     assert _norm_city("Lyle") == "Lima"
     assert _norm_city("South End") == "South Bend"
     assert _norm_city("Deepan") == "Dayton"
@@ -575,6 +576,18 @@ def test_correct_terms_eased_is_context_scoped():
     # must NOT corrupt legitimate uses of "eased"
     assert correct_terms("winds eased overnight") == "winds eased overnight"
     assert correct_terms("the threat eased at 7 p.m.") == "the threat eased at 7 p.m."
+
+
+def test_correct_terms_failed_is_context_scoped():
+    # "fell" in the almanac precip recap mis-heard as "failed" ("no precipitation
+    # failed yesterday") -> corrected only right after "precipitation".
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("No precipitation failed yesterday.") == \
+        "No precipitation fell yesterday."
+    assert correct_terms("precipitation failed") == "precipitation fell"
+    # must NOT corrupt legitimate uses of "failed"
+    assert correct_terms("the warning failed to clear") == "the warning failed to clear"
+    assert correct_terms("the system failed overnight") == "the system failed overnight"
 
 
 # --- almanac / climate recap extraction ------------------------------------ #

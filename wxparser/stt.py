@@ -3,6 +3,11 @@
 Runs the `whisper-cli` binary (MIT) as a subprocess against a WAV file and parses
 its JSON output into segments. whisper.cpp emits per-segment millisecond offsets,
 which we normalise to seconds. Everything is local — no network, ever (PLAN §2.1).
+
+We request the *full* JSON (`-ojf`) so each segment carries its per-token decode
+probabilities. Averaging those gives a real STT confidence per segment/transcript
+(previously it came back a hard-coded 0), which the store persists and the
+repetition guard and downstream trust layer can lean on.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ class Segment:
     start_s: float
     end_s: float
     text: str
+    confidence: float = 0.0  # mean whisper token probability for this segment
 
 
 @dataclass
@@ -32,6 +38,7 @@ class Transcript:
     text: str
     segments: list[Segment]
     language: str
+    avg_confidence: float = 0.0  # token-weighted mean confidence across segments
 
 
 class STTError(RuntimeError):
@@ -50,6 +57,27 @@ def _wav_duration_s(wav_path: Path) -> float:
         return w.getnframes() / float(w.getframerate() or 1)
 
 
+# whisper's special/control tokens ([_BEG_], [_EOT_], [_TT_355], ...) are wrapped
+# in [_ ... _] and carry a decode probability that isn't a transcription-quality
+# signal, so they're skipped when averaging token confidence.
+_SPECIAL_TOKEN = re.compile(r"^\[_.*_\]$")
+
+
+def _segment_confidence(tokens: list[dict]) -> tuple[float, int]:
+    """Mean token probability over real (non-special) tokens, and their count.
+    Returns (0.0, 0) when the JSON has no usable per-token probabilities — e.g.
+    an older whisper build, or output produced without -ojf."""
+    probs = [
+        t["p"]
+        for t in tokens
+        if isinstance(t.get("p"), (int, float))
+        and not _SPECIAL_TOKEN.match((t.get("text") or "").strip())
+    ]
+    if not probs:
+        return 0.0, 0
+    return sum(probs) / len(probs), len(probs)
+
+
 def transcribe(wav_path: Path, cfg: Config) -> Transcript:
     out_base = wav_path.with_suffix("")  # whisper writes <out_base>.json
     json_path = out_base.with_suffix(".json")
@@ -60,6 +88,7 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
         "-t", str(cfg.whisper_threads),
         "-np",            # no progress prints
         "-oj",            # JSON output
+        "-ojf",           # ...with per-token probabilities (for confidence)
         "-of", str(out_base),
     ]
     if cfg.whisper_dynamic_audio_ctx:
@@ -80,23 +109,33 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
         raise STTError(f"could not read whisper JSON at {json_path}: {e}") from e
 
     segments: list[Segment] = []
+    conf_sum = 0.0  # token-weighted, so long segments count proportionally
+    conf_n = 0
     for seg in data.get("transcription", []):
         # correct known STT word mis-hearings (e.g. "Pies"->"Highs") so stored
         # transcripts and downstream extraction both see the right terms
         text = correct_terms(seg.get("text", "").strip())
         if not text:
             continue
+        conf, ntok = _segment_confidence(seg.get("tokens", []))
+        conf_sum += conf * ntok
+        conf_n += ntok
         off = seg.get("offsets", {})
         segments.append(
             Segment(
                 start_s=round(off.get("from", 0) / 1000.0, 3),
                 end_s=round(off.get("to", 0) / 1000.0, 3),
                 text=text,
+                confidence=round(conf, 4),
             )
         )
     full_text = " ".join(s.text for s in segments).strip()
     language = data.get("result", {}).get("language", "en")
-    return Transcript(text=full_text, segments=segments, language=language)
+    avg_confidence = round(conf_sum / conf_n, 4) if conf_n else 0.0
+    return Transcript(
+        text=full_text, segments=segments, language=language,
+        avg_confidence=avg_confidence,
+    )
 
 
 def transcribe_samples(samples: np.ndarray, cfg: Config) -> Transcript:
@@ -121,14 +160,62 @@ _HALLUCINATIONS = {
     "subscribe", "bye", "you",
 }
 
+# Repetition-loop defaults. The greedy decoder occasionally wedges into a
+# degenerate loop on noisy/near-silent audio and emits a token or short phrase
+# hundreds of times ("Michigan, Michigan, ...", "It was It was ...", "the the
+# the ..."). Such a transcript is pure garbage: dropping it here (as non-speech)
+# keeps it out of both the stored transcript stream AND the product classifier,
+# which was mislabelling ~1-2% of these as current_conditions / zone_forecast and
+# feeding them to extraction. Overridable via config (WX_REP_*).
+_REP_MAX_RUN = 6        # >= this many identical tokens in a row -> loop
+_REP_MIN_WORDS = 12     # only apply the diversity test to longer transcripts
+_REP_UNIQUE_RATIO = 0.35  # unique/total below this on a long transcript -> loop
 
-def is_blank(transcript: Transcript) -> bool:
+
+def is_repetitive(
+    text: str,
+    *,
+    max_run: int = _REP_MAX_RUN,
+    min_words: int = _REP_MIN_WORDS,
+    unique_ratio: float = _REP_UNIQUE_RATIO,
+) -> bool:
+    """True for a degenerate decoder repetition loop. Two signals, either fires:
+    a long run of one identical token (single-word loop), or very low lexical
+    diversity over a long transcript (short-phrase loop). Real NWR narration —
+    even templated multi-day forecasts — stays well clear of both."""
+    words = text.split()
+    n = len(words)
+    if n < 3:
+        return False
+    low = [w.lower() for w in words]
+    run = best = 1
+    for i in range(1, n):
+        if low[i] == low[i - 1]:
+            run += 1
+            best = max(best, run)
+        else:
+            run = 1
+    if best >= max_run:
+        return True
+    return n >= min_words and (len(set(low)) / n) < unique_ratio
+
+
+def is_blank(transcript: Transcript, cfg: Config | None = None) -> bool:
     """True for non-speech windows: whisper's '[BLANK_AUDIO]', a punctuation-only
-    transcript, or a lone known hallucination phrase."""
+    transcript, a lone known hallucination phrase, or a decoder repetition loop."""
     t = transcript.text.strip().lower()
     if not t:
         return True
     if t in {"[blank_audio]", "(dramatic music)"} or t.startswith("[blank"):
         return True
     core = re.sub(r"[^a-z0-9 ]", "", t).strip()
-    return not core or core in _HALLUCINATIONS
+    if not core or core in _HALLUCINATIONS:
+        return True
+    if cfg is not None:
+        return is_repetitive(
+            transcript.text,
+            max_run=cfg.repetition_max_run,
+            min_words=cfg.repetition_min_words,
+            unique_ratio=cfg.repetition_unique_ratio,
+        )
+    return is_repetitive(transcript.text)

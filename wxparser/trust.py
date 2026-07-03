@@ -1,10 +1,12 @@
 """Per-field trust scoring (roadmap: STT trust/confidence layer).
 
 The digital SAME header is authoritative; everything transcribed from the voice
-loop is advisory. whisper-cli doesn't expose usable per-token confidence
-(avg_confidence comes back 0), so a transcribed field's trust is derived from the
-signals we *do* have: how strongly the repeat-vote agreed, how many times it was
-heard, and whether it's gone stale. Every transcribed reading is tagged
+loop is advisory. A transcribed field's trust is derived from the corroboration
+signals we have: how strongly the repeat-vote agreed, how many times it was
+heard, and whether it's gone stale. (whisper's per-token probability is now
+captured as stt.avg_confidence per transcript — a per-utterance quality signal —
+but trust here is a per-field, cross-airing measure, so it stays vote-based.)
+Every transcribed reading is tagged
 `source: "stt", advisory: true`; SAME data is tagged authoritative so a consumer
 can always tell the life-safety source from the enrichment.
 """

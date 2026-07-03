@@ -80,10 +80,13 @@ class Config:
     whisper_bin: Path = Path(
         _env("WX_WHISPER_BIN", str(Path.home() / "whisper.cpp/build/bin/whisper-cli"))
     )
-    # base.en quantized to q5_1: full-base.en accuracy at ~tiny speed on this CPU
-    # (quantization cuts the memory bandwidth this old box is bottlenecked on).
+    # small.en quantized to q5_1: higher accuracy than base.en at a real speed
+    # cost on this old CPU (~3.4x slower than base.en-q5_1 in a bench: ~13x
+    # real-time per segment). It keeps up only because the novelty gate drops
+    # most repeated audio before STT — watch queue_depth/last_stt_ok in /health,
+    # and fall back to base.en-q5_1 (WX_WHISPER_MODEL) if the queue backs up.
     whisper_model: Path = Path(
-        _env("WX_WHISPER_MODEL", str(Path.home() / "whisper.cpp/models/ggml-base.en-q5_1.bin"))
+        _env("WX_WHISPER_MODEL", str(Path.home() / "whisper.cpp/models/ggml-small.en-q5_1.bin"))
     )
     whisper_threads: int = int(_env("WX_WHISPER_THREADS", "2"))
     whisper_engine_name: str = "whisper.cpp"
@@ -101,9 +104,9 @@ class Config:
     whisper_fast_decode: bool = _env("WX_FAST_DECODE", "1") == "1"
     # Vocabulary bias (whisper --prompt): seeds the decoder with the local place
     # names it would otherwise mangle (proper nouns — county/town names in
-    # warnings). ON with base.en, which absorbs the prompt cleanly. (tiny.en
-    # degenerated to "The the..." with ANY prompt — too small a text context — so
-    # this MUST stay empty if WX_WHISPER_MODEL is pointed back at tiny.en.)
+    # warnings). ON with base.en/small.en, which absorb the prompt cleanly.
+    # (tiny.en degenerated to "The the..." with ANY prompt — too small a text
+    # context — so this MUST stay empty if WX_WHISPER_MODEL is pointed at tiny.en.)
     whisper_prompt: str = _env("WX_STT_PROMPT", _DEFAULT_STT_PROMPT)
     # Carried-context cap used alongside the prompt: 0 (fast-decode default) caps
     # the repetition-loop pathology but also suppresses --prompt, so when a prompt
@@ -123,6 +126,17 @@ class Config:
     stt_enhance_lowpass_hz: float = float(_env("WX_STT_ENHANCE_LOWPASS_HZ", "3800"))
     stt_enhance_alpha: float = float(_env("WX_STT_ENHANCE_ALPHA", "2.0"))
     stt_enhance_floor: float = float(_env("WX_STT_ENHANCE_FLOOR", "0.12"))
+
+    # --- STT repetition-loop guard (see stt.is_repetitive) ---
+    # The greedy decoder can wedge into a degenerate loop on noisy/near-silent
+    # audio and emit one token or short phrase hundreds of times. Such a
+    # transcript is dropped as non-speech (is_blank) so it never reaches the
+    # store or the product classifier. Two signals, either fires: a run of
+    # >= max_run identical tokens, or unique/total below unique_ratio on a
+    # transcript of at least min_words words.
+    repetition_max_run: int = int(_env("WX_REP_MAX_RUN", "6"))
+    repetition_min_words: int = int(_env("WX_REP_MIN_WORDS", "12"))
+    repetition_unique_ratio: float = float(_env("WX_REP_UNIQUE_RATIO", "0.35"))
 
     # --- Phase 3: text dedup (second-line guard) ---
     # High, so only near-exact repeats are dropped. On short templated forecasts a

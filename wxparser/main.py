@@ -128,7 +128,7 @@ def _emit_alert(msg: SAMEMessage, cfg: Config, db: Database | None) -> None:
 
 def run_file(wav_path: Path, cfg: Config) -> int:
     transcript = transcribe(wav_path, cfg)
-    if is_blank(transcript):
+    if is_blank(transcript, cfg):
         print("[blank audio — nothing to transcribe]", flush=True)
         return 0
     _save(transcript, cfg, duration_s=cfg.window_seconds, fingerprint="")
@@ -166,7 +166,7 @@ def _stt_worker(
             continue
         if hb is not None:
             hb.touch("last_stt_ok_at")
-        if is_blank(transcript):
+        if is_blank(transcript, cfg):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
             text = transcript.text

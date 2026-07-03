@@ -130,7 +130,7 @@ def build_report(
         "stt": {
             "engine": cfg.whisper_engine_name,
             "model": cfg.model_name,
-            "avg_confidence": 0.0,  # whisper.cpp does not expose this yet
+            "avg_confidence": round(transcript.avg_confidence, 4),
         },
         "fingerprint": fingerprint,
         "supersedes": supersedes,

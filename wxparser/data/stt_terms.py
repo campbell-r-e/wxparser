@@ -53,6 +53,11 @@ _CLOSE_AS_LOWS = re.compile(
 _EASED_AS_EAST = re.compile(
     r"\beased\b(?=\s+(?:winds?\b|at\s+\d+\s+miles?\b))", re.I)
 
+# "fell" in the almanac precip recap ("no precipitation fell yesterday") is
+# consistently mis-heard as "failed". Can't fold globally — "failed" is legit
+# ("the warning failed to..."). Correct it ONLY directly after "precipitation".
+_FAILED_AS_FELL = re.compile(r"(?<=precipitation )failed\b", re.I)
+
 
 def _cased(canon: str):
     def repl(m: re.Match) -> str:
@@ -68,4 +73,6 @@ def correct_terms(text: str) -> str:
         lambda m: "Lows" if m.group(0)[:1].isupper() else "lows", text)
     text = _EASED_AS_EAST.sub(
         lambda m: "East" if m.group(0)[:1].isupper() else "east", text)
+    text = _FAILED_AS_FELL.sub(
+        lambda m: "Fell" if m.group(0)[:1].isupper() else "fell", text)
     return text
