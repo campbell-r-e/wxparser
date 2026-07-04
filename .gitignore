@@ -15,5 +15,8 @@ venv/
 htmlcov/
 wxparser-testenv/
 
+# demo: site-specific node address lives here, never in the repo
+demo/.env
+
 # OS
 .DS_Store
