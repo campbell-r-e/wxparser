@@ -65,6 +65,21 @@ def test_reprocess_missing_file_clears(tmp_path):
     assert stats == {} and db.latest_readings() == []   # cleared, nothing to rebuild
 
 
+def test_reprocess_low_confidence_stored_not_voted(tmp_path):
+    # a low-confidence transcript replays as stored-but-not-voted, mirroring the
+    # live worker's gate, and is counted in low_conf_skipped
+    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
+    db = Database(cfg)
+    _write(tmp_path, [json.dumps(
+        {"captured_at": "2026-06-24T12:00:00Z", "id": "t1",
+         "text": "At Muncie, it was clear. The temperature was 12 degrees.",
+         "stt": {"avg_confidence": 0.2}})])
+    stats = reprocess(cfg, db)
+    assert stats["low_conf_skipped"] == 1
+    assert stats["transcripts"] == 1                     # still counted as replayed
+    assert db.all_conditions_for_city("Muncie") == []    # but not voted
+
+
 def test_reprocess_skips_blank_and_malformed_lines(tmp_path):
     cfg = _cfg(tmp_path)
     db = Database(cfg)

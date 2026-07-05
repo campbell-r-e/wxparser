@@ -53,6 +53,8 @@ def test_is_repetitive():
     assert not is_repetitive("At Muncie it was 92 degrees and sunny, wind southwest at 8.")
     # too short to judge -> never repetitive
     assert not is_repetitive("high near 80")
+    assert not is_repetitive("Muncie")          # under the 3-word floor
+    assert not is_repetitive("you you")
 
 
 def test_transcribe_parses_token_confidence(monkeypatch):

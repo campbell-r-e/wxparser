@@ -174,6 +174,36 @@ def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch):
     main._STOP.clear()
 
 
+def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsys):
+    # a transcript whose measured confidence falls below the floor is saved to
+    # the store but NOT voted into the aggregates, and the gate is logged
+    import queue as _q
+
+    from wxparser.db import Database
+    from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
+    from wxparser.health import Heartbeat
+    main._STOP.clear()
+    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
+    db = Database(cfg)
+    db.clear()
+    garbled = Transcript(text="At Muncie, the temperature was 12 degrees.",
+                         segments=[Segment(0.0, 1.0, "x")], language="en",
+                         avg_confidence=0.21)
+    monkeypatch.setattr(main, "transcribe_samples", lambda s, c: garbled)
+    q = _q.PriorityQueue()
+
+    class Seg:
+        samples = np.zeros(16000, dtype=np.int16)
+        duration_s = 1.0
+    q.put((0, 0, (Seg(), "d")))
+    q.put((0, 1, None))                                  # poison pill
+    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
+                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    assert not db.all_conditions_for_city("Muncie")      # not voted
+    assert (tmp_path / "reports.jsonl").exists()         # still stored
+    assert "low-conf 0.21" in capsys.readouterr().out    # gate logged
+
+
 def test_emit_alert_with_db(tmp_path):
     from wxparser.db import Database
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
