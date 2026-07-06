@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # import wxpars
 import pg8000.native as pg  # noqa: E402
 from wxparser.data.same_events import EVENT_CODES  # noqa: E402
 
-REPORTS = Path(__file__).resolve().parent.parent / "transcripts" / "reports.jsonl"
 c = pg.Connection(user="wxparser", host="127.0.0.1", database="wxparser")
 issues: list[str] = []
 
@@ -72,32 +71,21 @@ for period, conf in unc:
             uncertain.append("%s.%s=%.2f" % (period, f, a))
 print("=== forecast fields flagged uncertain (<0.6 agreement): %s ===" % (uncertain or "none"))
 
-# ---- transcripts: integrity ----
-n = mal = blank = 0
+# ---- transcripts: integrity (from the raw_reports store) ----
+n = blank = 0
 prod = Counter()
 HALLUC = {"i hate it", "thank you", "thanks for watching", "please subscribe",
           "subscribe", "bye", "you", "[music]"}
-if REPORTS.exists():
-    for line in REPORTS.open(encoding="utf-8"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            r = json.loads(line)
-        except json.JSONDecodeError:
-            mal += 1
-            continue
-        n += 1
-        prod[r.get("product_type") or r.get("type") or "?"] += 1
-        t = (r.get("text") or "").strip().lower()
-        if t:
-            core = re.sub(r"[^a-z0-9 ]", "", t).strip()
-            if not core or core in HALLUC:
-                blank += 1
+for pt, ty, text in q("SELECT product_type, type, text FROM raw_reports"):
+    n += 1
+    prod[pt or ty or "?"] += 1
+    t = (text or "").strip().lower()
+    if t:
+        core = re.sub(r"[^a-z0-9 ]", "", t).strip()
+        if not core or core in HALLUC:
+            blank += 1
 unk_rate = 100.0 * prod.get("unknown", 0) / max(1, n)
-print("=== transcripts: %d records, malformed=%d, blank/halluc=%d, unknown=%.0f%% ===" % (n, mal, blank, unk_rate))
-if mal:
-    issues.append("%d malformed transcripts" % mal)
+print("=== transcripts: %d records, blank/halluc=%d, unknown=%.0f%% ===" % (n, blank, unk_rate))
 
 c.close()
 print("AUDIT: %s (%d issues)%s" % ("FAIL" if issues else "PASS", len(issues),

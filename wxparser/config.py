@@ -219,10 +219,6 @@ class Config:
     pg_password: str = _env("WX_PG_PASSWORD", "")  # empty -> trust auth (no password)
 
     @property
-    def reports_jsonl(self) -> Path:
-        return self.out_dir / "reports.jsonl"
-
-    @property
     def model_name(self) -> str:
         # e.g. ggml-tiny.en.bin -> tiny.en
         stem = self.whisper_model.stem

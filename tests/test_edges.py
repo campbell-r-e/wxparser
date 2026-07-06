@@ -146,12 +146,6 @@ def test_decode_short_but_nonempty_audio():
     assert decode(np.zeros(5000, dtype=np.float64)) == []   # passes size guard, n_bits < 8
 
 
-def test_config_reports_jsonl_path(tmp_path):
-    # the legacy archive path (still used by the one-time backfill + offline tools)
-    from wxparser.config import Config as _C
-    assert _C(out_dir=tmp_path).reports_jsonl == tmp_path / "reports.jsonl"
-
-
 def test_raw_reports_filter_branches(tmp_path):
     from wxparser.config import Config as _C
     from wxparser.db import Database

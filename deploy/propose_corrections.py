@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Mine transcripts and PROPOSE stt_terms corrections — a review tool, no runtime effect.
 
-Generalizes the manual "find consistent STT garbles" pass: scans reports.jsonl for
-tokens sitting where known forecast vocabulary belongs (the temperature-band and
+Generalizes the manual "find consistent STT garbles" pass: scans the raw_reports
+store for tokens sitting where known forecast vocabulary belongs (the temperature-band and
 precip slots that, when garbled, silently break extraction), clusters each to the
 word it most likely garbles, and prints reviewable proposals with:
 
@@ -15,21 +15,22 @@ It NEVER edits anything. Output is for adding to wxparser/data/stt_terms.py by h
 after review — the human keeps the final say on whether a swap is safe, which is
 exactly why an offline data source shouldn't auto-rewrite its own transcripts.
 
-Run on the box (where reports.jsonl lives):
-    python3 deploy/propose_corrections.py [--reports transcripts/reports.jsonl] [--min-count 2]
+Run on the box (reads the raw_reports Postgres store):
+    python3 deploy/propose_corrections.py [--min-count 2]
 """
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from wxparser.config import CONFIG                        # noqa: E402
 from wxparser.data.place_names import PLACE_CORRECTIONS  # noqa: E402
 from wxparser.data.stt_terms import TERM_CORRECTIONS     # noqa: E402
+from wxparser.db import Database                          # noqa: E402
 from wxparser.extract import _DECADE_WORDS               # noqa: E402
 
 DECADE = (r"(?:\d{1,3}s|twenties|thirties|forties|fifties|sixties|seventies|eighties"
@@ -85,34 +86,22 @@ SLOTS = [
 ]
 
 
-def load_texts(path: Path) -> list[str]:
-    out = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                t = (json.loads(line).get("text") or "").strip()
-            except json.JSONDecodeError:
-                continue
-            if t:
-                out.append(t)
-    return out
+def load_texts(db: Database) -> list[str]:
+    """Every raw transcript text from the Postgres raw store, in capture order."""
+    return [t for rec in db.iter_raw_reports() if (t := (rec.get("text") or "").strip())]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--reports", default="transcripts/reports.jsonl")
     ap.add_argument("--min-count", type=int, default=2)
     ap.add_argument("--examples", type=int, default=2)
     args = ap.parse_args()
 
-    path = Path(args.reports)
-    if not path.exists():
-        print(f"no transcripts at {path}", file=sys.stderr)
-        return 1
-    texts = load_texts(path)
+    db = Database(CONFIG)
+    try:
+        texts = load_texts(db)
+    finally:
+        db.close()
     blob = "\n".join(texts)
     low = blob.lower()
     word_counts = Counter(re.findall(r"[a-z]+", low))  # whole-corpus token frequency
