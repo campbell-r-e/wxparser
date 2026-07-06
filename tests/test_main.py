@@ -46,25 +46,45 @@ def test_tee_to_same_passes_through_and_feeds():
     assert len(list(main._tee_to_same(iter([(np.zeros(4), 0.0)]), None))) == 1
 
 
-def test_emit_alert_writes_report(tmp_path):
-    cfg = Config(out_dir=tmp_path)
-    main._emit_alert(parse_header(_HDR), cfg, db=None)   # db None, webhook unset
-    assert cfg.reports_jsonl.exists() and "TOR" in cfg.reports_jsonl.read_text()
+def test_emit_alert_lands_raw_report(tmp_path):
+    # _emit_alert lands the SAME envelope in the raw store (the alerts table is
+    # covered separately by test_emit_alert_with_db).
+    from wxparser.db import Database
+    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    db = Database(cfg)
+    db.clear()
+    db._run("TRUNCATE raw_reports")
+    main._emit_alert(parse_header(_HDR), cfg, db)
+    raws = db.query_raw_reports()
+    assert len(raws) == 1 and raws[0]["type"] == "same_alert" and "TOR" in raws[0]["id"]
 
 
 def test_run_file_mocked(tmp_path, monkeypatch):
-    cfg = Config(out_dir=tmp_path)
+    from wxparser.db import Database
+    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    db = Database(cfg)
+    db.clear()
+    db._run("TRUNCATE raw_reports")
     monkeypatch.setattr(main, "transcribe", lambda wav, c: _t("Highs around 80"))
     assert main.run_file(tmp_path / "x.wav", cfg) == 0
-    assert "Highs around 80" in cfg.reports_jsonl.read_text()
+    assert db.count_raw_reports(q="Highs around 80") == 1
     # blank transcript -> nothing saved
     monkeypatch.setattr(main, "transcribe", lambda wav, c: _t("[BLANK_AUDIO]"))
     assert main.run_file(tmp_path / "y.wav", cfg) == 0
+    assert db.count_raw_reports() == 1                   # unchanged
 
 
 def test_run_live_once(tmp_path, monkeypatch):
+    from wxparser.db import Database
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
     main._STOP.clear()
+    # empty raw store -> the "no recent reports to prime" branch; a home-city
+    # (Muncie) forecast -> the matching-city forecast-prime branch
+    db = Database(cfg)
+    db.clear()
+    db._run("TRUNCATE raw_reports")
+    db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-24T18:00:00Z")
+    db.close()
     monkeypatch.setattr(main, "stream_frames",
                         lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
     monkeypatch.setattr(main, "transcribe_samples", lambda samples, c: _t("Highs around 80."))
@@ -73,6 +93,12 @@ def test_run_live_once(tmp_path, monkeypatch):
     # deterministically by the _stt_worker tests, so only assert clean completion.
     assert main.run_live(cfg, once=True) == 0
     main._STOP.clear()
+
+
+def test_emit_alert_no_db_is_noop(tmp_path):
+    # db None + webhook unset -> the skip-persistence branch; must not raise
+    cfg = Config(out_dir=tmp_path)
+    main._emit_alert(parse_header(_HDR), cfg, db=None)
 
 
 def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
@@ -91,9 +117,9 @@ def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
                       city="Anderson")
     # a stored almanac field so run_live's almanac-prime branch runs
     db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, "2026-06-24T06:00:00Z")
-    cfg.reports_jsonl.write_text(
-        '{"id":"p","captured_at":"2026-06-24T00:00:00Z","product_type":"zone_forecast",'
-        '"text":"earlier forecast"}\n', encoding="utf-8")
+    # a stored raw report so run_live's text-dedup priming branch runs
+    db.insert_raw_report({"id": "p", "captured_at": "2026-06-24T00:00:00Z",
+                          "product_type": "zone_forecast", "text": "earlier forecast"})
 
     def frames(c, on_retry=None, should_stop=None):
         # 15 leading silence each so both segments get the FULL 10-frame pre-roll
@@ -186,6 +212,7 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
     db = Database(cfg)
     db.clear()
+    db._run("TRUNCATE raw_reports")
     garbled = Transcript(text="At Muncie, the temperature was 12 degrees.",
                          segments=[Segment(0.0, 1.0, "x")], language="en",
                          avg_confidence=0.21)
@@ -200,7 +227,7 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
     main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
                      ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
     assert not db.all_conditions_for_city("Muncie")      # not voted
-    assert (tmp_path / "reports.jsonl").exists()         # still stored
+    assert db.count_raw_reports() == 1                    # still stored (in raw_reports)
     assert "low-conf 0.21" in capsys.readouterr().out    # gate logged
 
 

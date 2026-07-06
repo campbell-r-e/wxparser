@@ -42,9 +42,9 @@ def _server(tmp_path):
         db.record_almanac({"field": "precip_year_in", "value": 17.39,
                            "votes": 2, "total": 2}, ca)
         db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, ca)
-    (tmp_path / "reports.jsonl").write_text(json.dumps(
-        {"id": "t1", "captured_at": "2026-06-24T12:00:00Z",
-         "product_type": "zone_forecast", "text": "tonight clear"}) + "\n", encoding="utf-8")
+    db._run("TRUNCATE raw_reports")
+    db.insert_raw_report({"id": "t1", "captured_at": "2026-06-24T12:00:00Z",
+                          "product_type": "zone_forecast", "text": "tonight clear"})
     hb = Heartbeat(cfg)
     hb.touch("last_segment_at"); hb.touch("last_stt_ok_at"); hb.flush()  # /health -> ok
     api._Handler.db = db

@@ -130,6 +130,27 @@ _SCHEMA = [
         PRIMARY KEY (captured_at, field)
     )""",
     "CREATE INDEX IF NOT EXISTS ix_alm_obs ON almanac_observations(field, captured_at)",
+    # Raw transcript landing zone (PLAN §5.1) — the immutable source of truth the
+    # structured tables above are a re-derivable projection of (see reprocess.py).
+    # Replaces the append-only transcripts/reports.jsonl file: `payload` holds the
+    # whole report doc, and the columns beside it are denormalized out of it purely
+    # so the /transcripts filters (from/to/q/product) and the /export watermark feed
+    # stay index-fast. Every record type the pipeline emits lands here — routine
+    # transcripts plus the type=same_alert / type=observation envelopes — keyed by
+    # the report id so a term-fix or supersede rewrite updates in place.
+    """CREATE TABLE IF NOT EXISTS raw_reports (
+        id TEXT PRIMARY KEY,
+        captured_at TIMESTAMPTZ NOT NULL,
+        type TEXT,
+        product_type TEXT,
+        station TEXT,
+        text TEXT,
+        payload JSONB NOT NULL,
+        fingerprint TEXT,
+        supersedes TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_raw_time ON raw_reports(captured_at)",
+    "CREATE INDEX IF NOT EXISTS ix_raw_product ON raw_reports(product_type, captured_at)",
 ]
 
 # A fixed advisory-lock key serializes schema creation across the co-starting
@@ -351,6 +372,80 @@ class Database:
             "ON CONFLICT (captured_at,field) DO NOTHING",
             ca=ca, f=field, num=num, txt=txt, votes=votes, total=total,
         )
+
+    # --- raw transcript store (source of truth; see reprocess.py) --------- #
+    def insert_raw_report(self, report: dict) -> None:
+        """Land one raw report in the immutable transcript store, keyed by its id.
+        Denormalizes the query columns out of the doc and keeps the whole doc in
+        `payload`. Upserts so a term-fix / supersede rewrite of the same id updates
+        in place (and a replayed backfill is idempotent)."""
+        self._run(
+            "INSERT INTO raw_reports"
+            "(id,captured_at,type,product_type,station,text,payload,fingerprint,supersedes) "
+            "VALUES(:id,:ca,:ty,:pt,:st,:tx,CAST(:pl AS jsonb),:fp,:sup) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            "captured_at=EXCLUDED.captured_at, type=EXCLUDED.type, "
+            "product_type=EXCLUDED.product_type, station=EXCLUDED.station, "
+            "text=EXCLUDED.text, payload=EXCLUDED.payload, "
+            "fingerprint=EXCLUDED.fingerprint, supersedes=EXCLUDED.supersedes",
+            id=report["id"], ca=_parse_iso(report["captured_at"]),
+            ty=report.get("type"), pt=report.get("product_type"),
+            st=report.get("station"), tx=report.get("text"),
+            pl=json.dumps(report, ensure_ascii=False),
+            fp=report.get("fingerprint"), sup=report.get("supersedes"),
+        )
+
+    def _raw_where(self, frm, to, q, product) -> tuple[str, dict]:
+        where = "WHERE 1=1"
+        params: dict = {}
+        if frm:
+            where += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
+        if to:
+            where += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
+        if product:
+            where += " AND product_type = :product"; params["product"] = product
+        if q:
+            where += " AND text ILIKE :q"; params["q"] = f"%{q}%"
+        return where, params
+
+    def count_raw_reports(self, frm=None, to=None, q=None, product=None) -> int:
+        where, params = self._raw_where(frm, to, q, product)
+        return self._query(f"SELECT COUNT(*) AS n FROM raw_reports {where}", **params)[0]["n"]
+
+    def query_raw_reports(self, limit: int = 100, frm=None, to=None, q=None,
+                          product=None, offset: int = 0) -> list[dict]:
+        """Raw report docs matching the filters, most-recent-first (the /transcripts
+        feed). Ties on captured_at break on id so paging is stable."""
+        where, params = self._raw_where(frm, to, q, product)
+        rows = self._query(
+            f"SELECT payload FROM raw_reports {where} "
+            f"ORDER BY captured_at DESC, id DESC LIMIT :lim OFFSET :off",
+            lim=max(1, limit), off=max(0, offset), **params)
+        return [_as_obj(r["payload"]) for r in rows]
+
+    def raw_reports_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """Raw report docs with captured_at strictly after `since`, OLDEST-first —
+        the watermark order /export pages losslessly."""
+        rows = self._query(
+            "SELECT payload FROM raw_reports WHERE captured_at > :s "
+            "ORDER BY captured_at, id LIMIT :lim OFFSET :off",
+            s=_parse_iso(since), lim=max(1, limit), off=max(0, offset))
+        return [_as_obj(r["payload"]) for r in rows]
+
+    def recent_raw_reports(self, n: int) -> list[dict]:
+        """The last n raw docs, returned OLDEST-first — for priming text-dedup on
+        restart (mirrors the old load_recent_reports tail)."""
+        rows = self._query(
+            "SELECT payload FROM (SELECT payload, captured_at, id FROM raw_reports "
+            "ORDER BY captured_at DESC, id DESC LIMIT :n) t ORDER BY captured_at, id",
+            n=max(1, n))
+        return [_as_obj(r["payload"]) for r in rows]
+
+    def iter_raw_reports(self) -> list[dict]:
+        """Every raw doc in capture (vote) order — the full replay feed reprocess
+        projects the structured tables from."""
+        rows = self._query("SELECT payload FROM raw_reports ORDER BY captured_at, id")
+        return [_as_obj(r["payload"]) for r in rows]
 
     def latest_almanac(self, min_sightings: int = 1) -> list[dict]:
         """Latest voted value for every almanac field (sightings-gated)."""

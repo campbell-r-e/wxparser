@@ -50,12 +50,7 @@ from .notify import post_webhook
 from .pipeline import apply_readings, write_alert_detail_if_any
 from .same import SAMEMessage, SAMEMonitor
 from .segment import Segment, segment_level_dbfs, segment_stream
-from .store import (
-    append_report,
-    build_alert,
-    build_report,
-    load_recent_reports,
-)
+from .store import build_alert, build_report
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 from .store import _utc_now_iso
 
@@ -72,9 +67,10 @@ def _save(
     duration_s: float,
     fingerprint: str,
     deduper: TextDeduper | None = None,
+    db: Database | None = None,
 ) -> dict | None:
-    """Build, text-dedup, and persist a report. Returns the saved report (or None
-    if it was dropped as a duplicate)."""
+    """Build, text-dedup, and land a report in the raw transcript store. Returns
+    the saved report (or None if it was dropped as a duplicate)."""
     report = build_report(transcript, cfg, duration_s=duration_s, fingerprint=fingerprint)
     tag = "NEW"
     if deduper is not None:
@@ -87,10 +83,12 @@ def _save(
             return None
         report["supersedes"] = res.supersedes
         tag = "UPD" if res.kind == "update" else "NEW"
-    path = append_report(report, cfg)
+    if db is not None:
+        db.insert_raw_report(report)
+    dest = f"pg:{cfg.pg_database}/raw_reports" if db is not None else "(not persisted)"
     print(
         f"[{report['captured_at']}] {tag}  {report['product_type']:<28} "
-        f"{duration_s:5.1f}s {len(transcript.segments):>2} seg -> {path}",
+        f"{duration_s:5.1f}s {len(transcript.segments):>2} seg -> {dest}",
         flush=True,
     )
     if report.get("supersedes"):
@@ -111,8 +109,8 @@ def _tee_to_same(
 
 def _emit_alert(msg: SAMEMessage, cfg: Config, db: Database | None) -> None:
     record = build_alert(msg.to_record(), cfg)
-    append_report(record, cfg)
     if db is not None:
+        db.insert_raw_report(record)
         db.write_alert(record)
     # opt-in outbound push: tell a configured endpoint immediately (no-op if unset)
     post_webhook(cfg, "alert", {"id": record.get("id"),
@@ -131,7 +129,11 @@ def run_file(wav_path: Path, cfg: Config) -> int:
     if is_blank(transcript, cfg):
         print("[blank audio — nothing to transcribe]", flush=True)
         return 0
-    _save(transcript, cfg, duration_s=cfg.window_seconds, fingerprint="")
+    db = Database(cfg)
+    try:
+        _save(transcript, cfg, duration_s=cfg.window_seconds, fingerprint="", db=db)
+    finally:
+        db.close()
     return 0
 
 
@@ -186,7 +188,7 @@ def _stt_worker(
                 print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
             for r in summary["almanac"]:
                 print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
-            saved = _save(transcript, cfg, seg.duration_s, digest, deduper)
+            saved = _save(transcript, cfg, seg.duration_s, digest, deduper, db)
             if saved is not None and db is not None:
                 details = write_alert_detail_if_any(
                     text, now, saved["id"], saved["product_type"], db)
@@ -212,15 +214,16 @@ def run_live(cfg: Config, once: bool = False) -> int:
     fp = Fingerprinter(cfg)
     gate = NoveltyGate(cfg)
     deduper = TextDeduper(cfg)
-    recent = load_recent_reports(cfg, cfg.text_history)
-    deduper.prime(recent)
-    if recent:
-        print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
     forecast = ForecastAggregator()
     almanac = AlmanacAggregator()
     db = Database(cfg)
     print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)
+    # prime text-dedup from the raw transcript store so a restart keeps state
+    recent = db.recent_raw_reports(cfg.text_history)
+    deduper.prime(recent)
+    if recent:
+        print(f"  (primed text-dedup with {len(recent)} recent reports)", flush=True)
     # prime aggregators from the store so a restart keeps state
     readings = db.latest_readings()
     if readings:

@@ -1,11 +1,12 @@
 """Rebuild the structured DB as a pure projection of the raw transcript store.
 
-The transcripts (transcripts/reports.jsonl) are the source of truth; everything in
-the database is derived from them. This replays the stored transcripts through the
-SAME extraction step the live pipeline uses (pipeline.apply_readings), so improving
-any correction (place_names, stt_terms, an extraction regex) and re-running this
-retroactively fixes ALL history — no per-record hand-patching. It also rebuilds the
-SAME alerts (stored as type=same_alert records) and the spoken alert details.
+The raw transcripts (db.raw_reports) are the source of truth; everything in the
+structured tables is derived from them. This replays the stored transcripts through
+the SAME extraction step the live pipeline uses (pipeline.apply_readings), so
+improving any correction (place_names, stt_terms, an extraction regex) and
+re-running this retroactively fixes ALL history — no per-record hand-patching. It
+also rebuilds the SAME alerts (stored as type=same_alert records) and the spoken
+alert details.
 
 Because corrections live in the extractor and in stt_terms, reprocess re-applies
 correct_terms to the stored text too, so newly-added word fixes take effect on old
@@ -18,7 +19,6 @@ Usage (run with the capture service stopped so it can't write mid-rebuild):
 from __future__ import annotations
 
 import argparse
-import json
 from collections import Counter
 
 from .config import CONFIG, Config
@@ -28,21 +28,12 @@ from .extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggreg
 from .pipeline import apply_readings, write_alert_detail_if_any
 
 
-def reprocess(cfg: Config, db: Database, path=None) -> dict:
-    """Clear `db` and rebuild every structured table by replaying the transcript
-    store in capture order. Returns a stats counter."""
-    path = path or cfg.reports_jsonl
-    records: list[dict] = []
-    if path.exists():
-        with path.open(encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+def reprocess(cfg: Config, db: Database, source_db: Database | None = None) -> dict:
+    """Clear `db`'s structured tables and rebuild them by replaying the raw
+    transcript store in capture order. Raw is read from `source_db` (defaults to
+    `db`), so `--into` can project a fresh DB from the configured DB's raw store.
+    Returns a stats counter."""
+    records = (source_db or db).iter_raw_reports()
     records.sort(key=lambda r: r.get("captured_at", ""))  # capture order = vote order
 
     aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
@@ -80,9 +71,17 @@ def main(argv=None) -> int:  # pragma: no cover - CLI entry
     ap.add_argument("--into", help="target database name (default: the configured DB, "
                     "rebuilt in place — run with the capture service stopped)")
     args = ap.parse_args(argv)
-    db = Database(CONFIG, database=args.into) if args.into else Database(CONFIG)
-    stats = reprocess(CONFIG, db)
-    db.close()
+    if args.into:
+        # Raw lives in the configured DB; project it into a fresh target DB.
+        source = Database(CONFIG)
+        target = Database(CONFIG, database=args.into)
+        stats = reprocess(CONFIG, target, source_db=source)
+        source.close()
+        target.close()
+    else:
+        db = Database(CONFIG)
+        stats = reprocess(CONFIG, db)
+        db.close()
     print(f"reprocess complete ({args.into or CONFIG.pg_database}): {stats}", flush=True)
     return 0
 

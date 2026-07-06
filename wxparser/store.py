@@ -1,26 +1,22 @@
-"""Report construction and persistence.
+"""Report construction and classification.
 
-Each saved report is a self-contained JSON object (PLAN §5.1) appended to
-`transcripts/reports.jsonl` — one object per line, trivial to tail or ingest.
+Each report is a self-contained JSON doc (PLAN §5.1). It's built here and landed
+in the raw transcript store (db.raw_reports, the immutable source of truth the
+structured tables project from — see db.insert_raw_report / reprocess.py). This
+module owns the *shape* of a report and the product-type classifier; persistence
+and querying live in db.py.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
-import threading
-from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
-from pathlib import Path
 
 from .config import Config
 from .stt import Transcript
 
 SCHEMA_VERSION = 1
-
-# Reports and SAME alerts are appended from different threads; serialize writes.
-_append_lock = threading.Lock()
 
 import re
 
@@ -137,15 +133,6 @@ def build_report(
     }
 
 
-def append_report(report: dict, cfg: Config) -> Path:
-    cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    path = cfg.reports_jsonl
-    with _append_lock:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(report, ensure_ascii=False) + "\n")
-    return path
-
-
 def build_alert(alert: dict, cfg: Config, captured_at: str | None = None) -> dict:
     """Wrap a decoded SAME alert (same.SAMEMessage.to_record()) in an envelope."""
     captured_at = captured_at or _utc_now_iso()
@@ -175,135 +162,3 @@ def build_observation(fields: dict, cfg: Config, captured_at: str | None = None)
         "captured_at": captured_at,
         "fields": fields,
     }
-
-
-def load_recent_reports(cfg: Config, n: int) -> list[dict]:
-    """Return the last n saved reports (oldest-first) for dedup priming."""
-    path = cfg.reports_jsonl
-    if not path.exists():
-        return []
-    tail: deque[str] = deque(maxlen=n)
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                tail.append(line)
-    out: list[dict] = []
-    for line in tail:
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
-
-
-def query_reports(
-    cfg: Config,
-    limit: int = 100,
-    frm: str | None = None,
-    to: str | None = None,
-    q: str | None = None,
-    product: str | None = None,
-    max_scan: int = 20000,
-    offset: int = 0,
-) -> list[dict]:
-    """Raw transcript records from reports.jsonl, most-recent-first.
-
-    Scans at most the last `max_scan` lines (the file is append-only and may grow
-    unbounded), then filters. `frm`/`to` are inclusive ISO-8601 strings compared
-    lexically — safe because every captured_at uses the same fixed Z format.
-    `q` is a case-insensitive substring match on the transcript text; `product`
-    matches product_type exactly.
-    """
-    path = cfg.reports_jsonl
-    if not path.exists():
-        return []
-    tail: deque[str] = deque(maxlen=max_scan)
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                tail.append(line)
-    ql = q.lower() if q else None
-    out: list[dict] = []
-    for line in tail:
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        ca = rec.get("captured_at", "")
-        if frm and ca < frm:
-            continue
-        if to and ca > to:
-            continue
-        if product and rec.get("product_type") != product:
-            continue
-        if ql and ql not in (rec.get("text") or "").lower():
-            continue
-        out.append(rec)
-    out.reverse()  # newest first
-    offset = max(0, offset)
-    return out[offset: offset + max(1, limit)]
-
-
-def _report_matches(rec: dict, frm, to, ql, product) -> bool:
-    ca = rec.get("captured_at", "")
-    if frm and ca < frm:
-        return False
-    if to and ca > to:
-        return False
-    if product and rec.get("product_type") != product:
-        return False
-    if ql and ql not in (rec.get("text") or "").lower():
-        return False
-    return True
-
-
-def count_reports(cfg: Config, frm: str | None = None, to: str | None = None,
-                  q: str | None = None, product: str | None = None,
-                  max_scan: int = 20000) -> int:
-    """Number of transcript reports matching the same filters as query_reports."""
-    path = cfg.reports_jsonl
-    if not path.exists():
-        return 0
-    ql = q.lower() if q else None
-    tail: deque[str] = deque(maxlen=max_scan)
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                tail.append(line)
-    n = 0
-    for line in tail:
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if _report_matches(rec, frm, to, ql, product):
-            n += 1
-    return n
-
-
-def reports_since(cfg: Config, since: str, limit: int, offset: int = 0,
-                  max_scan: int = 20000) -> list[dict]:
-    """Transcript reports with captured_at strictly after `since`, OLDEST-first
-    (ascending) — the watermark order /export needs to page losslessly."""
-    path = cfg.reports_jsonl
-    if not path.exists():
-        return []
-    tail: deque[str] = deque(maxlen=max_scan)
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                tail.append(line)
-    out: list[dict] = []
-    for line in tail:
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if rec.get("captured_at", "") > since:
-            out.append(rec)
-    out.sort(key=lambda r: r.get("captured_at", ""))  # oldest-first
-    return out[max(0, offset): max(0, offset) + max(1, limit)]

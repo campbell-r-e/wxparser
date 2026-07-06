@@ -50,7 +50,6 @@ from .config import CONFIG, Config
 from .db import Database
 from .formats import aprs_bulletins, aprs_weather, net_bulletin, sitrep
 from .health import Heartbeat, assess
-from .store import count_reports, query_reports, reports_since
 from .trust import mark as mark_trust
 
 
@@ -324,10 +323,10 @@ class _Handler(BaseHTTPRequestHandler):
                             **self._paging(total, len(rows), limit, offset)})
             elif path == "/transcripts":
                 limit, offset = self._page(q, default=100)
-                total = count_reports(self.cfg, frm=q.get("from"), to=q.get("to"),
-                                      q=q.get("q"), product=q.get("product"))
-                reports = query_reports(
-                    self.cfg, limit=limit, frm=q.get("from"), to=q.get("to"),
+                total = self.db.count_raw_reports(frm=q.get("from"), to=q.get("to"),
+                                                  q=q.get("q"), product=q.get("product"))
+                reports = self.db.query_raw_reports(
+                    limit=limit, frm=q.get("from"), to=q.get("to"),
                     q=q.get("q"), product=q.get("product"), offset=offset)
                 self._send({"from": q.get("from"), "to": q.get("to"),
                             "q": q.get("q"), "product": q.get("product"),
@@ -344,7 +343,7 @@ class _Handler(BaseHTTPRequestHandler):
                 als = self.db.alerts_since(since, limit)
                 ads = self.db.alert_details_since(since, limit)
                 alm = self.db.almanac_since(since, limit)
-                trs = reports_since(self.cfg, since, limit)
+                trs = self.db.raw_reports_since(since, limit)
                 sections = {"observations": obs, "forecasts": fcs, "alerts": als,
                             "alert_details": ads, "almanac": alm, "transcripts": trs}
                 stamps = ([r["captured_at"] for r in obs]
