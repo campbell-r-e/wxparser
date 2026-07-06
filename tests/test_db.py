@@ -188,6 +188,67 @@ def test_almanac_roundtrip_min_sightings_and_since():
     assert [r["value"] for r in since] == [17.39]             # strictly after, ascending
 
 
+def _raw_db() -> Database:
+    """A test DB with the raw transcript store emptied (clear() is structured-only
+    by design, so it does not touch raw_reports — see reprocess.py invariant)."""
+    db = _db()
+    db._run("TRUNCATE raw_reports")
+    return db
+
+
+def _raw(id_, ca, product, text):
+    return {"id": id_, "captured_at": ca, "product_type": product,
+            "station": "KJY93", "text": text,
+            "segments": [{"start_s": 0.0, "end_s": 1.0, "text": text}]}
+
+
+def test_raw_reports_query_count_since_recent():
+    db = _raw_db()
+    for r in [
+        _raw("1", "2026-06-24T10:00:00Z", "zone_forecast", "tonight clear"),
+        _raw("2", "2026-06-24T11:00:00Z", "current_conditions", "temperature was 70"),
+        _raw("3", "2026-06-24T12:00:00Z", "zone_forecast", "highs around 80"),
+    ]:
+        db.insert_raw_report(r)
+    # newest-first; full doc round-trips (segments preserved)
+    out = db.query_raw_reports(limit=10)
+    assert [r["id"] for r in out] == ["3", "2", "1"]
+    assert out[0]["segments"][0]["text"] == "highs around 80"
+    # filters: product exact, q substring (case-insensitive)
+    assert [r["id"] for r in db.query_raw_reports(product="zone_forecast")] == ["3", "1"]
+    assert [r["id"] for r in db.query_raw_reports(q="TEMPERATURE")] == ["2"]
+    # from/to inclusive window
+    assert [r["id"] for r in db.query_raw_reports(
+        frm="2026-06-24T11:00:00Z", to="2026-06-24T12:00:00Z")] == ["3", "2"]
+    # pagination via offset
+    assert [r["id"] for r in db.query_raw_reports(limit=1, offset=1)] == ["2"]
+    # counts honour the same filters
+    assert db.count_raw_reports() == 3
+    assert db.count_raw_reports(product="zone_forecast") == 2
+    # since = strictly-after, ascending
+    assert [r["id"] for r in db.raw_reports_since("2026-06-24T10:30:00Z", 10)] == ["2", "3"]
+    # recent = last-n, oldest-first; iter = all, ascending
+    assert [r["id"] for r in db.recent_raw_reports(2)] == ["2", "3"]
+    assert [r["id"] for r in db.iter_raw_reports()] == ["1", "2", "3"]
+
+
+def test_raw_reports_upsert_in_place():
+    db = _raw_db()
+    db.insert_raw_report(_raw("x", "2026-06-24T10:00:00Z", "zone_forecast", "chants of brain"))
+    # a term-fix rewrites the same id in place — no duplicate row
+    db.insert_raw_report(_raw("x", "2026-06-24T10:00:00Z", "zone_forecast", "chance of rain"))
+    rows = db.query_raw_reports()
+    assert len(rows) == 1 and rows[0]["text"] == "chance of rain"
+    assert db.count_raw_reports(q="chance of rain") == 1
+
+
+def test_raw_reports_empty_store():
+    db = _raw_db()
+    assert db.query_raw_reports() == [] and db.count_raw_reports() == 0
+    assert db.raw_reports_since("2026-01-01T00:00:00Z", 5) == []
+    assert db.recent_raw_reports(5) == [] and db.iter_raw_reports() == []
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

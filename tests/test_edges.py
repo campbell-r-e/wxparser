@@ -146,29 +146,32 @@ def test_decode_short_but_nonempty_audio():
     assert decode(np.zeros(5000, dtype=np.float64)) == []   # passes size guard, n_bits < 8
 
 
-def test_store_filter_branches(tmp_path):
-    import json as _json
-
+def test_config_reports_jsonl_path(tmp_path):
+    # the legacy archive path (still used by the one-time backfill + offline tools)
     from wxparser.config import Config as _C
-    from wxparser.store import count_reports, load_recent_reports, query_reports, reports_since
-    d = tmp_path / "s"
-    d.mkdir()
-    (d / "reports.jsonl").write_text(
-        "bad\n"
-        + _json.dumps({"id": "1", "captured_at": "2026-06-24T10:00:00Z",
-                       "product_type": "zone_forecast", "text": "tonight clear"}) + "\n"
-        + _json.dumps({"id": "2", "captured_at": "2026-06-24T12:00:00Z",
-                       "product_type": "current_conditions", "text": "temp 70"}) + "\n",
-        encoding="utf-8")
-    cfg = _C(out_dir=d)
-    assert [r["id"] for r in query_reports(cfg, to="2026-06-24T11:00:00Z")] == ["1"]
-    assert [r["id"] for r in query_reports(cfg, frm="2026-06-24T11:00:00Z")] == ["2"]  # frm filter
-    assert count_reports(cfg, frm="2026-06-24T11:00:00Z") == 1                         # frm in matcher
-    assert count_reports(cfg, to="2026-06-24T11:00:00Z", q="tonight") == 1
-    assert count_reports(cfg, product="current_conditions") == 1
-    assert count_reports(cfg, q="zzz-not-present") == 0       # q-mismatch branch
-    assert [r["id"] for r in reports_since(cfg, "2026-06-24T11:00:00Z", 10)] == ["2"]
-    assert [r["id"] for r in load_recent_reports(cfg, 10)] == ["1", "2"]   # skips bad line
+    assert _C(out_dir=tmp_path).reports_jsonl == tmp_path / "reports.jsonl"
+
+
+def test_raw_reports_filter_branches(tmp_path):
+    from wxparser.config import Config as _C
+    from wxparser.db import Database
+    db = Database(_C(out_dir=tmp_path, pg_database="wxparser_test"))
+    db._run("TRUNCATE raw_reports")
+    for r in [
+        {"id": "1", "captured_at": "2026-06-24T10:00:00Z",
+         "product_type": "zone_forecast", "text": "tonight clear"},
+        {"id": "2", "captured_at": "2026-06-24T12:00:00Z",
+         "product_type": "current_conditions", "text": "temp 70"},
+    ]:
+        db.insert_raw_report(r)
+    assert [r["id"] for r in db.query_raw_reports(to="2026-06-24T11:00:00Z")] == ["1"]
+    assert [r["id"] for r in db.query_raw_reports(frm="2026-06-24T11:00:00Z")] == ["2"]  # frm filter
+    assert db.count_raw_reports(frm="2026-06-24T11:00:00Z") == 1
+    assert db.count_raw_reports(to="2026-06-24T11:00:00Z", q="tonight") == 1
+    assert db.count_raw_reports(product="current_conditions") == 1
+    assert db.count_raw_reports(q="zzz-not-present") == 0       # q-mismatch branch
+    assert [r["id"] for r in db.raw_reports_since("2026-06-24T11:00:00Z", 10)] == ["2"]
+    assert [r["id"] for r in db.recent_raw_reports(10)] == ["1", "2"]
 
 
 def test_db_alert_now_param_history_filters_and_close():

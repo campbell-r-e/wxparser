@@ -23,7 +23,6 @@ from wxparser.extract import (
 from wxparser.fingerprint import Fingerprinter
 from wxparser.formats import net_bulletin, sitrep
 from wxparser.segment import segment_stream
-from wxparser.store import count_reports, load_recent_reports, query_reports, reports_since
 from wxparser.stt import Segment, Transcript
 
 
@@ -123,23 +122,22 @@ def test_segment_cut_too_short_is_dropped():
     assert list(segment_stream(frames, cfg)) == []   # every cut is too short -> None
 
 
-# --- store: blank lines skipped in every reader --------------------------- #
-def test_store_skips_blank_lines(tmp_path):
-    d = tmp_path / "b"
-    d.mkdir()
-    (d / "reports.jsonl").write_text(
-        "\n"
-        + json.dumps({"id": "1", "captured_at": "2026-06-24T10:00:00Z",
-                      "product_type": "zone_forecast", "text": "tonight clear"}) + "\n"
-        + "\n"
-        + json.dumps({"id": "2", "captured_at": "2026-06-24T12:00:00Z",
-                      "product_type": "zone_forecast", "text": "highs 80"}) + "\n\n",
-        encoding="utf-8")
-    cfg = Config(out_dir=d)
-    assert len(query_reports(cfg)) == 2
-    assert count_reports(cfg) == 2
-    assert len(reports_since(cfg, "2026-06-24T00:00:00Z", 10)) == 2
-    assert len(load_recent_reports(cfg, 10)) == 2
+# --- raw store: every reader round-trips through Postgres ----------------- #
+def test_raw_store_readers_roundtrip(tmp_path):
+    from wxparser.db import Database
+    db = Database(Config(out_dir=tmp_path, pg_database="wxparser_test"))
+    db._run("TRUNCATE raw_reports")
+    for r in [
+        {"id": "1", "captured_at": "2026-06-24T10:00:00Z",
+         "product_type": "zone_forecast", "text": "tonight clear"},
+        {"id": "2", "captured_at": "2026-06-24T12:00:00Z",
+         "product_type": "zone_forecast", "text": "highs 80"},
+    ]:
+        db.insert_raw_report(r)
+    assert len(db.query_raw_reports()) == 2
+    assert db.count_raw_reports() == 2
+    assert len(db.raw_reports_since("2026-06-24T00:00:00Z", 10)) == 2
+    assert len(db.recent_raw_reports(10)) == 2
 
 
 # --- formats: all-absent fields ------------------------------------------- #

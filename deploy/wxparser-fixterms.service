@@ -1,7 +1,7 @@
 [Unit]
 Description=wxparser — retro-fix STT term mis-hearings in stored transcripts (Chants of Brain -> Chance of Rain, etc.)
-After=wxparser.service
-Wants=wxparser.service
+After=postgresql.service wxparser.service
+Wants=postgresql.service wxparser.service
 
 [Service]
 Type=oneshot
@@ -9,6 +9,7 @@ User=creed
 Group=creed
 Environment=HOME=/home/creed
 Environment=PYTHONUNBUFFERED=1
-# Reads/rewrites transcripts/reports.jsonl that the capture service appends to.
+# Retro-applies correct_terms to the raw transcript store (db.raw_reports) that
+# the capture service lands rows into; upserts corrected rows in place.
 WorkingDirectory=/home/creed/wxparser
 ExecStart=/usr/bin/python3 /home/creed/wxparser/deploy/fix_stt_terms.py

@@ -1,8 +1,6 @@
-"""reprocess: rebuild the DB as a re-derivable projection of the transcript store."""
+"""reprocess: rebuild the DB as a re-derivable projection of the raw store."""
 
 from __future__ import annotations
-
-import json
 
 from wxparser.config import Config
 from wxparser.db import Database
@@ -13,14 +11,23 @@ def _cfg(tmp_path):
     return Config(out_dir=tmp_path, pg_database="wxparser_test")
 
 
-def _write(tmp_path, lines):
-    (tmp_path / "reports.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+def _fresh(cfg) -> Database:
+    """A test DB with the raw transcript store emptied so each reprocess starts
+    from a known state (clear() is structured-only and never touches raw_reports)."""
+    db = Database(cfg)
+    db._run("TRUNCATE raw_reports")
+    return db
+
+
+def _seed(db: Database, recs: list[dict]) -> None:
+    for r in recs:
+        db.insert_raw_report(r)
 
 
 def test_reprocess_rebuilds_conditions_forecast_almanac_alert(tmp_path):
     cfg = _cfg(tmp_path)
-    db = Database(cfg)
-    recs = [
+    db = _fresh(cfg)
+    _seed(db, [
         {"captured_at": "2026-06-24T12:00:00Z", "id": "t1", "product_type": "current_conditions",
          "text": "At Muncie, it was clear. The temperature was 70 degrees."},
         {"captured_at": "2026-06-24T12:01:00Z", "id": "t2", "product_type": "zone_forecast",
@@ -30,8 +37,7 @@ def test_reprocess_rebuilds_conditions_forecast_almanac_alert(tmp_path):
                    "purge_minutes": 360, "raw": "ZCZC"}},
         {"captured_at": "2026-06-24T12:02:00Z", "type": "observation", "id": "o1"},  # derived
         {"captured_at": "2026-06-24T12:03:00Z", "id": "t3", "text": ""},             # blank
-    ]
-    _write(tmp_path, [json.dumps(r) for r in recs])
+    ])
     stats = reprocess(cfg, db)
     assert stats["transcripts"] == 2 and stats["alerts"] == 1
     assert stats["skipped_envelope"] == 1 and stats["blank"] == 1
@@ -46,19 +52,19 @@ def test_reprocess_applies_corrections_retroactively(tmp_path):
     # the garbled home header "Edmondsee" is fixed by the extractor AT REPROCESS
     # TIME over the raw stored text — the whole point of the projection model.
     cfg = _cfg(tmp_path)
-    db = Database(cfg)
-    _write(tmp_path, [json.dumps({
+    db = _fresh(cfg)
+    _seed(db, [{
         "captured_at": "2026-06-24T23:00:00Z", "id": "t1", "product_type": "current_conditions",
         "text": "At 7 p.m., Edmondsee, light rain and fog were reported. "
-                "The temperature was 68 degrees."})])
+                "The temperature was 68 degrees."}])
     reprocess(cfg, db)
     conds = {c["condition"]: c["value"] for c in db.all_conditions_for_city("Muncie", 1)}
     assert conds["temperature_f"] == 68
 
 
-def test_reprocess_missing_file_clears(tmp_path):
-    cfg = _cfg(tmp_path)  # no reports.jsonl written
-    db = Database(cfg)
+def test_reprocess_empty_store_clears(tmp_path):
+    cfg = _cfg(tmp_path)
+    db = _fresh(cfg)  # raw store emptied — nothing to replay
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 50},
                       "2026-06-24T12:00:00Z")
     stats = reprocess(cfg, db)
@@ -69,23 +75,24 @@ def test_reprocess_low_confidence_stored_not_voted(tmp_path):
     # a low-confidence transcript replays as stored-but-not-voted, mirroring the
     # live worker's gate, and is counted in low_conf_skipped
     cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
-    db = Database(cfg)
-    _write(tmp_path, [json.dumps(
+    db = _fresh(cfg)
+    _seed(db, [
         {"captured_at": "2026-06-24T12:00:00Z", "id": "t1",
          "text": "At Muncie, it was clear. The temperature was 12 degrees.",
-         "stt": {"avg_confidence": 0.2}})])
+         "stt": {"avg_confidence": 0.2}}])
     stats = reprocess(cfg, db)
     assert stats["low_conf_skipped"] == 1
     assert stats["transcripts"] == 1                     # still counted as replayed
     assert db.all_conditions_for_city("Muncie") == []    # but not voted
 
 
-def test_reprocess_skips_blank_and_malformed_lines(tmp_path):
+def test_reprocess_skips_blank_text(tmp_path):
     cfg = _cfg(tmp_path)
-    db = Database(cfg)
-    (tmp_path / "reports.jsonl").write_text(
-        json.dumps({"captured_at": "2026-06-24T12:00:00Z", "id": "t1",
-                    "text": "At Muncie, it was clear. The temperature was 70 degrees."})
-        + "\n\nNOT JSON\n", encoding="utf-8")   # blank line + malformed json line
+    db = _fresh(cfg)
+    _seed(db, [
+        {"captured_at": "2026-06-24T12:00:00Z", "id": "t1",
+         "text": "At Muncie, it was clear. The temperature was 70 degrees."},
+        {"captured_at": "2026-06-24T12:01:00Z", "id": "t2", "text": "   "},  # whitespace -> blank
+    ])
     stats = reprocess(cfg, db)
-    assert stats["transcripts"] == 1
+    assert stats["transcripts"] == 1 and stats["blank"] == 1

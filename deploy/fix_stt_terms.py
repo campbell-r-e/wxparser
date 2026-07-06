@@ -2,17 +2,17 @@
 """Post-write STT term cleanup for already-stored transcripts.
 
 The write-time correction lives in `wxparser.data.stt_terms.correct_terms` and is
-applied by `stt.transcribe` going forward. This standalone job retro-fixes
-transcripts that were written *before* a correction was added — or while the
-running capture service still has the old correction map in memory — so a new
-mis-hearing fix can ship without bouncing (and re-syncing) the capture service.
+applied by `stt.transcribe` going forward. This standalone job retro-fixes raw
+transcripts stored *before* a correction was added — or while the running capture
+service still has the old correction map in memory — so a new mis-hearing fix can
+ship without bouncing (and re-syncing) the capture service.
 
-It rewrites `transcripts/reports.jsonl` in place, applying `correct_terms` to
-each record's "text". The file is append-only and the live service may append
-while we run, so we compact *safely*: snapshot the file and remember its byte
-length, correct the snapshot, then re-attach any bytes the service appended
-during the run before the atomic replace. Anything appended in that window is
-left as-is and picked up on the next run.
+It corrects the raw transcript store in place (db.raw_reports): for each stored
+report it applies `correct_terms` to the top-level "text" and every per-segment
+"text", and upserts the record when anything changed. Postgres serializes the
+concurrent live append, so — unlike the old reports.jsonl rewrite — there's no
+snapshot/re-attach race to manage. Run `python3 -m wxparser.reprocess` afterwards
+to re-project the structured tables from the corrected raw text.
 
 Run it by hand to see what it would do:
     python3 deploy/fix_stt_terms.py
@@ -20,8 +20,6 @@ Run it by hand to see what it would do:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,75 +30,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from wxparser.config import CONFIG  # noqa: E402
 from wxparser.data.stt_terms import correct_terms  # noqa: E402
+from wxparser.db import Database  # noqa: E402
+
+
+def _correct_record(rec: dict) -> bool:
+    """Apply correct_terms to rec['text'] and each segment's text in place. Returns
+    True if anything changed. Matches the write-time invariant (stt.transcribe):
+    a fixed record's joined "text" and per-segment "text" stay consistent."""
+    dirty = False
+    text = rec.get("text")
+    if isinstance(text, str):
+        fixed = correct_terms(text)
+        if fixed != text:
+            rec["text"] = fixed
+            dirty = True
+    for seg in rec.get("segments") or []:
+        st = seg.get("text") if isinstance(seg, dict) else None
+        if isinstance(st, str):
+            fixed = correct_terms(st)
+            if fixed != st:
+                seg["text"] = fixed
+                dirty = True
+    return dirty
 
 
 def main() -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    path: Path = CONFIG.reports_jsonl
-    if not path.exists():
-        print(f"[{stamp}] no reports.jsonl at {path}; nothing to do.")
-        return
-
-    # 1) Snapshot the file and remember how many bytes we read, so any lines the
-    #    live service appends while we work can be re-attached untouched.
-    snapshot = path.read_bytes()
-    snap_len = len(snapshot)
-
+    db = Database(CONFIG)
     changed = 0
-    out_parts: list[str] = []
-    for raw in snapshot.decode("utf-8").splitlines(keepends=True):
-        line = raw.rstrip("\n")
-        if not line.strip():
-            out_parts.append(raw)
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            out_parts.append(raw)  # leave anything unparseable exactly as-is
-            continue
-        # Match the write-time invariant (stt.transcribe): correct both the
-        # joined top-level "text" and every per-segment "text", so a fixed
-        # record is internally consistent.
-        dirty = False
-        text = rec.get("text")
-        if isinstance(text, str):
-            fixed = correct_terms(text)
-            if fixed != text:
-                rec["text"] = fixed
-                dirty = True
-        for seg in rec.get("segments") or []:
-            st = seg.get("text") if isinstance(seg, dict) else None
-            if isinstance(st, str):
-                fixed = correct_terms(st)
-                if fixed != st:
-                    seg["text"] = fixed
-                    dirty = True
-        if dirty:
-            changed += 1
-            out_parts.append(json.dumps(rec, ensure_ascii=False) + "\n")
-            continue
-        out_parts.append(raw)
-
-    if not changed:
+    try:
+        for rec in db.iter_raw_reports():
+            if _correct_record(rec):
+                db.insert_raw_report(rec)  # upsert by id — updates text + payload
+                changed += 1
+    finally:
+        db.close()
+    if changed:
+        print(f"[{stamp}] done — corrected {changed} transcript(s) in raw_reports.")
+    else:
         print(f"[{stamp}] done — nothing to correct.")
-        return
-
-    # 2) Write the corrected snapshot, then re-attach any bytes appended since
-    #    the snapshot (read as late as possible to shrink the race window), and
-    #    atomically replace. Worst case a transcript written in the sub-ms gap
-    #    between this read and the replace is corrected on the next run instead.
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("wb") as f:
-        f.write("".join(out_parts).encode("utf-8"))
-        with path.open("rb") as src:
-            src.seek(snap_len)
-            tail = src.read()
-        if tail:
-            f.write(tail)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-    print(f"[{stamp}] done — corrected {changed} transcript(s) in {path}.")
 
 
 if __name__ == "__main__":
