@@ -134,6 +134,14 @@ JUNK_CITIES: list[str] = [
     # "Luev-" cluster: ambiguous between Lima and Louisville, so drop rather
     # than risk folding a reading into the wrong real city.
     "Luev", "Luevo", "Luevle", "Luell", "Luellington", "Luever", "Luv",
+    # 2026-07-06 audit: one-off tokens that appeared once in a temp slot —
+    # nonsense garbles plus real-but-out-of-roster cities the decoder invents.
+    "Looft", "Loughrey", "Lying", "Rich New", "Thunner", "North",
+    "Hamilton", "Hudson", "Washington",
+    # These three resemble garbles of real roster cities (Laim~Lima,
+    # "Terrell Hoeck"~Terre Haute, "The Dayton"~Dayton) — dropped rather than
+    # folded absent a temperature cross-check; move to CORRECTIONS if confirmed.
+    "Laim", "Terrell Hoeck", "The Dayton",
 ]
 
 # (table, [key columns other than city]) — the non-city half of each PK, used
