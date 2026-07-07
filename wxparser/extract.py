@@ -529,14 +529,23 @@ class CityConditionsAggregator:
     (city, condition) is majority-voted independently.
     """
 
-    def __init__(self, maxlen: int = 15, primary_city: str = "Muncie"):
+    # A field aired every cycle (temperature) stays current in a 15-deep window,
+    # but humidity/wind/pressure air only in the periodic full-ob readout, so their
+    # window spans hours and a morning value out-votes the current one. Bound each
+    # field's vote to sightings from the last `stale_ticks` transcripts (one tick
+    # per update); ~60 keeps roughly the last 1-2h of airings.
+    def __init__(self, maxlen: int = 15, primary_city: str = "Muncie",
+                 stale_ticks: int = 60):
         self.maxlen = maxlen
         self.primary_city = primary_city
+        self.stale_ticks = stale_ticks
+        self._tick = 0
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
 
     def update(self, text: str) -> list[dict]:
         """Returns every (city, condition) reading heard in this text, with the
         current voted value/votes/total. Each is a 'sighting' the store counts."""
+        self._tick += 1
         readings: list[dict] = []
         # Regional-roundup temps belong to the named cities (all three phrasings:
         # "74 at Marion", "Marion reported 74", "at Marion ... temperature of 74").
@@ -586,17 +595,22 @@ class CityConditionsAggregator:
                 })
         return readings
 
+    def _voter(self, city: str, condition: str) -> _FieldVoter:
+        return self.voters.setdefault(
+            (city, condition), _FieldVoter(self.maxlen, stale=self.stale_ticks))
+
     def _reading(self, city: str, condition: str, value) -> dict:
-        voter = self.voters.setdefault((city, condition), _FieldVoter(self.maxlen))
-        voter.add(value)
+        voter = self._voter(city, condition)
+        voter.add(value, self._tick)
         best = voter.best()
         return {"city": city, "condition": condition,
                 "value": best.value, "votes": best.votes, "total": best.total}
 
     def prime(self, readings: list[dict]) -> None:
-        """Seed voters from stored latest readings so a restart keeps state."""
+        """Seed voters from stored latest readings so a restart keeps state. Seeded
+        at the current tick so the primed value serves until fresh airings arrive."""
         for r in readings:
-            self.voters.setdefault((r["city"], r["condition"]), _FieldVoter(self.maxlen)).add(r["value"])
+            self._voter(r["city"], r["condition"]).add(r["value"], self._tick)
 
 
 @dataclass
@@ -607,21 +621,36 @@ class Voted:
 
 
 class _FieldVoter:
-    def __init__(self, maxlen: int):
-        self.samples: deque = deque(maxlen=maxlen)
+    """Majority vote over a rolling window of recent sightings.
 
-    def add(self, value) -> None:
-        self.samples.append(value)
+    Optionally recency-aware: with `stale` set, `best()` counts only samples whose
+    monotonic clock is within `stale` of the newest sample. A field aired
+    infrequently (humidity, wind) otherwise keeps hours-old sightings in its
+    fixed-length window and lets a morning value out-vote the current one; the
+    stale window bounds the vote to recent airings instead. Callers that pass no
+    clock (default 0) and no `stale` get the plain mode — unchanged behavior."""
+
+    def __init__(self, maxlen: int, stale: int | None = None):
+        self.samples: deque = deque(maxlen=maxlen)  # (value, clock)
+        self.stale = stale
+
+    def add(self, value, clock: int = 0) -> None:
+        self.samples.append((value, clock))
 
     def best(self) -> Voted | None:
         if not self.samples:
             return None
-        counts = Counter(self.samples)
+        newest = self.samples[-1][1]   # clock is monotonic — last added is newest
+        if self.stale is not None:
+            pool = [(v, c) for v, c in self.samples if newest - c <= self.stale]
+        else:
+            pool = list(self.samples)
+        counts = Counter(v for v, _ in pool)
         top = max(counts.values())
         tied = {v for v, c in counts.items() if c == top}
         # break ties toward the most recent reading (conditions change over time)
-        value = next(v for v in reversed(self.samples) if v in tied)
-        return Voted(value=value, votes=top, total=len(self.samples))
+        value = next(v for v, _ in reversed(pool) if v in tied)
+        return Voted(value=value, votes=top, total=len(pool))
 
 
 class ConditionsAggregator:

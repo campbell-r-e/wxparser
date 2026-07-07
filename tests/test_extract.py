@@ -7,6 +7,7 @@ from wxparser.extract import (
     CityConditionsAggregator,
     ConditionsAggregator,
     ForecastAggregator,
+    _FieldVoter,
     extract_alert_details,
     extract_almanac,
     extract_forecast_fields,
@@ -481,6 +482,47 @@ def test_conditions_wind_direction_extracted():
     o = extract_observation("The wind was northwest at 12 miles an hour.")
     assert o["wind"] == "northwest at 12"
     assert o["wind_speed_mph"] == 12
+
+
+def test_field_voter_stale_window_excludes_old_samples():
+    # a low-frequency field: four hours-old sightings and one fresh one. The stale
+    # window bounds the vote to the fresh sighting so the old majority can't win.
+    v = _FieldVoter(maxlen=15, stale=5)
+    for _ in range(4):
+        v.add(93, 0)
+    v.add(64, 20)                 # gap 20 > 5 -> the 93s fall outside the window
+    assert v.best().value == 64
+    # without a window the stale majority wins (the pre-fix behavior)
+    v2 = _FieldVoter(maxlen=15)
+    for _ in range(4):
+        v2.add(93)
+    v2.add(64)
+    assert v2.best().value == 93
+
+
+def test_conditions_low_frequency_field_ages_out():
+    # humidity aired several times in the morning (93), then a long run of temp-only
+    # airings advances the tick, then the current 64 airs once. The stale morning
+    # value must not out-vote the fresh one (the "humidity 93% at 2pm" bug).
+    agg = CityConditionsAggregator(stale_ticks=3)
+    for _ in range(4):
+        agg.update("At Muncie, it was sunny. The temperature was 80 degrees "
+                   "and the relative humidity 93%.")
+    for _ in range(5):   # temp-only airings; humidity not restated
+        agg.update("At Muncie, it was 80 degrees.")
+    agg.update("At Muncie, it was sunny. The temperature was 80 degrees "
+               "and the relative humidity 64%.")
+    assert agg.voters[("Muncie", "humidity_pct")].best().value == 64
+
+
+def test_conditions_prime_seeds_value_until_fresh_airing():
+    # a restart primes from the stored latest reading; the primed value serves
+    # (seeded at the current tick, so not instantly stale) until a live airing votes.
+    agg = CityConditionsAggregator()
+    agg.prime([{"city": "Muncie", "condition": "temperature_f", "value": 72}])
+    assert agg.voters[("Muncie", "temperature_f")].best().value == 72
+    agg.update("At Muncie, it was 75 degrees.")
+    assert agg.voters[("Muncie", "temperature_f")].best().value in (72, 75)
 
 
 def test_forecast_area_detection():
