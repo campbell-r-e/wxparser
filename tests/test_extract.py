@@ -181,6 +181,20 @@ def test_for_misheard_as_four_still_opens_period():
     assert s["Thursday Night"]["precip_pct"] == 70
 
 
+def test_stale_carryover_dropped_before_weekday_day_header():
+    # first header is a bare weekday ("...Chance of rain 70%. Friday. A chance of
+    # showers..."); Friday's predecessor is Thursday Night, so a stale "Wednesday"
+    # carry-over must not absorb the trailing PoP that actually closed Thursday
+    # Night (the real "...Friday. A chance of showers..." airing leak).
+    fc = ForecastAggregator()
+    fc.update("Wednesday, sunny. Highs in the mid 80s.")
+    fc.update("Lows in the upper 60s. Chance of rain 70%. Friday. "
+              "A chance of showers. Highs in the mid 80s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert "precip_pct" not in s["Wednesday"]
+    assert s["Friday"]["high_f"] == 85
+
+
 def test_night_period_never_gets_a_high():
     # grouped extended phrasing "Sunday night through Wednesday ... highs in the
     # lower 90s" must not put that daytime high on the night period.
