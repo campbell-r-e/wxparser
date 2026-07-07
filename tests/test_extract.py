@@ -195,6 +195,44 @@ def test_stale_carryover_dropped_before_weekday_day_header():
     assert s["Friday"]["high_f"] == 85
 
 
+def test_near_term_header_garbles_normalized():
+    # "Rest of"->"West of" and ".Tonight"/"For tonight"->"Port tonight" are routine
+    # STT garbles; without normalizing them the near-term headers never open and
+    # Today/Tonight freeze on a stale value.
+    fc = ForecastAggregator()
+    fc.update("West of today, partly cloudy. Highs in the mid 80s.")
+    fc.update("Port tonight, partly cloudy. Lows in the mid 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["Rest Of Today"]["high_f"] == 85
+    assert s["Tonight"]["low_f"] == 65
+
+
+def test_stale_period_evicted_from_snapshot():
+    # a period the broadcast stops airing (superseded time-of-day relabel or a
+    # dropped extended day) must age out instead of serving a frozen value.
+    fc = ForecastAggregator(stale_passes=2)
+    fc.update("Forecast for the Muncie area. Today, sunny. Highs in the mid 80s.")
+    for _ in range(3):   # three readouts that no longer mention Today
+        fc.update("Forecast for the Muncie area. Saturday, sunny. Highs in the mid 80s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert "Today" not in s
+    assert s["Saturday"]["high_f"] == 85
+
+
+def test_cleared_precip_ages_out_while_period_stays():
+    # when a period's chance of rain drops to nil the broadcast just stops saying
+    # "chance of rain" (no vote), so the precip field must age out on its own even
+    # though the period keeps airing its high/sky.
+    fc = ForecastAggregator(stale_passes=2)
+    fc.update("Forecast for the Muncie area. Today, cloudy. Highs in the mid 80s. "
+              "Chance of rain 70%.")
+    for _ in range(3):
+        fc.update("Forecast for the Muncie area. Today, sunny. Highs in the mid 80s.")
+    t = {p["period"]: p for p in fc.snapshot()}["Today"]
+    assert t["high_f"] == 85
+    assert "precip_pct" not in t
+
+
 def test_night_period_never_gets_a_high():
     # grouped extended phrasing "Sunday night through Wednesday ... highs in the
     # lower 90s" must not put that daytime high on the night period.

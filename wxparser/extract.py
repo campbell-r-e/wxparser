@@ -221,6 +221,16 @@ def _is_night_period(name: str) -> bool:
 _RE_FC_RECAP = re.compile(
     r"\b(?:once again|repeating|to repeat|here (?:is|again))\b", re.I)
 
+# Recurring STT garbles of the near-term period headers, which otherwise go
+# unparsed so Today/Tonight stop getting fresh votes and freeze on a stale value.
+# "Rest of" -> "West of" (rest->west) and the ". Tonight"/"For tonight" break
+# heard as "Port tonight". Normalized to the canonical wording before header
+# matching so the period opens and votes normally.
+_FC_GARBLE_SUBS = (
+    (re.compile(r"\bwest of (today|tonight)\b", re.I), r"rest of \1"),
+    (re.compile(r"\bport (today|tonight)\b", re.I), r"\1"),
+)
+
 # Periods air in sequence and a period's "chance of rain N%" is the LAST clause of
 # its paragraph, so a segment's pre-header tail (the text before its first header)
 # closes the header's *immediate predecessor* — never an arbitrary carry-over. A
@@ -262,17 +272,35 @@ class ForecastAggregator:
 
     _FIELDS = ("high_f", "low_f", "precip_pct", "sky")
 
-    def __init__(self, area: str = "Muncie", maxlen: int = 15):
+    # A (period, field) aired every readout stays within a couple of passes; one
+    # that stops airing must age out or it serves a frozen value forever. This
+    # covers both a superseded period (e.g. "Today" -> "Rest Of Today" -> "Tonight",
+    # or a dropped extended day) AND a cleared field: when a period's chance of rain
+    # falls to nil the broadcast simply stops saying "chance of rain", casting no
+    # vote, so the precip would otherwise freeze on its last stated value while the
+    # period keeps airing. Evict anything not seen in this many forecast passes
+    # ("...forecast for the X area..." starts a pass).
+    def __init__(self, area: str = "Muncie", maxlen: int = 15, stale_passes: int = 15):
         self.maxlen = maxlen
+        self.stale_passes = stale_passes
         self.order: list[str] = []   # period names in first-seen order
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
         self._current: str | None = None
+        self._pass = 0               # forecast-readout counter, for staleness
+        self._last_pass: dict[tuple[str, str], int] = {}  # (period,field) -> pass aired
         self.city: str = area  # area the current forecast covers ("...for the X area")
 
     def _vote(self, period: str, field: str, value) -> None:
         if period not in self.order:
             self.order.append(period)
+        self._last_pass[(period, field)] = self._pass
         self.voters.setdefault((period, field), _FieldVoter(self.maxlen)).add(value)
+
+    def _fresh(self, period: str, field: str) -> bool:
+        """This (period, field) was aired within the last `stale_passes` readouts —
+        else it's a superseded period or a field the broadcast has stopped stating
+        (e.g. a chance of rain that dropped to nil), and must not be served."""
+        return self._pass - self._last_pass.get((period, field), self._pass) <= self.stale_passes
 
     def _has(self, period: str, field: str) -> bool:
         v = self.voters.get((period, field))
@@ -291,12 +319,15 @@ class ForecastAggregator:
                     self._vote(name, k, p[k])
 
     def update(self, text: str) -> bool:
+        for pat, rep in _FC_GARBLE_SUBS:   # canonicalize near-term header garbles
+            text = pat.sub(rep, text)
         # Climate outlook / almanac recaps are not the daily forecast.
         if _RE_FC_OUTLOOK.search(text):
             return False
         before = self._values()
         if m := _RE_FC_AREA.search(text):
             self.city = _norm_city(m.group(1))
+            self._pass += 1   # a fresh readout begins — advances the staleness clock
             # A fresh forecast pass ("...the forecast for the Muncie area...")
             # starts here; drop the carry-over so a stale period from the prior
             # pass can't absorb this segment's lead text (e.g. a leftover "This
@@ -366,7 +397,8 @@ class ForecastAggregator:
         """The voted value of each (period, field) — no confidence/tallies, for
         change detection."""
         return {(name, k): self.voters[(name, k)].best().value
-                for name in self.order for k in self._FIELDS if self._has(name, k)}
+                for name in self.order for k in self._FIELDS
+                if self._has(name, k) and self._fresh(name, k)}
 
     def snapshot(self) -> list[dict]:
         out: list[dict] = []
@@ -375,12 +407,14 @@ class ForecastAggregator:
             conf: dict = {}
             for k in self._FIELDS:
                 voter = self.voters.get((name, k))
-                if voter and voter.samples:
+                if voter and voter.samples and self._fresh(name, k):
                     best = voter.best()
                     entry[k] = best.value
                     # vote agreement (0-1): low => the airings disagree, so this
                     # value is at risk of being an STT mishear (off by a lot).
                     conf[k] = round(best.votes / best.total, 2)
+            if not conf:   # every field superseded/cleared — drop the whole period
+                continue
             entry["confidence"] = conf
             out.append(entry)
         return out
