@@ -129,6 +129,58 @@ def test_new_forecast_pass_resets_carryover():
     assert s["Saturday Night"]["low_f"] == 61
 
 
+def test_recap_lead_in_does_not_leak_precip_onto_today():
+    # "...chance of rain 20%. Once again, the forecast for today..." — the trailing
+    # PoP of the extended block must not ride onto the recapped Today (Today itself
+    # states no chance of rain here).
+    fc = ForecastAggregator()
+    fc.update("Once again, the forecast for today. Partly cloudy. "
+              "Highs in the mid 80s. North winds around 5 miles an hour.")
+    fc.update("Highs in the upper 80s. Chance of rain 20%. Once again, the "
+              "forecast for today. Partly cloudy. Highs in the mid 80s.")
+    t = {p["period"]: p for p in fc.snapshot()}["Today"]
+    assert t["high_f"] == 85
+    assert "precip_pct" not in t
+
+
+def test_stale_carryover_does_not_absorb_next_periods_precip():
+    # a carry-over left from an earlier pass ("Wednesday") must not swallow the
+    # trailing PoP of the day aired just before this segment's first header.
+    fc = ForecastAggregator()
+    fc.update("Wednesday, partly cloudy. Highs in the mid 80s.")
+    fc.update("Highs in the mid 80s. Chance of rain 70%. Friday night, "
+              "mostly cloudy. Lows in the upper 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert "precip_pct" not in s["Wednesday"]      # the 70% was Friday's
+    assert s["Friday Night"]["low_f"] == 68
+
+
+def test_same_day_carryover_keeps_its_precip():
+    # the flip side: a genuine chop "Friday. ...Highs..." then "[chop] Chance of
+    # rain 70%. Friday night..." — Friday IS Friday-Night's predecessor, so its own
+    # trailing PoP must still attach (the leak fix must not over-reach).
+    fc = ForecastAggregator()
+    fc.update("Friday, cloudy. Highs in the mid 80s.")
+    fc.update("Chance of rain 70%. Friday night, mostly cloudy. Lows in the upper 60s.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert s["Friday"]["precip_pct"] == 70
+    assert s["Friday Night"]["low_f"] == 68
+
+
+def test_for_misheard_as_four_still_opens_period():
+    # ". For Thursday night" is routinely transcribed "Four Thursday night"; the
+    # header must still open so its PoP attaches to Thursday Night, not the
+    # carry-over Today.
+    fc = ForecastAggregator()
+    fc.update("Today, partly cloudy. Highs in the mid 80s.")
+    fc.update("Four Thursday night, partly cloudy with a chance of showers. "
+              "Lows in the upper 60s. Chance of rain 70%.")
+    s = {p["period"]: p for p in fc.snapshot()}
+    assert "precip_pct" not in s["Today"]
+    assert s["Thursday Night"]["low_f"] == 68
+    assert s["Thursday Night"]["precip_pct"] == 70
+
+
 def test_night_period_never_gets_a_high():
     # grouped extended phrasing "Sunday night through Wednesday ... highs in the
     # lower 90s" must not put that daytime high on the night period.

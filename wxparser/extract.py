@@ -125,8 +125,13 @@ _PERIOD_NAME = (
 # segment start, and one segment routinely spans several periods ("...Saturday
 # night. ... lows ..., Sunday, partly cloudy ..."). Splitting on these lets each
 # period own only the fields stated in its own span.
+# The NWS paragraph break before a period (".Thursday Night") is spoken as a
+# lead-in the STT renders as "for"/"fore" and, routinely, the garble "four"
+# ("...mid 80s. Four Thursday night..."). Accepting "four/fore" here lets the
+# real header open the period so its trailing "chance of rain N%" attaches to
+# that day instead of leaking onto the carry-over period.
 _RE_PERIOD_HDR = re.compile(
-    rf"(?:^|[.,]\s+|\bfor\s+)({_PERIOD_NAME})\b(?=[\s,.]|$)", re.I)
+    rf"(?:^|[.,]\s+|\b(?:for|fore|four)\s+)({_PERIOD_NAME})\b(?=[\s,.]|$)", re.I)
 # Climate outlook / almanac — NOT a daily forecast ("8 to 14 day outlook ...
 # temperatures above normal", "normal high is 85"). Parsing it as periods invents
 # bogus far-future days and phantom highs, so skip the whole segment. NB: match
@@ -208,6 +213,42 @@ def _is_night_period(name: str) -> bool:
     return n in ("tonight", "overnight", "rest of tonight") or n.endswith(" night")
 
 
+# Recap / re-open lead-ins that END the period in progress ("...chance of rain
+# 20%. Once again, the forecast for today...", "Repeating the forecast..."). The
+# recapped period re-opens via its own header right after, so the carry-over must
+# be dropped here — otherwise the *previous* pass's trailing "chance of rain N%"
+# rides onto the recapped near-term period (the "Today precip 70%" leak).
+_RE_FC_RECAP = re.compile(
+    r"\b(?:once again|repeating|to repeat|here (?:is|again))\b", re.I)
+
+# Periods air in sequence and a period's "chance of rain N%" is the LAST clause of
+# its paragraph, so a segment's pre-header tail (the text before its first header)
+# closes the header's *immediate predecessor* — never an arbitrary carry-over. A
+# stale carry-over ("Wednesday", left over from a pass hours ago) that is NOT that
+# predecessor must not absorb the tail's PoP/temp (the "Wednesday precip 70%" that
+# was really Friday's, and the "Today precip 70%" that was really Thursday's).
+_WEEKDAY_ORDER = _DAYS.split("|")
+_WEEKDAYS = frozenset(_WEEKDAY_ORDER)
+# Near-term chain predecessors (day/evening/night of the current day).
+_NEAR_TERM_PRED = {
+    "tonight": "Today", "this evening": "Today", "this afternoon": "Today",
+    "this morning": None, "today": None, "rest of today": "Today",
+    "overnight": "Tonight", "rest of tonight": "Tonight"}
+
+
+def _period_predecessor(name: str) -> str | None:
+    """The period that immediately precedes `name` in a zone forecast, or None if
+    `name` opens the forecast. Used to tell a genuine carry-over continuation from
+    a stale one when a pre-header tail is followed by a header."""
+    n = name.lower()
+    parts = n.split(" ")
+    if len(parts) == 2 and parts[0] in _WEEKDAYS and parts[1] == "night":
+        return parts[0].title()                       # "Friday Night" -> "Friday"
+    if n in _WEEKDAYS:                                 # "Thursday" -> "Wednesday Night"
+        return f"{_WEEKDAY_ORDER[_WEEKDAY_ORDER.index(n) - 1].title()} Night"
+    return _NEAR_TERM_PRED.get(n)
+
+
 class ForecastAggregator:
     """Builds ordered forecast periods from the in-order segment stream.
 
@@ -261,6 +302,12 @@ class ForecastAggregator:
             # pass can't absorb this segment's lead text (e.g. a leftover "This
             # Afternoon" swallowing "...highs in the mid-90s").
             self._current = None
+        # A recap ("Once again, the forecast for today...") likewise closes the
+        # period in progress; without this its lead-in "chance of rain N%" (the
+        # tail of the previous pass) rides onto the carry-over near-term period.
+        if _RE_FC_RECAP.search(text):
+            self._current = None
+        carry = self._current  # carry-over period the pre-header tail belongs to
         # Split the segment at every period header so a multi-period segment
         # attaches each clause's fields to its OWN period (a later period's high
         # must not leak onto an earlier night period). Text before the first
@@ -277,8 +324,19 @@ class ForecastAggregator:
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
                 spans.append((name, text[m.start(): end]))
                 self._current = name
-        for period, chunk in spans:
+        # A pre-header tail (carry-over text before the first header) exists only
+        # when that header isn't at the segment start.
+        has_tail = bool(matches) and matches[0].start() > 0
+        first_hdr = matches[0].group(1).strip().title() if matches else None
+        for idx, (period, chunk) in enumerate(spans):
             if period is None:
+                continue
+            # Drop a stale carry-over tail: the pre-header tail closes the first
+            # header's predecessor. If the carry-over period isn't that predecessor
+            # it's left over from an earlier pass — attributing this segment's
+            # trailing "chance of rain N%" to it is the cross-period precip leak.
+            if (idx == 0 and has_tail
+                    and period != _period_predecessor(first_hdr)):
                 continue
             fields = extract_forecast_fields(chunk)
             # A "near steady temperature in the X" reading has no high/low label;
