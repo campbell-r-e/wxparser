@@ -28,6 +28,8 @@ Stdlib http.server only (no FastAPI/uvicorn dependency, §2.1). Read-only.
     GET /alerts/history?from=&to=&event=&limit=&offset=
                                           -> all SAME alerts (active + expired)
     GET /alerts/details?from=&to=         -> structured spoken-alert details
+    GET /verify                           -> forecast-vs-observed verification
+                                             (highs/lows/sky/rain, full record)
     GET /health                           -> liveness + counts
 
 `from`/`to`/`since` are ISO-8601 (e.g. 2026-06-24T12:00:00Z), inclusive (`since`
@@ -51,6 +53,7 @@ from .db import Database
 from .formats import aprs_bulletins, aprs_weather, net_bulletin, sitrep
 from .health import Heartbeat, assess
 from .trust import mark as mark_trust
+from .verify import verify as verify_forecasts
 
 
 def _now_iso() -> str:
@@ -258,6 +261,7 @@ class _Handler(BaseHTTPRequestHandler):
         "/transcripts": "_ep_transcripts", "/export": "_ep_export",
         "/alerts/active": "_ep_alerts_active", "/alerts/history": "_ep_alerts_history",
         "/alerts/details": "_ep_alerts_details", "/health": "_ep_health",
+        "/verify": "_ep_verify",
     }
 
     def do_GET(self) -> None:  # noqa: N802
@@ -285,7 +289,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/conditions", "/conditions/{condition}", "/conditions/history",
             "/almanac", "/forecast", "/forecast/history",
             "/transcripts", "/export?since=", "/stream",
-            "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
+            "/alerts/active", "/alerts/history", "/alerts/details",
+            "/verify", "/health"]})
 
     def _ep_stream(self, q: dict) -> None:
         self._serve_sse(q.get("since"))
@@ -421,6 +426,13 @@ class _Handler(BaseHTTPRequestHandler):
         frm = q.get("from") or (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._send({"from": frm, "to": to,
                     "details": self.db.alert_details_between(frm, to)})
+
+    def _ep_verify(self, q: dict) -> None:
+        """Forecast verification over the WHOLE stored record. Heavier than the
+        other reads (scans every stored issuance on each request) — poll gently."""
+        doc = verify_forecasts(self.db, self.cfg)
+        doc["generated_at"] = _now_iso()
+        self._send(doc)
 
     def _ep_health(self, q: dict) -> None:
         health = assess(Heartbeat.read(self.cfg), self.cfg)

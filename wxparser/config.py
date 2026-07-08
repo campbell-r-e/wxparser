@@ -33,6 +33,9 @@ class Config:
     # "at <City>") attach here, even when the spectrally-identical city header
     # ("At Muncie, it was ...") gets skipped by the novelty gate.
     primary_city: str = _env("WX_PRIMARY_CITY", PROFILE["primary_city"])
+    # IANA timezone the station's spoken periods/times are anchored to — /verify
+    # builds its local-wall-clock verification windows in this zone.
+    station_tz: str = _env("WX_TZ", PROFILE.get("tz", "America/Indiana/Indianapolis"))
 
     # --- Audio capture (ALSA via arecord subprocess) ---
     alsa_device: str = _env("WX_ALSA_DEVICE", "plughw:0,0")

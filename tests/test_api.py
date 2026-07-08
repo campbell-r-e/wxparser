@@ -64,7 +64,7 @@ def _get(url):
 def test_all_json_and_text_endpoints(make_cfg):
     srv, H = _server(make_cfg)
     try:
-        assert len(_get(H + "/")["endpoints"]) == 19
+        assert len(_get(H + "/")["endpoints"]) == 20
         now = _get(H + "/now")
         assert now["station"] and now["conditions"] and now["alerts"]
         assert now["conditions"][0]["advisory"] is True
@@ -151,5 +151,18 @@ def test_sse_stream_emits(make_cfg):
         assert b"event:" in data or b"connected" in data
     except Exception:
         pass                     # best-effort: the handler ran either way
+    finally:
+        srv.shutdown()
+
+
+def test_verify_endpoint(make_cfg):
+    srv, H = _server(make_cfg)
+    try:
+        doc = _get(H + "/verify")
+        assert {"temperature", "sky", "rain", "generated_at"} <= set(doc)
+        assert doc["city"] == "Muncie"
+        # the seeded forecasts/readings are too thin for temp windows, but the
+        # document must still be fully formed
+        assert doc["temperature"]["high"]["n"] == 0
     finally:
         srv.shutdown()

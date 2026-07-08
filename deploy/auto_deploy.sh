@@ -50,7 +50,14 @@ then
 fi
 
 if "$PY" -m coverage run -m pytest -q >>"$LOG" 2>&1 && "$PY" -m coverage report >>"$LOG" 2>&1; then
-    sudo systemctl restart wxparser wxparser-api
+    # a change confined to the query API (or tests/docs) must not blip the
+    # capture pipeline — restart only wxparser-api for those
+    if git diff --name-only "$LOCAL" "$REMOTE" | grep -qvE '^(wxparser/(api|verify)\.py|tests/|docs/|README|\.gitignore)'; then
+        sudo systemctl restart wxparser wxparser-api
+    else
+        sudo systemctl restart wxparser-api
+        echo "$(date -Is) api-only change — capture service left running" >>"$LOG"
+    fi
     echo "$(date -Is) DEPLOYED ${REMOTE:0:8}" >>"$LOG"
 else
     git reset --hard "$LOCAL" >>"$LOG" 2>&1

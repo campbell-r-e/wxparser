@@ -288,6 +288,35 @@ Setting this URL is the **only** thing that makes the box reach outbound.
 
 ---
 
+## 6a. Forecast verification — `/verify`
+
+How good were the forecasts, scored against what this station later observed —
+computed over the **entire stored record** on every request (it sharpens as the
+archive grows). Highs/lows verify against the observed window extremes (local
+wall-clock: day 06:00–21:00, night 18:00–08:30), sky against a 4-step
+cloudiness ladder, and chance-of-rain against a daily rain series recovered by
+differencing the almanac's year-to-date precipitation.
+
+```jsonc
+{ "city": "Muncie", "tz": "America/Indiana/Indianapolis",
+  "temperature": { "high": {"n": 4999, "bias_f": 0.5, "mae_f": 3.1},
+                   "low":  {"n": 4955, "bias_f": -4.6, "mae_f": 4.9},
+                   "mae_by_lead_days": {"0": 3.2, "1": 3.4, "...": 0} },
+  "sky":  { "n": 9994, "exact_pct": 43.0, "within_one_step_pct": 79.0 },
+  "rain": { "days_measured": 12, "wet_days": 3, "total_in": 1.51,
+            "brier_day_before": 0.2, "base_rate": 0.27, "brier_skill": -0.01,
+            "scorecard": [ {"day": "2026-07-04", "pop_day_before": 60.0,
+                            "rained": true, "inches": 1.15} ] } }
+```
+
+Notes: a negative low bias is expected (a zone forecast targets the coolest
+rural spots; this is one warm ob site). `brier_skill` > 0 means the PoPs beat
+always-guessing the base rate — it needs weeks of record before it stabilizes.
+This endpoint re-scans every stored issuance per request, so poll it gently
+(it is meant for a dashboard refresh, not a tight loop).
+
+---
+
 ## 7. Health & monitoring
 
 `GET /health` reflects the **actual pipeline state**, not just "the API is up" — the capture
