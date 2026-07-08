@@ -22,11 +22,11 @@ from wxparser.extract import (
 from wxparser.fingerprint import Fingerprinter
 from wxparser.formats import net_bulletin, sitrep
 from wxparser.segment import segment_stream
-from wxparser.stt import Segment, Transcript
+from wxparser.stt import TranscriptSegment, Transcript
 
 
 def _t(text):
-    return Transcript(text=text, segments=[Segment(0.0, 1.0, text)], language="en")
+    return Transcript(text=text, segments=[TranscriptSegment(0.0, 1.0, text)], language="en")
 
 
 # --- stt: flags-off command path ----------------------------------------- #

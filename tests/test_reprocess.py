@@ -44,8 +44,8 @@ def test_reprocess_rebuilds_conditions_forecast_almanac_alert(tmp_path):
     conds = {c["condition"]: c["value"] for c in db.all_conditions_for_city("Muncie", 1)}
     assert conds["temperature_f"] == 70
     assert db.latest_forecasts()[0]["periods"]
-    total, rows = db.alerts_history(None, None, None, 10, 0)
-    assert total == 1 and rows[0]["event"] == "RWT"
+    rows = db.alerts_history(None, None, None, 10, 0)
+    assert db.alerts_history_count(None, None, None) == 1 and rows[0]["event"] == "RWT"
 
 
 def test_reprocess_applies_corrections_retroactively(tmp_path):

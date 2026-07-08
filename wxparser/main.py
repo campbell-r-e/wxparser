@@ -171,34 +171,53 @@ def _stt_worker(
         if is_blank(transcript, cfg):
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
-            text = transcript.text
-            now = _utc_now_iso()
-            # vote BEFORE dedup so boundary-shifted repeats still contribute readings.
-            # apply_readings is the SAME step reprocess replays over the stored
-            # transcripts, so the DB stays a re-derivable projection of them.
-            # Skip voting on low-confidence transcripts (still stored, just not
-            # voted) so a mangled reading can't sway the aggregates.
-            summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb,
-                                     confidence=transcript.avg_confidence,
-                                     confidence_floor=cfg.stt_confidence_floor)
-            if summary.get("low_confidence"):
-                print(f"  . low-conf {transcript.avg_confidence:.2f} — stored, not voted",
-                      flush=True)
-            for r in summary["readings"]:
-                print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
-            for r in summary["almanac"]:
-                print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
-            saved = _save(transcript, cfg, seg.duration_s, digest, deduper, db)
-            if saved is not None and db is not None:
-                details = write_alert_detail_if_any(
-                    text, now, saved["id"], saved["product_type"], db)
-                if details:
-                    print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}", flush=True)
+            saved = _handle_transcript(transcript, seg, digest, cfg, deduper,
+                                       aggregator, forecast, almanac, db, hb)
             if once and saved is not None:
                 _STOP.set()
         if hb is not None:
             hb.set(queue_depth=q.qsize()); hb.flush()
         q.task_done()
+
+
+def _handle_transcript(
+    transcript,
+    seg,
+    digest: str,
+    cfg: Config,
+    deduper: TextDeduper,
+    aggregator: CityConditionsAggregator,
+    forecast: ForecastAggregator,
+    almanac: AlmanacAggregator,
+    db: Database | None,
+    hb: Heartbeat | None,
+) -> dict | None:
+    """Vote, log, and store one non-blank transcript; returns the saved report
+    (None when text-dedup dropped it as a repeat)."""
+    text = transcript.text
+    now = _utc_now_iso()
+    # vote BEFORE dedup so boundary-shifted repeats still contribute readings.
+    # apply_readings is the SAME step reprocess replays over the stored
+    # transcripts, so the DB stays a re-derivable projection of them.
+    # Skip voting on low-confidence transcripts (still stored, just not
+    # voted) so a mangled reading can't sway the aggregates.
+    summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb,
+                             confidence=transcript.avg_confidence,
+                             confidence_floor=cfg.stt_confidence_floor)
+    if summary.get("low_confidence"):
+        print(f"  . low-conf {transcript.avg_confidence:.2f} — stored, not voted",
+              flush=True)
+    for r in summary["readings"]:
+        print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
+    for r in summary["almanac"]:
+        print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
+    saved = _save(transcript, cfg, seg.duration_s, digest, deduper, db)
+    if saved is not None and db is not None:
+        details = write_alert_detail_if_any(
+            text, now, saved["id"], saved["product_type"], db)
+        if details:
+            print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}", flush=True)
+    return saved
 
 
 def run_live(cfg: Config, once: bool = False) -> int:
@@ -265,6 +284,16 @@ def run_live(cfg: Config, once: bool = False) -> int:
     frames = stream_frames(cfg, on_retry=lambda: hb.incr("capture_restarts"),
                            should_stop=_STOP.is_set)
     n_seg = n_new = n_repeat = 0
+    seg = sim = None  # bound per segment below; _publish reads the current ones
+
+    def _publish(label: str, tail: str = "") -> None:
+        """Flush the segment counters to the heartbeat and print the status line
+        both novelty branches share."""
+        hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
+        hb.flush()
+        print(f"  {label} {seg.duration_s:5.1f}s sim={sim:.3f}{tail} "
+              f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]", flush=True)
+
     try:
         for seg in segment_stream(_tee_to_same(frames, monitor), cfg):
             if _STOP.is_set():
@@ -277,27 +306,15 @@ def run_live(cfg: Config, once: bool = False) -> int:
             sim = gate.best_similarity(vec)
             if sim >= cfg.fp_similarity_threshold:
                 n_repeat += 1
-                hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
-                hb.flush()
-                print(
-                    f"  . repeat {seg.duration_s:5.1f}s sim={sim:.3f} "
-                    f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]",
-                    flush=True,
-                )
+                _publish(". repeat")
                 continue
             gate.add(vec)
             n_new += 1
             hb.touch("last_novel_at")
             prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL
             q.put((prio, next(seq), (seg, digest)))
-            hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
-            hb.flush()
-            print(
-                f"  + novel  {seg.duration_s:5.1f}s sim={sim:.3f} -> queued"
-                f"{' PRIORITY' if prio == _PRIO_ALERT else ''} "
-                f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]",
-                flush=True,
-            )
+            _publish("+ novel ",
+                     " -> queued" + (" PRIORITY" if prio == _PRIO_ALERT else ""))
     finally:
         _STOP.set()
         q.put((-1, next(seq), None))  # highest-priority poison pill -> prompt exit

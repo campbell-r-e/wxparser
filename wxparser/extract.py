@@ -67,6 +67,9 @@ _RE_SKY = re.compile(rf"\b({_SKY_WORDS})\b", re.I)
 _RE_COND_SKY = re.compile(
     rf"(?:it (?:was|is)|currently|skies? (?:were|was|are|is)) ({_SKY_WORDS})\b", re.I)
 
+# how far past the pressure value to look for its rising/falling/steady trend
+_TREND_WINDOW = 30
+
 _FIELD_RANGE = {
     "temperature_f": (-60, 130),
     "dewpoint_f": (-60, 100),
@@ -80,6 +83,14 @@ def _num(s: str) -> int | None:
     return words_to_int(s.strip())
 
 
+def _drop_out_of_range(out: dict, ranges: dict) -> None:
+    """Drop extracted fields whose value falls outside its plausible range
+    (an STT mishear like "999 degrees"), leaving the rest of `out` intact."""
+    for k, (lo, hi) in ranges.items():
+        if k in out and not (lo <= out[k] <= hi):
+            del out[k]
+
+
 def extract_observation(text: str) -> dict:
     """Return whatever current-conditions fields are present in this text."""
     out: dict = {}
@@ -91,7 +102,7 @@ def extract_observation(text: str) -> dict:
         out["humidity_pct"] = v
     if m := _RE_PRESS.search(text):
         out["pressure_in"] = float(m.group(1))
-        if t := _RE_PRESS_TREND.search(text[m.end():m.end() + 30]):
+        if t := _RE_PRESS_TREND.search(text[m.end():m.end() + _TREND_WINDOW]):
             out["pressure_trend"] = t.group(1).lower()
     if _RE_WIND_CALM.search(text):
         out["wind"] = "calm"
@@ -103,10 +114,7 @@ def extract_observation(text: str) -> dict:
             out["wind_speed_mph"] = spd
     if m := _RE_COND_SKY.search(text):
         out["sky"] = m.group(1).lower()
-    # range-check numeric fields
-    for k, (lo, hi) in _FIELD_RANGE.items():
-        if k in out and not (lo <= out[k] <= hi):
-            del out[k]
+    _drop_out_of_range(out, _FIELD_RANGE)
     return out
 
 
@@ -137,9 +145,11 @@ _RE_PERIOD_HDR = re.compile(
 # bogus far-future days and phantom highs, so skip the whole segment. NB: match
 # on "outlook"/"normal", NOT on a "N-day" range — the legit *3-7 day forecast*
 # (real Saturday/Sunday highs/lows) also says "3 to 7 day".
+# vocabulary shared with _RE_RECAP: phrases that mark climate/almanac talk
+# rather than live conditions or the daily forecast.
+_ALMANACY = r"normal\s+(?:high|low)|degree days?"
 _RE_FC_OUTLOOK = re.compile(
-    r"\b(?:outlook|(?:above|below|near)\s+normal|normal\s+(?:high|low)"
-    r"|climate|degree days?)\b", re.I)
+    rf"\b(?:outlook|(?:above|below|near)\s+normal|{_ALMANACY}|climate)\b", re.I)
 _RE_HIGH = re.compile(r"\bhigh[s]?\s+([^.]*?)(?:\.|$)", re.I)
 _RE_LOW = re.compile(r"\blow[s]?\s+([^.]*?)(?:\.|$)", re.I)
 # "near steady temperature in the upper 70s" / "temperature near 80" — a period's
@@ -151,8 +161,8 @@ _RE_FC_TEMP = re.compile(
 # precip: accept a comma ("chance of rain, 80%") and a spelled-out number
 # ("chance of rain eighty percent"), not just "<digits> percent".
 _RE_PRECIP = re.compile(
-    r"chance of (?:rain|precipitation|showers|snow)[\s,]+"
-    r"(\d{1,3}|[a-z\- ]+?)\s*(?:%|percent)", re.I)
+    rf"chance of (?:rain|precipitation|showers|snow)[\s,]+"
+    rf"{_NUM}\s*(?:%|percent)", re.I)
 _TEMP_OFFSET = {"lower": 1, "low": 1, "mid": 5, "middle": 5, "upper": 8}
 
 
@@ -167,8 +177,13 @@ _DECADE_WORDS = {
 _RE_DECADE_WORD = "|".join(_DECADE_WORDS)
 
 
+# a temp phrase ("in the mid 80s") ends quickly; the cap keeps a run-on
+# sentence captured by the lazy [^.]*? from feeding garbage to the parsers
+_TEMP_PHRASE_MAX = 30
+
+
 def parse_temp_value(phrase: str) -> int | None:
-    phrase = phrase.lower()[:30]
+    phrase = phrase.lower()[:_TEMP_PHRASE_MAX]
     if m := re.search(r"(?:around|near|of)\s+(\d{1,3})", phrase):
         return int(m.group(1))
     if m := re.search(r"(lower|low|mid|middle|upper)\s+(\d{1,3})s", phrase):
@@ -186,22 +201,33 @@ def parse_temp_value(phrase: str) -> int | None:
     return None
 
 
+# plausible-value bounds per forecast field (highs/steady share the observation
+# temperature range; lows above 100°F are always a mishear)
+_FC_RANGE = {"high_f": _FIELD_RANGE["temperature_f"], "low_f": (-60, 100),
+             "steady_f": _FIELD_RANGE["temperature_f"], "precip_pct": (0, 100)}
+
+
+def _fc_ok(field: str, v) -> bool:
+    lo, hi = _FC_RANGE[field]
+    return lo <= v <= hi
+
+
 def extract_forecast_fields(text: str) -> dict:
     """Highs/lows/precip/sky found in a single forecast sentence/segment."""
     out: dict = {}
     if m := _RE_HIGH.search(text):
-        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 130:
+        if (v := parse_temp_value(m.group(1))) is not None and _fc_ok("high_f", v):
             out["high_f"] = v
     if m := _RE_LOW.search(text):
-        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 100:
+        if (v := parse_temp_value(m.group(1))) is not None and _fc_ok("low_f", v):
             out["low_f"] = v
     # representative temp stated without "high"/"low" — routed by the aggregator.
     if "high_f" not in out and "low_f" not in out and (m := _RE_FC_TEMP.search(text)):
-        if (v := parse_temp_value(m.group(1))) is not None and -60 <= v <= 130:
+        if (v := parse_temp_value(m.group(1))) is not None and _fc_ok("steady_f", v):
             out["steady_f"] = v
     if m := _RE_PRECIP.search(text):
         p = words_to_int(m.group(1))  # handles "80" and "eighty"
-        if p is not None and 0 <= p <= 100:
+        if p is not None and _fc_ok("precip_pct", p):
             out["precip_pct"] = p
     if m := _RE_SKY.search(text):
         out["sky"] = m.group(1).lower()
@@ -257,6 +283,20 @@ def _period_predecessor(name: str) -> str | None:
     if n in _WEEKDAYS:                                 # "Thursday" -> "Wednesday Night"
         return f"{_WEEKDAY_ORDER[_WEEKDAY_ORDER.index(n) - 1].title()} Night"
     return _NEAR_TERM_PRED.get(n)
+
+
+# City-name plumbing shared by the forecast and multi-city aggregators (the
+# rest of the city patterns live with CityConditionsAggregator below).
+_CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
+# "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
+# literal " area" suffix so the city group can't swallow the word "area")
+_RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
+
+
+def _norm_city(name: str) -> str:
+    # title-case, then fold known STT mis-hearings to the canonical spelling so
+    # the store only ever sees correct city names (no nightly cleanup needed).
+    return correct_place(name.strip().title())
 
 
 class ForecastAggregator:
@@ -338,27 +378,7 @@ class ForecastAggregator:
         # tail of the previous pass) rides onto the carry-over near-term period.
         if _RE_FC_RECAP.search(text):
             self._current = None
-        carry = self._current  # carry-over period the pre-header tail belongs to
-        # Split the segment at every period header so a multi-period segment
-        # attaches each clause's fields to its OWN period (a later period's high
-        # must not leak onto an earlier night period). Text before the first
-        # header continues the carry-over period from the previous segment.
-        matches = list(_RE_PERIOD_HDR.finditer(text))
-        spans: list[tuple[str | None, str]] = []
-        if not matches:
-            spans.append((self._current, text))
-        else:
-            if matches[0].start() > 0:
-                spans.append((self._current, text[: matches[0].start()]))
-            for i, m in enumerate(matches):
-                name = m.group(1).strip().title()
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-                spans.append((name, text[m.start(): end]))
-                self._current = name
-        # A pre-header tail (carry-over text before the first header) exists only
-        # when that header isn't at the segment start.
-        has_tail = bool(matches) and matches[0].start() > 0
-        first_hdr = matches[0].group(1).strip().title() if matches else None
+        spans, first_hdr, has_tail = self._split_spans(text)
         for idx, (period, chunk) in enumerate(spans):
             if period is None:
                 continue
@@ -369,29 +389,55 @@ class ForecastAggregator:
             if (idx == 0 and has_tail
                     and period != _period_predecessor(first_hdr)):
                 continue
-            fields = extract_forecast_fields(chunk)
-            # A "near steady temperature in the X" reading has no high/low label;
-            # it's the high on a day period, the low on a night period.
-            steady = fields.pop("steady_f", None)
-            # A zone-forecast day period forecasts only a high, a night period
-            # only a low. The opposite slot in a chunk is a leak from an adjacent
-            # period (e.g. a grouped "Sunday night through Wednesday ... highs in
-            # the 90s"), so drop it and route an unlabeled steady temp to the slot
-            # the period actually carries (only as a fallback — never over a
-            # period that already has a labeled vote).
-            if _is_night_period(period):
-                fields.pop("high_f", None)
-                if steady is not None and "low_f" not in fields and not self._has(period, "low_f"):
-                    fields["low_f"] = steady
-            else:
-                fields.pop("low_f", None)
-                if steady is not None and "high_f" not in fields and not self._has(period, "high_f"):
-                    fields["high_f"] = steady
-            for k, v in fields.items():
-                self._vote(period, k, v)
+            self._route_fields(period, chunk)
         # True only when a voted VALUE actually changed — so the store isn't
         # rewritten a full issuance per airing just because vote tallies ticked.
         return self._values() != before
+
+    def _split_spans(self, text: str) -> tuple[list[tuple[str | None, str]], str | None, bool]:
+        """Split the segment at every period header so a multi-period segment
+        attaches each clause's fields to its OWN period (a later period's high
+        must not leak onto an earlier night period). Text before the first
+        header continues the carry-over period from the previous segment.
+
+        Returns (spans, first_header, has_tail): has_tail is True when carry-over
+        text precedes the first header (it exists only when that header isn't at
+        the segment start). Advances self._current to the last header seen."""
+        matches = list(_RE_PERIOD_HDR.finditer(text))
+        if not matches:
+            return [(self._current, text)], None, False
+        spans: list[tuple[str | None, str]] = []
+        if matches[0].start() > 0:
+            spans.append((self._current, text[: matches[0].start()]))
+        for i, m in enumerate(matches):
+            name = m.group(1).strip().title()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            spans.append((name, text[m.start(): end]))
+            self._current = name
+        return spans, matches[0].group(1).strip().title(), matches[0].start() > 0
+
+    def _route_fields(self, period: str, chunk: str) -> None:
+        """Extract one span's fields and vote them onto its period."""
+        fields = extract_forecast_fields(chunk)
+        # A "near steady temperature in the X" reading has no high/low label;
+        # it's the high on a day period, the low on a night period.
+        steady = fields.pop("steady_f", None)
+        # A zone-forecast day period forecasts only a high, a night period
+        # only a low. The opposite slot in a chunk is a leak from an adjacent
+        # period (e.g. a grouped "Sunday night through Wednesday ... highs in
+        # the 90s"), so drop it and route an unlabeled steady temp to the slot
+        # the period actually carries (only as a fallback — never over a
+        # period that already has a labeled vote).
+        if _is_night_period(period):
+            fields.pop("high_f", None)
+            if steady is not None and "low_f" not in fields and not self._has(period, "low_f"):
+                fields["low_f"] = steady
+        else:
+            fields.pop("low_f", None)
+            if steady is not None and "high_f" not in fields and not self._has(period, "high_f"):
+                fields["high_f"] = steady
+        for k, v in fields.items():
+            self._vote(period, k, v)
 
     def _values(self) -> dict:
         """The voted value of each (period, field) — no confidence/tallies, for
@@ -423,7 +469,6 @@ class ForecastAggregator:
 # --------------------------------------------------------------------------- #
 # Generic multi-city extraction (Phase 6+, city-agnostic)
 # --------------------------------------------------------------------------- #
-_CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
 # "At Muncie, it was clear." / "At Muncie, the temperature was ..." -> primary city.
 # STT routinely mis-hears the lead-in "at" as "it"/"in"/"ed" ("...it Muncie, it
 # was mostly sunny...", "...Ed Muncie, it was cloudy..."), so accept those; the
@@ -477,17 +522,14 @@ def _nearby_temps(text: str) -> list[tuple[str, int]]:
         out.append((city, temp))
         prev_city = city
     return out
-# "... forecast for the Muncie area ..." -> forecast area name (case-sensitive city,
-# literal " area" suffix so the city group can't swallow the word "area")
-_RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
 # Climate-summary / almanac recaps quote PAST or normal values, not live
 # conditions: "Yesterday's low temperature was 55 degrees", "normal high is 85",
 # "record low ...". Their "(high|low) temperature was N degrees" is a substring
 # match for _RE_TEMP, so without this guard they get ingested as the primary
 # city's *current* temperature (e.g. Muncie current temp wrongly set to 55).
 _RE_RECAP = re.compile(
-    r"\b(climate summary|yesterday|normal (?:high|low)|record (?:high|low)"
-    r"|(?:high|low) temperature was|degree days?)\b", re.I)
+    rf"\b(climate summary|yesterday|{_ALMANACY}|record (?:high|low)"
+    rf"|(?:high|low) temperature was)\b", re.I)
 # Lead-in phrases that introduce the regional roundup right after the home-station
 # observation ("... and falling. Nearby, at Indianapolis ...").
 _RE_ROUNDUP_LEADIN = re.compile(
@@ -504,12 +546,6 @@ def _roundup_start(text: str) -> int:
         if m := rx.search(text):
             idx = min(idx, m.start())
     return idx
-
-
-def _norm_city(name: str) -> str:
-    # title-case, then fold known STT mis-hearings to the canonical spelling so
-    # the store only ever sees correct city names (no nightly cleanup needed).
-    return correct_place(name.strip().title())
 
 
 def _wind_speed_from_phrase(phrase: str) -> int:
@@ -731,9 +767,7 @@ def extract_almanac(text: str) -> dict:
         out["heating_degree_days"] = _degree_days(m.group(1))
     if m := _RE_CDD.search(text):
         out["cooling_degree_days"] = _degree_days(m.group(1))
-    for k, (lo, hi) in _ALMANAC_RANGE.items():
-        if k in out and not (lo <= out[k] <= hi):
-            del out[k]
+    _drop_out_of_range(out, _ALMANAC_RANGE)
     return out
 
 
@@ -826,7 +860,8 @@ def extract_alert_details(text: str) -> dict:
         threats.append("tornado")
     if m := _RE_HAIL.search(text):
         size = next((g for g in m.groups() if g), "")
-        threats.append(f"hail {size.strip()}".strip() + ("in" if re.match(r"^\d", size) else ""))
+        # numeric sizes carry the unit ("hail 1.5in"); named sizes stand alone
+        threats.append(f"hail {size}in" if size[:1].isdigit() else f"hail {size}".strip())
     if m := _RE_ALERT_WIND.search(text):
         threats.append(f"wind {m.group(1)}mph")
     if _RE_FLASH_FLOOD.search(text):

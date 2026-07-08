@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from wxparser.config import Config
 from wxparser.store import build_report, classify
-from wxparser.stt import Segment, Transcript
+from wxparser.stt import TranscriptSegment, Transcript
 
 
 def _t(text: str) -> Transcript:
-    return Transcript(text=text, segments=[Segment(0.0, 1.0, text)], language="en")
+    return Transcript(text=text, segments=[TranscriptSegment(0.0, 1.0, text)], language="en")
 
 
 def test_classify_explicit_products():

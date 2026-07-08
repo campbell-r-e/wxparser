@@ -78,7 +78,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _min(self, q: dict) -> int:
         try:
             return max(1, int(q.get("min", self.min_sightings)))
-        except ValueError:
+        except (ValueError, TypeError):
             return self.min_sightings
 
     def _stale_after(self, q: dict) -> int:
@@ -108,6 +108,17 @@ class _Handler(BaseHTTPRequestHandler):
                 continue
             out.append(r)
         return out
+
+    def _trusted(self, rows: list, q: dict, drop_stale: bool = False) -> list:
+        """Trust-mark + age-annotate a reading list. Index/snapshot views keep
+        stale rows (?fresh= suppressed); pass drop_stale=True to honor it."""
+        return mark_trust(self._annotate_age(rows, q if drop_stale else dict(q, fresh="")))
+
+    def _paginate(self, q: dict, default: int, count_fn, rows_fn) -> tuple[list, dict]:
+        """Shared limit/offset parsing -> rows -> {total,count,...} envelope."""
+        limit, offset = self._page(q, default=default)
+        rows = rows_fn(limit, offset)
+        return rows, self._paging(count_fn(), len(rows), limit, offset)
 
     def _page(self, q: dict, default: int = 100, maximum: int = 1000) -> tuple[int, int]:
         try:
@@ -225,18 +236,29 @@ class _Handler(BaseHTTPRequestHandler):
         """The /now data — current ob + roundup + forecast + active alerts — reused
         by the human/RF format endpoints."""
         city = q.get("city", self.cfg.primary_city)
-        conds = mark_trust(self._annotate_age(
-            self.db.all_conditions_for_city(city, self._min(q)), dict(q, fresh="")))
-        roundup = mark_trust(self._annotate_age(
+        conds = self._trusted(self.db.all_conditions_for_city(city, self._min(q)), q)
+        roundup = self._trusted(
             [r for r in self.db.latest_for_condition("temperature_f", self._min(q))
-             if r["city"].lower() != city.lower()], dict(q, fresh="")))
+             if r["city"].lower() != city.lower()], q)
         forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
         alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
-        almanac = mark_trust(self._annotate_age(
-            self.db.latest_almanac(self._min(q)), dict(q, fresh="")))
+        almanac = self._trusted(self.db.latest_almanac(self._min(q)), q)
         return {"generated_at": _now_iso(), "station": self.cfg.station, "city": city,
                 "conditions": conds, "roundup": roundup, "almanac": almanac,
                 "forecast": forecast, "alerts": alerts}
+
+    # Exact-path routing; the two parametrized shapes (/city/{city} and
+    # /conditions/{condition}) are matched in do_GET after this table.
+    _ROUTES = {
+        "/": "_ep_index", "/stream": "_ep_stream", "/now": "_ep_now",
+        "/bulletin": "_ep_bulletin", "/sitrep": "_ep_sitrep", "/aprs": "_ep_aprs",
+        "/cities": "_ep_cities", "/conditions": "_ep_conditions",
+        "/conditions/history": "_ep_condition_history", "/almanac": "_ep_almanac",
+        "/forecast": "_ep_forecast", "/forecast/history": "_ep_forecast_history",
+        "/transcripts": "_ep_transcripts", "/export": "_ep_export",
+        "/alerts/active": "_ep_alerts_active", "/alerts/history": "_ep_alerts_history",
+        "/alerts/details": "_ep_alerts_details", "/health": "_ep_health",
+    }
 
     def do_GET(self) -> None:  # noqa: N802
         u = urlsplit(self.path)
@@ -244,161 +266,175 @@ class _Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         parts = [p for p in path.split("/") if p]
         try:
-            if path == "/":
-                self._send({"endpoints": [
-                    "/now", "/bulletin", "/sitrep", "/aprs",
-                    "/cities", "/city/{city}",
-                    "/conditions", "/conditions/{condition}", "/conditions/history",
-                    "/almanac", "/forecast", "/forecast/history",
-                    "/transcripts", "/export?since=", "/stream",
-                    "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
-            elif path == "/stream":
-                self._serve_sse(q.get("since"))
-            elif path == "/now":
-                self._send(self._snapshot(q))
-            elif path == "/bulletin":
-                self._send_text(net_bulletin(self._snapshot(q)))
-            elif path == "/sitrep":
-                self._send_text(sitrep(self._snapshot(q)))
-            elif path == "/aprs":
-                snap = self._snapshot(q)
-                payload = {"station": snap["station"], "generated_at": snap["generated_at"],
-                           "weather_report": aprs_weather(snap),
-                           "bulletins": aprs_bulletins(snap)}
-                if q.get("format") == "text":
-                    self._send_text("\n".join([payload["weather_report"], *payload["bulletins"]]) + "\n")
-                else:
-                    self._send(payload)
-            elif path == "/cities":
-                self._send({"generated_at": _now_iso(),
-                            "cities": self.db.cities(self._min(q))})
+            route = self._ROUTES.get(path)
+            if route:
+                getattr(self, route)(q)
             elif parts[0] == "city" and len(parts) == 2:
-                m = self._min(q)
-                conds = mark_trust(self._annotate_age(
-                    self.db.all_conditions_for_city(parts[1], m), q))
-                self._send({"city": parts[1], "min_sightings": m,
-                            "stale_after_min": self._stale_after(q), "conditions": conds})
-            elif path == "/conditions":
-                conds = self.db.list_conditions(self._min(q))
-                for c in conds:  # reuse age annotation against each condition's latest
-                    c["captured_at"] = c.get("latest")
-                conds = self._annotate_age(conds, dict(q, fresh=""))  # never drop on index
-                self._send({"min_sightings": self._min(q),
-                            "stale_after_min": self._stale_after(q), "conditions": conds})
-            elif parts[:2] == ["conditions", "history"]:
-                cond = _canon(q.get("condition", ""))
-                if not cond:
-                    self._send({"error": "condition= query param required"}, 400)
-                    return
-                limit, offset = self._page(q, default=1000)
-                total = self.db.condition_history_count(
-                    cond, q.get("city"), q.get("from"), q.get("to"))
-                rows = self.db.condition_history(
-                    cond, q.get("city"), q.get("from"), q.get("to"), limit, offset)
-                self._send({"condition": cond, "city": q.get("city"),
-                            "from": q.get("from"), "to": q.get("to"), "readings": rows,
-                            **self._paging(total, len(rows), limit, offset)})
+                self._ep_city(q, parts[1])
             elif parts[0] == "conditions" and len(parts) == 2:
-                cond = _canon(parts[1])
-                m = self._min(q)
-                cities = mark_trust(self._annotate_age(self.db.latest_for_condition(cond, m), q))
-                self._send({"condition": cond, "min_sightings": m,
-                            "stale_after_min": self._stale_after(q), "cities": cities})
-            elif path == "/almanac":
-                rows = mark_trust(self._annotate_age(
-                    self.db.latest_almanac(self._min(q)), dict(q, fresh="")))
-                self._send({"generated_at": _now_iso(), "min_sightings": self._min(q),
-                            "stale_after_min": self._stale_after(q), "almanac": rows})
-            elif path == "/forecast":
-                self._send({"forecasts": self._annotate_forecast_age(
-                    self.db.latest_forecasts(), q)})
-            elif parts[:2] == ["forecast", "history"]:
-                limit, offset = self._page(q, default=1000)
-                total = self.db.forecast_history_count(
-                    q.get("from"), q.get("to"), q.get("city"))
-                rows = self.db.forecast_history(
-                    q.get("from"), q.get("to"), q.get("city"), limit, offset)
-                self._send({"from": q.get("from"), "to": q.get("to"), "city": q.get("city"),
-                            "forecasts": rows,
-                            **self._paging(total, len(rows), limit, offset)})
-            elif path == "/transcripts":
-                limit, offset = self._page(q, default=100)
-                total = self.db.count_raw_reports(frm=q.get("from"), to=q.get("to"),
-                                                  q=q.get("q"), product=q.get("product"))
-                reports = self.db.query_raw_reports(
-                    limit=limit, frm=q.get("from"), to=q.get("to"),
-                    q=q.get("q"), product=q.get("product"), offset=offset)
-                self._send({"from": q.get("from"), "to": q.get("to"),
-                            "q": q.get("q"), "product": q.get("product"),
-                            "transcripts": reports,
-                            **self._paging(total, len(reports), limit, offset)})
-            elif path == "/export":
-                since = q.get("since")
-                if not since:
-                    self._send({"error": "since= query param required (ISO-8601)"}, 400)
-                    return
-                limit, _ = self._page(q, default=500, maximum=2000)
-                obs = self.db.observations_since(since, limit)
-                fcs = self.db.forecasts_since(since, limit)
-                als = self.db.alerts_since(since, limit)
-                ads = self.db.alert_details_since(since, limit)
-                alm = self.db.almanac_since(since, limit)
-                trs = self.db.raw_reports_since(since, limit)
-                sections = {"observations": obs, "forecasts": fcs, "alerts": als,
-                            "alert_details": ads, "almanac": alm, "transcripts": trs}
-                stamps = ([r["captured_at"] for r in obs]
-                          + [r["issued_at"] for r in fcs]
-                          + [r["captured_at"] for r in als]
-                          + [r["captured_at"] for r in ads]
-                          + [r["captured_at"] for r in alm]
-                          + [r.get("captured_at", "") for r in trs])
-                stamps = [s for s in stamps if s]
-                self._send({"since": since,
-                            "next_since": max(stamps) if stamps else since,
-                            "limit": limit,
-                            "more": any(len(v) >= limit for v in sections.values()),
-                            **sections})
-            elif path == "/alerts/active":
-                alerts = self.db.get_active_alerts()
-                if q.get("details", "1") != "0":
-                    alerts = [self._link_details(a) for a in alerts]
-                self._send({"alerts": alerts})
-            elif parts[:2] == ["alerts", "history"]:
-                limit, offset = self._page(q, default=100)
-                total, rows = self.db.alerts_history(
-                    q.get("from"), q.get("to"), q.get("event"), limit, offset)
-                if q.get("details") in ("1", "true"):
-                    rows = [self._link_details(a) for a in rows]
-                else:
-                    rows = [self._authoritative(a) for a in rows]
-                self._send({"from": q.get("from"), "to": q.get("to"),
-                            "event": q.get("event"), "alerts": rows,
-                            **self._paging(total, len(rows), limit, offset)})
-            elif parts[:2] == ["alerts", "details"]:
-                now = datetime.now(timezone.utc)
-                to = q.get("to") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
-                frm = q.get("from") or (now - timedelta(hours=24)).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ")
-                self._send({"from": frm, "to": to,
-                            "details": self.db.alert_details_between(frm, to)})
-            elif path == "/health":
-                total_alerts, _ = self.db.alerts_history(None, None, None, 1, 0)
-                health = assess(Heartbeat.read(self.cfg), self.cfg)
-                health.update({"generated_at": _now_iso(),
-                               "station": self.cfg.station,
-                               "conditions": len(self.db.list_conditions()),
-                               "cities": len(self.db.cities()),
-                               "active_alerts": len(self.db.get_active_alerts()),
-                               "total_alerts": total_alerts,
-                               "forecast_cities": len(self.db.latest_forecasts()),
-                               "almanac_fields": len(self.db.latest_almanac())})
-                # fail loud: non-200 so a monitor can alarm on HTTP status alone.
-                code = 200 if health["status"] == "ok" else 503
-                self._send(health, code)
+                self._ep_condition(q, parts[1])
             else:
                 self._send({"error": "not found", "path": path}, 404)
         except Exception as e:  # pragma: no cover - defensive: never crash on a bad read
             self._send({"error": str(e)}, 500)
+
+    def _ep_index(self, q: dict) -> None:
+        self._send({"endpoints": [
+            "/now", "/bulletin", "/sitrep", "/aprs",
+            "/cities", "/city/{city}",
+            "/conditions", "/conditions/{condition}", "/conditions/history",
+            "/almanac", "/forecast", "/forecast/history",
+            "/transcripts", "/export?since=", "/stream",
+            "/alerts/active", "/alerts/history", "/alerts/details", "/health"]})
+
+    def _ep_stream(self, q: dict) -> None:
+        self._serve_sse(q.get("since"))
+
+    def _ep_now(self, q: dict) -> None:
+        self._send(self._snapshot(q))
+
+    def _ep_bulletin(self, q: dict) -> None:
+        self._send_text(net_bulletin(self._snapshot(q)))
+
+    def _ep_sitrep(self, q: dict) -> None:
+        self._send_text(sitrep(self._snapshot(q)))
+
+    def _ep_aprs(self, q: dict) -> None:
+        snap = self._snapshot(q)
+        payload = {"station": snap["station"], "generated_at": snap["generated_at"],
+                   "weather_report": aprs_weather(snap),
+                   "bulletins": aprs_bulletins(snap)}
+        if q.get("format") == "text":
+            self._send_text("\n".join([payload["weather_report"], *payload["bulletins"]]) + "\n")
+        else:
+            self._send(payload)
+
+    def _ep_cities(self, q: dict) -> None:
+        self._send({"generated_at": _now_iso(), "cities": self.db.cities(self._min(q))})
+
+    def _ep_city(self, q: dict, city: str) -> None:
+        m = self._min(q)
+        conds = self._trusted(self.db.all_conditions_for_city(city, m), q, drop_stale=True)
+        self._send({"city": city, "min_sightings": m,
+                    "stale_after_min": self._stale_after(q), "conditions": conds})
+
+    def _ep_conditions(self, q: dict) -> None:
+        conds = self.db.list_conditions(self._min(q))
+        for c in conds:  # reuse age annotation against each condition's latest
+            c["captured_at"] = c.get("latest")
+        conds = self._annotate_age(conds, dict(q, fresh=""))  # never drop on index
+        self._send({"min_sightings": self._min(q),
+                    "stale_after_min": self._stale_after(q), "conditions": conds})
+
+    def _ep_condition_history(self, q: dict) -> None:
+        cond = _canon(q.get("condition", ""))
+        if not cond:
+            self._send({"error": "condition= query param required"}, 400)
+            return
+        args = (cond, q.get("city"), q.get("from"), q.get("to"))
+        rows, paging = self._paginate(
+            q, 1000, lambda: self.db.condition_history_count(*args),
+            lambda lim, off: self.db.condition_history(*args, lim, off))
+        self._send({"condition": cond, "city": q.get("city"),
+                    "from": q.get("from"), "to": q.get("to"), "readings": rows, **paging})
+
+    def _ep_condition(self, q: dict, condition: str) -> None:
+        cond = _canon(condition)
+        m = self._min(q)
+        cities = self._trusted(self.db.latest_for_condition(cond, m), q, drop_stale=True)
+        self._send({"condition": cond, "min_sightings": m,
+                    "stale_after_min": self._stale_after(q), "cities": cities})
+
+    def _ep_almanac(self, q: dict) -> None:
+        rows = self._trusted(self.db.latest_almanac(self._min(q)), q)
+        self._send({"generated_at": _now_iso(), "min_sightings": self._min(q),
+                    "stale_after_min": self._stale_after(q), "almanac": rows})
+
+    def _ep_forecast(self, q: dict) -> None:
+        self._send({"forecasts": self._annotate_forecast_age(self.db.latest_forecasts(), q)})
+
+    def _ep_forecast_history(self, q: dict) -> None:
+        args = (q.get("from"), q.get("to"), q.get("city"))
+        rows, paging = self._paginate(
+            q, 1000, lambda: self.db.forecast_history_count(*args),
+            lambda lim, off: self.db.forecast_history(*args, lim, off))
+        self._send({"from": q.get("from"), "to": q.get("to"), "city": q.get("city"),
+                    "forecasts": rows, **paging})
+
+    def _ep_transcripts(self, q: dict) -> None:
+        args = dict(frm=q.get("from"), to=q.get("to"), q=q.get("q"), product=q.get("product"))
+        rows, paging = self._paginate(
+            q, 100, lambda: self.db.count_raw_reports(**args),
+            lambda lim, off: self.db.query_raw_reports(limit=lim, offset=off, **args))
+        self._send({"from": q.get("from"), "to": q.get("to"),
+                    "q": q.get("q"), "product": q.get("product"),
+                    "transcripts": rows, **paging})
+
+    def _ep_export(self, q: dict) -> None:
+        since = q.get("since")
+        if not since:
+            self._send({"error": "since= query param required (ISO-8601)"}, 400)
+            return
+        limit, _ = self._page(q, default=500, maximum=2000)
+        obs = self.db.observations_since(since, limit)
+        fcs = self.db.forecasts_since(since, limit)
+        als = self.db.alerts_since(since, limit)
+        ads = self.db.alert_details_since(since, limit)
+        alm = self.db.almanac_since(since, limit)
+        trs = self.db.raw_reports_since(since, limit)
+        sections = {"observations": obs, "forecasts": fcs, "alerts": als,
+                    "alert_details": ads, "almanac": alm, "transcripts": trs}
+        stamps = ([r["captured_at"] for r in obs]
+                  + [r["issued_at"] for r in fcs]
+                  + [r["captured_at"] for r in als]
+                  + [r["captured_at"] for r in ads]
+                  + [r["captured_at"] for r in alm]
+                  + [r.get("captured_at", "") for r in trs])
+        stamps = [t for t in stamps if t]
+        self._send({"since": since,
+                    "next_since": max(stamps) if stamps else since,
+                    "limit": limit,
+                    "more": any(len(v) >= limit for v in sections.values()),
+                    **sections})
+
+    def _ep_alerts_active(self, q: dict) -> None:
+        alerts = self.db.get_active_alerts()
+        if q.get("details", "1") != "0":
+            alerts = [self._link_details(a) for a in alerts]
+        self._send({"alerts": alerts})
+
+    def _ep_alerts_history(self, q: dict) -> None:
+        args = (q.get("from"), q.get("to"), q.get("event"))
+        rows, paging = self._paginate(
+            q, 100, lambda: self.db.alerts_history_count(*args),
+            lambda lim, off: self.db.alerts_history(*args, lim, off))
+        if q.get("details") in ("1", "true"):
+            rows = [self._link_details(a) for a in rows]
+        else:
+            rows = [self._authoritative(a) for a in rows]
+        self._send({"from": q.get("from"), "to": q.get("to"),
+                    "event": q.get("event"), "alerts": rows, **paging})
+
+    def _ep_alerts_details(self, q: dict) -> None:
+        now = datetime.now(timezone.utc)
+        to = q.get("to") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        frm = q.get("from") or (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._send({"from": frm, "to": to,
+                    "details": self.db.alert_details_between(frm, to)})
+
+    def _ep_health(self, q: dict) -> None:
+        health = assess(Heartbeat.read(self.cfg), self.cfg)
+        health.update({"generated_at": _now_iso(),
+                       "station": self.cfg.station,
+                       "conditions": len(self.db.list_conditions()),
+                       "cities": len(self.db.cities()),
+                       "active_alerts": len(self.db.get_active_alerts()),
+                       "total_alerts": self.db.alerts_history_count(None, None, None),
+                       "forecast_cities": len(self.db.latest_forecasts()),
+                       "almanac_fields": len(self.db.latest_almanac())})
+        # fail loud: non-200 so a monitor can alarm on HTTP status alone.
+        code = 200 if health["status"] == "ok" else 503
+        self._send(health, code)
 
     def log_message(self, *args) -> None:
         return

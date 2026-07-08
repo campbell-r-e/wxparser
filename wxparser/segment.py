@@ -31,14 +31,16 @@ class Segment:
         return self.end_s - self.start_s
 
 
+def _dbfs(level: float) -> float:
+    """Linear full-scale level (0..1) -> dBFS, floored at -120 for silence."""
+    return 20.0 * float(np.log10(level)) if level > 1e-9 else -120.0
+
+
 def _frame_dbfs(frame: np.ndarray) -> float:
     if frame.size == 0:
         return -120.0
     x = frame.astype(np.float64) / 32768.0
-    rms = float(np.sqrt(np.mean(x * x)))
-    if rms <= 1e-9:
-        return -120.0
-    return 20.0 * np.log10(rms)
+    return _dbfs(float(np.sqrt(np.mean(x * x))))
 
 
 def segment_level_dbfs(samples: np.ndarray) -> tuple[float, float]:
@@ -50,9 +52,7 @@ def segment_level_dbfs(samples: np.ndarray) -> tuple[float, float]:
     x = np.abs(samples.astype(np.float64) / 32768.0)
     rms = float(np.sqrt(np.mean(x * x)))
     peak = float(np.max(x))
-    rms_db = 20.0 * np.log10(rms) if rms > 1e-9 else -120.0
-    peak_db = 20.0 * np.log10(peak) if peak > 1e-9 else -120.0
-    return round(rms_db, 1), round(peak_db, 1)
+    return round(_dbfs(rms), 1), round(_dbfs(peak), 1)
 
 
 def segment_stream(

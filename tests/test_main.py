@@ -8,13 +8,13 @@ import wxparser.main as main
 from wxparser.config import Config
 from wxparser.dedup import TextDeduper
 from wxparser.same import parse_header
-from wxparser.stt import Segment, Transcript
+from wxparser.stt import TranscriptSegment, Transcript
 
 _HDR = "ZCZC-WXR-TOR-018035-018057+0045-1741830-KJY93-"
 
 
 def _t(text):
-    return Transcript(text=text, segments=[Segment(0.0, 1.0, text)], language="en")
+    return Transcript(text=text, segments=[TranscriptSegment(0.0, 1.0, text)], language="en")
 
 
 def _frames(pattern, cfg):
@@ -214,7 +214,7 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
     db.clear()
     db._run("TRUNCATE raw_reports")
     garbled = Transcript(text="At Muncie, the temperature was 12 degrees.",
-                         segments=[Segment(0.0, 1.0, "x")], language="en",
+                         segments=[TranscriptSegment(0.0, 1.0, "x")], language="en",
                          avg_confidence=0.21)
     monkeypatch.setattr(main, "transcribe_samples", lambda s, c: garbled)
     q = _q.PriorityQueue()
@@ -237,8 +237,7 @@ def test_emit_alert_with_db(tmp_path):
     db = Database(cfg)
     db.clear()
     main._emit_alert(parse_header(_HDR), cfg, db)
-    total, _ = db.alerts_history(None, None, None, 1, 0)
-    assert total == 1
+    assert db.alerts_history_count(None, None, None) == 1
 
 
 def test_stt_worker_survives_transcribe_error(tmp_path, monkeypatch):

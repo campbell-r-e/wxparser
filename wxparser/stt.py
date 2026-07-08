@@ -26,7 +26,7 @@ from .data.stt_terms import correct_terms
 
 
 @dataclass
-class Segment:
+class TranscriptSegment:
     start_s: float
     end_s: float
     text: str
@@ -36,7 +36,7 @@ class Segment:
 @dataclass
 class Transcript:
     text: str
-    segments: list[Segment]
+    segments: list[TranscriptSegment]
     language: str
     avg_confidence: float = 0.0  # token-weighted mean confidence across segments
 
@@ -45,8 +45,13 @@ class STTError(RuntimeError):
     pass
 
 
+_ENC_FRAMES_PER_S = 50  # whisper encoder frames per second of audio
+_CTX_MARGIN = 1.2        # headroom so a boundary-trimmed segment isn't starved
+_CTX_MIN_FRAMES = 24     # floor so a very short segment still decodes
+
+
 def _audio_ctx_for(duration_s: float, cfg: Config) -> int:
-    frames = int(duration_s * 50 * 1.2) + 24  # ~50 encoder frames/sec + margin
+    frames = int(duration_s * _ENC_FRAMES_PER_S * _CTX_MARGIN) + _CTX_MIN_FRAMES
     return max(cfg.whisper_audio_ctx_min, min(cfg.whisper_audio_ctx_max, frames))
 
 
@@ -108,7 +113,7 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
     except (OSError, json.JSONDecodeError) as e:
         raise STTError(f"could not read whisper JSON at {json_path}: {e}") from e
 
-    segments: list[Segment] = []
+    segments: list[TranscriptSegment] = []
     conf_sum = 0.0  # token-weighted, so long segments count proportionally
     conf_n = 0
     for seg in data.get("transcription", []):
@@ -122,7 +127,7 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
         conf_n += ntok
         off = seg.get("offsets", {})
         segments.append(
-            Segment(
+            TranscriptSegment(
                 start_s=round(off.get("from", 0) / 1000.0, 3),
                 end_s=round(off.get("to", 0) / 1000.0, 3),
                 text=text,
@@ -159,6 +164,10 @@ _HALLUCINATIONS = {
     "i hate it", "thank you", "thanks for watching", "please subscribe",
     "subscribe", "bye", "you",
 }
+# whisper's literal non-speech markers (matched whole, plus any "[blank..."
+# prefix in is_blank) — kept beside _HALLUCINATIONS so all known junk
+# transcripts live in one place.
+_NON_SPEECH_MARKERS = {"[blank_audio]", "(dramatic music)"}
 
 # Repetition-loop defaults. The greedy decoder occasionally wedges into a
 # degenerate loop on noisy/near-silent audio and emits a token or short phrase
@@ -206,7 +215,7 @@ def is_blank(transcript: Transcript, cfg: Config | None = None) -> bool:
     t = transcript.text.strip().lower()
     if not t:
         return True
-    if t in {"[blank_audio]", "(dramatic music)"} or t.startswith("[blank"):
+    if t in _NON_SPEECH_MARKERS or t.startswith("[blank"):
         return True
     core = re.sub(r"[^a-z0-9 ]", "", t).strip()
     if not core or core in _HALLUCINATIONS:

@@ -170,8 +170,7 @@ def test_db_alert_now_param_history_filters_and_close():
     assert len(db.get_active_alerts(now="2026-06-24T06:30:00Z")) == 1   # now param branch
     db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-24T18:00:00Z", city="Muncie")
     assert db.forecast_history_count("2026-06-24T00:00:00Z", "2026-06-25T00:00:00Z", "Muncie") == 1
-    total, _ = db.alerts_history("2026-06-24T00:00:00Z", "2026-06-25T00:00:00Z", "TOR", 10, 0)
-    assert total == 1
+    assert db.alerts_history_count("2026-06-24T00:00:00Z", "2026-06-25T00:00:00Z", "TOR") == 1
     db.close()
 
 

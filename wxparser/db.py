@@ -198,6 +198,11 @@ def _as_obj(v):
     return json.loads(v)
 
 
+def _split_value(value, numeric: bool) -> tuple[float | None, str | None]:
+    """Route a reading's value to the numeric or the text column."""
+    return (float(value), None) if numeric else (None, str(value))
+
+
 def _value(row: dict):
     if row.get("value_num") is not None:
         n = row["value_num"]
@@ -263,6 +268,18 @@ class Database:
                 cols = [c["name"] for c in self._conn.columns]
         return [dict(zip(cols, r)) for r in rows]
 
+    def _count(self, table: str, where: str, params: dict) -> int:
+        return self._query(f"SELECT COUNT(*) AS n FROM {table} {where}", **params)[0]["n"]
+
+    @staticmethod
+    def _time_range(where: str, params: dict, col: str, frm, to) -> tuple[str, dict]:
+        """Append the shared inclusive [frm, to] range fragments to a WHERE."""
+        if frm:
+            where += f" AND {col} >= :frm"; params["frm"] = _parse_iso(frm)
+        if to:
+            where += f" AND {col} <= :to"; params["to"] = _parse_iso(to)
+        return where, params
+
     # --- writers ---------------------------------------------------------- #
     def record_reading(self, reading: dict, captured_at: str) -> None:
         """Record one heard reading: bump the (city,condition) sightings counter and
@@ -270,8 +287,7 @@ class Database:
         STT-garbage city names."""
         ca = _parse_iso(captured_at)
         cond = reading["condition"]
-        num = float(reading["value"]) if cond in _NUMERIC_CONDITIONS else None
-        txt = None if cond in _NUMERIC_CONDITIONS else str(reading["value"])
+        num, txt = _split_value(reading["value"], cond in _NUMERIC_CONDITIONS)
         votes, total = reading.get("votes"), reading.get("total")
         self._run(
             "INSERT INTO city_conditions"
@@ -352,8 +368,7 @@ class Database:
         append a history row. Mirrors record_reading without a city key."""
         ca = _parse_iso(captured_at)
         field = reading["field"]
-        num = float(reading["value"]) if field in ALMANAC_NUMERIC else None
-        txt = None if field in ALMANAC_NUMERIC else str(reading["value"])
+        num, txt = _split_value(reading["value"], field in ALMANAC_NUMERIC)
         votes, total = reading.get("votes"), reading.get("total")
         self._run(
             "INSERT INTO almanac"
@@ -396,12 +411,7 @@ class Database:
         )
 
     def _raw_where(self, frm, to, q, product) -> tuple[str, dict]:
-        where = "WHERE 1=1"
-        params: dict = {}
-        if frm:
-            where += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
-        if to:
-            where += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
+        where, params = self._time_range("WHERE 1=1", {}, "captured_at", frm, to)
         if product:
             where += " AND product_type = :product"; params["product"] = product
         if q:
@@ -410,7 +420,7 @@ class Database:
 
     def count_raw_reports(self, frm=None, to=None, q=None, product=None) -> int:
         where, params = self._raw_where(frm, to, q, product)
-        return self._query(f"SELECT COUNT(*) AS n FROM raw_reports {where}", **params)[0]["n"]
+        return self._count("raw_reports", where, params)
 
     def query_raw_reports(self, limit: int = 100, frm=None, to=None, q=None,
                           product=None, offset: int = 0) -> list[dict]:
@@ -478,16 +488,16 @@ class Database:
             "WHERE captured_at >= :frm AND captured_at <= :to "
             "ORDER BY captured_at DESC", frm=_parse_iso(frm), to=_parse_iso(to),
         )
-        out = []
-        for r in rows:
-            out.append({
-                "report_id": r["report_id"], "captured_at": _ts(r["captured_at"]),
+        return [self._hydrate_alert_detail(r) for r in rows]
+
+    @staticmethod
+    def _hydrate_alert_detail(r: dict) -> dict:
+        """Decode one alert_details row (JSONB fields, timestamp, until rename)."""
+        return {"report_id": r["report_id"], "captured_at": _ts(r["captured_at"]),
                 "product_type": r["product_type"], "until": r["until_text"],
                 "motion": _as_obj(r["motion"]), "threats": _as_obj(r["threats"]),
                 "locations": _as_obj(r["locations"]),
-                "spotter_activation": r["spotter_activation"], "text": r["text"],
-            })
-        return out
+                "spotter_activation": r["spotter_activation"], "text": r["text"]}
 
     # --- readers: conditions --------------------------------------------- #
     def list_conditions(self, min_sightings: int = 1) -> list[dict]:
@@ -511,20 +521,16 @@ class Database:
 
     def _obs_where(self, condition: str, city: str | None,
                    frm: str | None, to: str | None) -> tuple[str, dict]:
-        where = "WHERE condition=:c"
-        params: dict = {"c": condition}
+        where, params = self._time_range(
+            "WHERE condition=:c", {"c": condition}, "captured_at", frm, to)
         if city:
             where += " AND city=:city"; params["city"] = city
-        if frm:
-            where += " AND captured_at >= :frm"; params["frm"] = _parse_iso(frm)
-        if to:
-            where += " AND captured_at <= :to"; params["to"] = _parse_iso(to)
         return where, params
 
     def condition_history_count(self, condition: str, city: str | None,
                                 frm: str | None, to: str | None) -> int:
         where, params = self._obs_where(condition, city, frm, to)
-        return self._query(f"SELECT COUNT(*) AS n FROM city_observations {where}", **params)[0]["n"]
+        return self._count("city_observations", where, params)
 
     def condition_history(self, condition: str, city: str | None,
                           frm: str | None, to: str | None,
@@ -547,39 +553,43 @@ class Database:
         row["valid_from"], row["valid_to"] = vf, vt
         return row
 
+    @classmethod
+    def _hydrate_forecast(cls, r: dict) -> dict:
+        """Window + decoded issued_at/confidence on a full forecasts row."""
+        cls._with_window(r, r["issued_at"])
+        r["issued_at"] = _ts(r["issued_at"])
+        r["confidence"] = _as_obj(r["confidence"])
+        return r
+
     def latest_forecasts(self) -> list[dict]:
-        cities = self._query("SELECT DISTINCT city FROM forecasts")
-        out = []
-        for c in cities:
-            city = c["city"]
-            mx = self._query("SELECT MAX(issued_at) AS m FROM forecasts WHERE city=:city", city=city)
-            issued = mx[0]["m"]
-            rows = self._query(
-                "SELECT period,high_f,low_f,precip_pct,sky,source,confidence "
-                "FROM forecasts WHERE city=:city AND issued_at=:ia ORDER BY period",
-                city=city, ia=issued,
-            )
-            for r in rows:
-                self._with_window(r, issued)
-                r["confidence"] = _as_obj(r["confidence"])
-            rows.sort(key=lambda r: (r["valid_from"] is None, str(r["valid_from"])))
-            out.append({"city": city, "issued_at": _ts(issued), "periods": rows})
-        return out
+        """Each city's most recent issuance with its period rows (one query, not
+        one per city — the correlated subquery picks the max issued_at per city)."""
+        rows = self._query(
+            "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,source,confidence "
+            "FROM forecasts f WHERE issued_at="
+            "(SELECT MAX(issued_at) FROM forecasts WHERE city=f.city) "
+            "ORDER BY city, period")
+        by_city: dict[str, dict] = {}
+        for r in rows:
+            issued, city = r.pop("issued_at"), r.pop("city")
+            self._with_window(r, issued)
+            r["confidence"] = _as_obj(r["confidence"])
+            by_city.setdefault(
+                city, {"city": city, "issued_at": _ts(issued), "periods": []}
+            )["periods"].append(r)
+        for entry in by_city.values():
+            entry["periods"].sort(key=lambda r: (r["valid_from"] is None, str(r["valid_from"])))
+        return list(by_city.values())
 
     def _fc_where(self, frm: str | None, to: str | None, city: str | None) -> tuple[str, dict]:
-        where = "WHERE 1=1"
-        params: dict = {}
+        where, params = self._time_range("WHERE 1=1", {}, "issued_at", frm, to)
         if city:
             where += " AND city=:city"; params["city"] = city
-        if frm:
-            where += " AND issued_at >= :frm"; params["frm"] = _parse_iso(frm)
-        if to:
-            where += " AND issued_at <= :to"; params["to"] = _parse_iso(to)
         return where, params
 
     def forecast_history_count(self, frm: str | None, to: str | None, city: str | None) -> int:
         where, params = self._fc_where(frm, to, city)
-        return self._query(f"SELECT COUNT(*) AS n FROM forecasts {where}", **params)[0]["n"]
+        return self._count("forecasts", where, params)
 
     def forecast_history(self, frm: str | None, to: str | None, city: str | None,
                          limit: int = 1000, offset: int = 0) -> list[dict]:
@@ -588,11 +598,7 @@ class Database:
             f"SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
             f"FROM forecasts {where} ORDER BY issued_at DESC, city, period LIMIT :lim OFFSET :off",
             lim=limit, off=offset, **params)
-        for r in rows:
-            self._with_window(r, r["issued_at"])
-            r["issued_at"] = _ts(r["issued_at"])
-            r["confidence"] = _as_obj(r["confidence"])
-        return rows
+        return [self._hydrate_forecast(r) for r in rows]
 
     # --- readers: alerts -------------------------------------------------- #
     @staticmethod
@@ -613,22 +619,26 @@ class Database:
         )
         return [self._hydrate_alert(d) for d in rows]
 
-    def alerts_history(self, frm: str | None, to: str | None, event: str | None,
-                       limit: int = 1000, offset: int = 0) -> tuple[int, list[dict]]:
-        """All SAME alerts (active and expired), newest first, paginated."""
-        where = "WHERE 1=1"
-        base: dict = {}
-        if frm:
-            where += " AND captured_at >= :frm"; base["frm"] = _parse_iso(frm)
-        if to:
-            where += " AND captured_at <= :to"; base["to"] = _parse_iso(to)
+    def _alert_where(self, frm: str | None, to: str | None,
+                     event: str | None) -> tuple[str, dict]:
+        where, params = self._time_range("WHERE 1=1", {}, "captured_at", frm, to)
         if event:
-            where += " AND event = :event"; base["event"] = event
-        total = self._query(f"SELECT COUNT(*) AS n FROM alerts {where}", **base)[0]["n"]
+            where += " AND event = :event"; params["event"] = event
+        return where, params
+
+    def alerts_history_count(self, frm: str | None, to: str | None,
+                             event: str | None) -> int:
+        where, params = self._alert_where(frm, to, event)
+        return self._count("alerts", where, params)
+
+    def alerts_history(self, frm: str | None, to: str | None, event: str | None,
+                       limit: int = 1000, offset: int = 0) -> list[dict]:
+        """All SAME alerts (active and expired), newest first, paginated."""
+        where, params = self._alert_where(frm, to, event)
         rows = self._query(
             f"SELECT * FROM alerts {where} ORDER BY captured_at DESC LIMIT :lim OFFSET :off",
-            lim=limit, off=offset, **base)
-        return total, [self._hydrate_alert(d) for d in rows]
+            lim=limit, off=offset, **params)
+        return [self._hydrate_alert(d) for d in rows]
 
     # --- readers: per-city / index --------------------------------------- #
     def all_conditions_for_city(self, city: str, min_sightings: int = 1) -> list[dict]:
@@ -667,11 +677,7 @@ class Database:
             "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
             "FROM forecasts WHERE issued_at > :s ORDER BY issued_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
-        for r in rows:
-            self._with_window(r, r["issued_at"])
-            r["issued_at"] = _ts(r["issued_at"])
-            r["confidence"] = _as_obj(r["confidence"])
-        return rows
+        return [self._hydrate_forecast(r) for r in rows]
 
     def alerts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(
@@ -685,12 +691,7 @@ class Database:
             "locations,spotter_activation,text FROM alert_details WHERE captured_at > :s "
             "ORDER BY captured_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
-        return [{"report_id": r["report_id"], "captured_at": _ts(r["captured_at"]),
-                 "product_type": r["product_type"], "until": r["until_text"],
-                 "motion": _as_obj(r["motion"]), "threats": _as_obj(r["threats"]),
-                 "locations": _as_obj(r["locations"]),
-                 "spotter_activation": r["spotter_activation"], "text": r["text"]}
-                for r in rows]
+        return [self._hydrate_alert_detail(r) for r in rows]
 
     def latest_readings(self) -> list[dict]:
         """All latest (city, condition) readings — used to prime the aggregator."""

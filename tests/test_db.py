@@ -67,6 +67,18 @@ def test_forecast_city_and_latest():
     assert p["low_f"] == 61 and p["valid_from"] is not None
 
 
+def test_latest_forecasts_groups_per_city():
+    db = _db()
+    db.write_forecast([{"period": "Tonight", "low_f": 61}], "2026-06-24T12:00:00Z", city="Muncie")
+    db.write_forecast([{"period": "Tonight", "low_f": 59},
+                       {"period": "Wednesday", "high_f": 84}],
+                      "2026-06-24T13:00:00Z", city="Anderson")
+    fcs = {f["city"]: f for f in db.latest_forecasts()}
+    assert set(fcs) == {"Muncie", "Anderson"}
+    assert len(fcs["Anderson"]["periods"]) == 2
+    assert fcs["Muncie"]["issued_at"] == "2026-06-24T12:00:00Z"
+
+
 def test_forecast_confidence_roundtrip():
     db = _db()
     db.write_forecast([{"period": "Tonight", "low_f": 61,
@@ -102,7 +114,7 @@ def test_write_alert_tolerates_missing_purge():
     # purge_minutes present-but-None must not crash (expires == captured)
     db.write_alert({"id": "a2", "captured_at": "2026-06-24T06:00:00Z",
                     "alert": {"event": "RWT", "purge_minutes": None, "raw": "ZCZC"}})
-    assert db.alerts_history(None, None, None, 10, 0)[0] == 1
+    assert db.alerts_history_count(None, None, None) == 1
 
 
 def test_period_window_weekday_night():
@@ -146,9 +158,9 @@ def test_alerts_history_and_since():
                         "alert": {"event": "SVR", "event_label": "Severe T-storm",
                                   "areas": ["Delaware"], "counties": ["18035"],
                                   "purge_minutes": 10, "raw": "ZCZC"}})
-    total, rows = db.alerts_history(None, None, None, 1, 0)
-    assert total == 2 and len(rows) == 1            # paginated, total reported
-    assert db.alerts_history(None, None, "SVR", 10, 0)[0] == 2
+    rows = db.alerts_history(None, None, None, 1, 0)
+    assert db.alerts_history_count(None, None, None) == 2 and len(rows) == 1
+    assert db.alerts_history_count(None, None, "SVR") == 2
     since = db.alerts_since("2026-06-24T00:30:00Z", 10)
     assert [a["id"] for a in since] == ["a1"]       # strictly after, ascending
 
