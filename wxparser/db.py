@@ -216,7 +216,7 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
     name = p[:-6].strip() if night else p
     if name in _WEEKDAYS:
         delta = (_WEEKDAYS.index(name) - issued.weekday()) % 7
-        target = day + timedelta(days=delta or (7 if delta == 0 else 0))
+        target = day + timedelta(days=delta or 7)
         if night:
             return _iso(target.replace(hour=18)), _iso((target + timedelta(days=1)).replace(hour=6))
         return _iso(target.replace(hour=6)), _iso(target.replace(hour=18))
@@ -434,7 +434,7 @@ class Database:
 
     def recent_raw_reports(self, n: int) -> list[dict]:
         """The last n raw docs, returned OLDEST-first — for priming text-dedup on
-        restart (mirrors the old load_recent_reports tail)."""
+        restart."""
         rows = self._query(
             "SELECT payload FROM (SELECT payload, captured_at, id FROM raw_reports "
             "ORDER BY captured_at DESC, id DESC LIMIT :n) t ORDER BY captured_at, id",

@@ -653,48 +653,6 @@ class _FieldVoter:
         return Voted(value=value, votes=top, total=len(pool))
 
 
-class ConditionsAggregator:
-    """Accumulates field readings across reports and majority-votes each field."""
-
-    def __init__(self, maxlen: int = 15):
-        self.voters: dict[str, _FieldVoter] = {}
-        self.maxlen = maxlen
-        self._last_snapshot: dict = {}
-
-    def prime(self, fields: dict) -> None:
-        """Seed voters from a stored observation snapshot (field -> {value,...}).
-
-        Lets a restart keep showing last-known conditions until fresh readings
-        arrive; live readings then vote on top and age the primed value out.
-        """
-        for field, info in fields.items():
-            val = info.get("value") if isinstance(info, dict) else info
-            if val is not None:
-                self.voters.setdefault(field, _FieldVoter(self.maxlen)).add(val)
-        self._last_snapshot = self.snapshot()
-
-    def update(self, text: str) -> bool:
-        """Feed a transcript; returns True if the voted snapshot changed."""
-        fields = extract_observation(text)
-        for k, v in fields.items():
-            self.voters.setdefault(k, _FieldVoter(self.maxlen)).add(v)
-        snap = self.snapshot()
-        changed = {k: s["value"] for k, s in snap.items()} != {
-            k: s["value"] for k, s in self._last_snapshot.items()
-        }
-        self._last_snapshot = snap
-        return changed and bool(snap)
-
-    def snapshot(self) -> dict:
-        """Voted current conditions: field -> {value, votes, total, source}."""
-        out: dict = {}
-        for k, voter in self.voters.items():
-            b = voter.best()
-            if b is not None:  # pragma: no branch - a registered voter always has a sample
-                out[k] = {"value": b.value, "votes": b.votes, "total": b.total, "source": "voice"}
-        return out
-
-
 # --------------------------------------------------------------------------- #
 # Climate / almanac recap extraction
 # --------------------------------------------------------------------------- #
@@ -837,16 +795,14 @@ _RE_HAIL = re.compile(
     r"|hail\s*(?:up to\s*|of\s*)?(\d(?:\.\d+)?)\s*inch"
     r"|(quarter|nickel|penny|ping[\s-]?pong|golf[\s-]?ball|half[\s-]?dollar|"
     r"tennis[\s-]?ball|baseball)\s*[- ]?siz", re.I)
-# Alert-narrative wind SPEED ("winds to 60 mph", "gusts up to 70 mph"). Distinct
-# from the current-conditions wind-DIRECTION regex (_RE_WIND, defined above) —
-# they previously shared the name, and this one silently shadowed it, disabling
-# wind extraction in current conditions.
+# Alert-narrative wind SPEED ("winds to 60 mph", "gusts up to 70 mph") —
+# distinct from the current-conditions wind-DIRECTION regex (_RE_WIND).
 _RE_ALERT_WIND = re.compile(
     r"(?:winds?|gusts?)\s*(?:up to|of|to|near|around)?\s*(\d{2,3})\s*(?:mph|miles per hour)",
     re.I)
 # "near Yorktown", "over the Muncie area", "approaching Albany" — place after a
 # locator preposition. STT may garble the name, but capturing it is still useful.
-_RE_NEAR = re.compile(rf"\b(?:near|over|approaching|just (?:north|south|east|west) of|from)\s+(?:the\s+)?({_CITY})")
+_RE_NEAR = re.compile(rf"\b(?:near|over|approaching|just (?:north|south|east|west) of)\s+(?:the\s+)?({_CITY})")
 _RE_SPOTTER = re.compile(
     r"spotter activation|weather spotters?|spotters?\s+(?:are\s+|should\s+be\s+)?"
     r"(?:needed|activated|encouraged|in the area|on alert)|report(?:ing)? (?:any )?severe weather",

@@ -20,7 +20,6 @@ from wxparser.fingerprint import _pool_time
 from wxparser.formats import aprs_weather, sitrep
 from wxparser.same import SAMEMonitor, decode, fips_county, looks_like_same, parse_header
 from wxparser.segment import _finish
-from wxparser.store import build_observation
 
 
 # --- db helpers ----------------------------------------------------------- #
@@ -41,14 +40,6 @@ def test_db_value_coercers():
 
 
 # --- store ---------------------------------------------------------------- #
-def test_build_observation():
-    o = build_observation({"temperature_f": {"value": 70}}, Config(),
-                          captured_at="2026-06-24T12:00:00Z")
-    assert o["type"] == "observation" and o["captured_at"] == "2026-06-24T12:00:00Z"
-    assert o["id"]
-
-
-# --- extract -------------------------------------------------------------- #
 def test_extract_dewpoint_and_temp_parsing():
     assert extract_observation("The dewpoint was 65 degrees.")["dewpoint_f"] == 65
     assert parse_temp_value("in the 80s") == 85          # bare decade -> mid

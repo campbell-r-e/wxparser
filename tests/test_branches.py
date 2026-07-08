@@ -14,7 +14,6 @@ from wxparser.dedup import TextDeduper
 from wxparser.extract import (
     AlmanacAggregator,
     CityConditionsAggregator,
-    ConditionsAggregator,
     ForecastAggregator,
     extract_alert_details,
     extract_forecast_fields,
@@ -79,12 +78,6 @@ def test_city_header_non_primary_ignored():
         "At Anderson, the temperature was 70 degrees. Nearby, 74 at Marion.")
     cities = {r["city"] for r in out}
     assert "Muncie" not in cities and "Marion" in cities
-
-
-def test_conditions_prime_skips_none_value():
-    agg = ConditionsAggregator()
-    agg.prime({"temperature_f": {"value": 70}, "sky": {"value": None}})   # None -> skipped
-    assert "temperature_f" in agg.snapshot() and "sky" not in agg.snapshot()
 
 
 def test_alert_details_dedupes_repeated_location():

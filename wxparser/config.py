@@ -162,7 +162,7 @@ class Config:
     # only surface a city once heard this many times (filters one-off STT garbage);
     # clients can override per request with ?min=
     api_min_sightings: int = int(_env("WX_MIN_SIGHTINGS", "2"))
-    # fail-loud health thresholds (roadmap: watchdog). Segments arrive every
+    # fail-loud health thresholds for /health. Segments arrive every
     # ~20-30s, so minutes of silence means the radio/capture has gone deaf; the
     # heartbeat file is rewritten each segment, so a stale one means the capture
     # process itself is down.
@@ -185,7 +185,7 @@ class Config:
     # every few minutes, so a full hour with nothing passing the novelty gate
     # means noise, not programming.
     health_novel_stale_min: int = int(_env("WX_HEALTH_NOVEL_STALE_MIN", "60"))
-    # Outbound push (roadmap). OFF by default so the box stays fully offline; set a
+    # Outbound push. OFF by default so the box stays fully offline; set a
     # URL (e.g. a LAN mesh gateway) to POST each new SAME alert as JSON. The SSE
     # /stream endpoint needs nothing here — consumers connect inbound.
     webhook_url: str = _env("WX_WEBHOOK_URL", "")

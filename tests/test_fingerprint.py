@@ -39,6 +39,6 @@ def test_novelty_gate_history():
     fp = Fingerprinter(cfg)
     g = NoveltyGate(cfg)
     v, _ = fp.compute(_audio(3))
-    assert g.best_similarity(v) == 0.0 and g.is_novel(v)   # empty history
+    assert g.best_similarity(v) == 0.0                     # empty history
     g.add(v)
-    assert g.best_similarity(v) > 0.99 and not g.is_novel(v)
+    assert g.best_similarity(v) > 0.99

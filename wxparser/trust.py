@@ -1,4 +1,4 @@
-"""Per-field trust scoring (roadmap: STT trust/confidence layer).
+"""Per-field trust scoring for transcribed readings.
 
 The digital SAME header is authoritative; everything transcribed from the voice
 loop is advisory. A transcribed field's trust is derived from the corroboration

@@ -1,4 +1,4 @@
-"""Pipeline liveness heartbeat (roadmap: fail-loud health + watchdog).
+"""Pipeline liveness heartbeat backing the fail-loud /health endpoint.
 
 The capture/STT pipeline runs in the `wxparser` process; the query API runs in a
 separate `wxparser-api` process and can't see its in-memory state. So the

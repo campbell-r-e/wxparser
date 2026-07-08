@@ -49,7 +49,7 @@ from .health import Heartbeat
 from .notify import post_webhook
 from .pipeline import apply_readings, write_alert_detail_if_any
 from .same import SAMEMessage, SAMEMonitor
-from .segment import Segment, segment_level_dbfs, segment_stream
+from .segment import segment_level_dbfs, segment_stream
 from .store import build_alert, build_report
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
 from .store import _utc_now_iso

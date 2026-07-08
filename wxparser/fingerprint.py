@@ -74,7 +74,7 @@ class Fingerprinter:
         if norm > 0:
             vec = vec / norm
 
-        # digest: sign of mean-centred vec -> bits -> sha1 (stable id for storage)
+        # digest: sign relative to the median -> bits -> sha1 (stable id for storage)
         bits = (vec > np.median(vec)).astype(np.uint8)
         digest = hashlib.sha1(np.packbits(bits).tobytes()).hexdigest()[:16]
         return vec, digest
@@ -93,10 +93,10 @@ def _pool_time(mel: np.ndarray, time_bins: int) -> np.ndarray:
 
 
 class NoveltyGate:
-    """Keeps recent fingerprints; a segment is novel if no recent one is similar."""
+    """Keeps recent fingerprints; the caller compares best_similarity() to the
+    configured threshold to decide novelty (main.py's repeat/novel branch)."""
 
     def __init__(self, cfg: Config):
-        self.threshold = cfg.fp_similarity_threshold
         self.history: deque[np.ndarray] = deque(maxlen=cfg.gate_history)
 
     def best_similarity(self, vec: np.ndarray) -> float:
@@ -104,9 +104,6 @@ class NoveltyGate:
             return 0.0
         mat = np.stack(self.history)          # (h x d), rows already unit-norm
         return float(np.max(mat @ vec))       # cosine == dot for unit vectors
-
-    def is_novel(self, vec: np.ndarray) -> bool:
-        return self.best_similarity(vec) < self.threshold
 
     def add(self, vec: np.ndarray) -> None:
         self.history.append(vec)

@@ -5,7 +5,6 @@ from __future__ import annotations
 from wxparser.extract import (
     AlmanacAggregator,
     CityConditionsAggregator,
-    ConditionsAggregator,
     ForecastAggregator,
     _FieldVoter,
     extract_alert_details,
@@ -51,17 +50,6 @@ def test_forecast_sky_does_not_pollute_conditions():
 def test_range_check_rejects_garbage():
     o = extract_observation("The temperature was 999 degrees.")
     assert "temperature_f" not in o
-
-
-def test_repeat_voting_stabilizes_numbers():
-    agg = ConditionsAggregator(maxlen=10)
-    # 61 heard 3x, a one-off STT slip to 67 once -> vote must land on 61
-    for t in ["temperature was 61 degrees", "temperature was 61 degrees",
-              "temperature was 67 degrees", "temperature was 61 degrees"]:
-        agg.update(t)
-    snap = agg.snapshot()
-    assert snap["temperature_f"]["value"] == 61
-    assert snap["temperature_f"]["votes"] == 3 and snap["temperature_f"]["total"] == 4
 
 
 def test_parse_temp_value():
@@ -354,16 +342,6 @@ def test_precip_accepts_percent_sign_and_word():
     assert extract_forecast_fields("Chance of rain 40%.")["precip_pct"] == 40
     assert extract_forecast_fields("Chance of rain 40 percent.")["precip_pct"] == 40
     assert extract_forecast_fields("Chance of precipitation 90%.")["precip_pct"] == 90
-
-
-def test_prime_conditions_from_snapshot():
-    agg = ConditionsAggregator()
-    agg.prime({"temperature_f": {"value": 59}, "humidity_pct": {"value": 67}})
-    snap = agg.snapshot()
-    assert snap["temperature_f"]["value"] == 59 and snap["humidity_pct"]["value"] == 67
-    # a fresh live reading still votes on top
-    agg.update("The temperature was 60 degrees.")
-    assert agg.snapshot()["temperature_f"]["value"] in (59, 60)
 
 
 def test_prime_forecast_from_periods():
