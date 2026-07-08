@@ -57,9 +57,11 @@ CORRECTIONS: dict[str, list[str]] = {
     "Evansville": [
         "In Evansville", "And Evansville", "Ed Evansville",
     ],
-    # "Indianapolis" heard as the two-word "Indian Apple".
+    # "Indianapolis" heard as the two-word "Indian Apple". "Minneapolis" is
+    # confirmed by slot: "In Minneapolis, it was cloudy... Elsewhere across
+    # Indiana..." — the roundup always leads with Indianapolis there.
     "Indianapolis": [
-        "Indian Apple",
+        "Indian Apple", "Minneapolis",
     ],
     # "Shelbyville" clipped to its first two syllables.
     "Shelbyville": [
@@ -83,6 +85,7 @@ CORRECTIONS: dict[str, list[str]] = {
         # "...Just outside Indiana, Ed Lyman..." / "...71 in Lyman..."
         "Lyman", "Lymo", "Lymele", "Mlima", "Mllema", "Limee",
         "Lymel", "Lymal Hyle", "Delimah", "Llamville",
+        "Lina",  # "...Ed Lina, Ohio, it was cloudy with a temperature of 75."
     ],
     # "... at South Bend ..." — the 'b' drops out.
     "South Bend": [
@@ -97,6 +100,11 @@ CORRECTIONS: dict[str, list[str]] = {
     # "...73 at Luhl" parallel to the clean "...73 at Louisville").
     "Louisville": [
         "Blue", "Luhl", "And Louisville",
+        # 2026-07-08 audit: all three sit in Louisville's slots — "At Loovel,
+        # it was cloudy with a temperature of..." (the singleton before "Once
+        # again, at Muncie") and "...and 83 at Riverville/Wivill." closing the
+        # out-of-state tail; parallel airings the same evening read 83 too.
+        "Loovel", "Riverville", "Wivill",
     ],
     # "... at Portland ..." (Portland, IN) — slot after Marion ("63 at Portland"
     # heard as "63 at Ridgebrough").
@@ -140,6 +148,10 @@ JUNK_CITIES: list[str] = [
     # Terre Haute / Dayton and moved to CORRECTIONS to fold the reading in.)
     "Looft", "Loughrey", "Lying", "Rich New", "Thunner", "North",
     "Hamilton", "Hudson", "Washington",
+    # 2026-07-08 audit: one-off temp-slot tokens with no confident target —
+    # "Fairhope reported 74" / "Long reported 64" sit in roster-city "X
+    # reported" slots but could be several cities; "Illinois" is a state name.
+    "Fairhope", "Long", "Illinois",
 ]
 
 # (table, [key columns other than city]) — the non-city half of each PK, used
