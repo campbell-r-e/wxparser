@@ -298,6 +298,7 @@ process publishes a heartbeat the API reads.
   "checks": ["all signals nominal"],
   "station": "KJY93",
   "heartbeat_age_min": 0.1, "audio_silent_min": 0.1, "last_stt_ok_min": 0.3,
+  "last_novel_min": 2.4,
   "pipeline": { "last_segment_at": "...", "last_novel_at": "...", "last_stt_ok_at": "...",
                 "last_extraction_at": "...", "segments": 412, "novel": 38, "repeat": 374,
                 "queue_depth": 0, "capture_restarts": 0, "stt_errors": 0 },
@@ -308,7 +309,7 @@ process publishes a heartbeat the API reads.
 | status | meaning | HTTP |
 |---|---|---|
 | `ok` | segments flowing, worker draining | 200 |
-| `degraded` | audio silent for `WX_HEALTH_AUDIO_SILENT_MIN` (default 5) min — **deaf radio** — or the STT worker is wedged (backlog with no recent success) | 503 |
+| `degraded` | audio silent for `WX_HEALTH_AUDIO_SILENT_MIN` (default 5) min — **deaf radio** — no novel segment for `WX_HEALTH_NOVEL_STALE_MIN` (default 60) min — **static/dead carrier** — or the STT worker is wedged (backlog with no recent success) | 503 |
 | `down` | heartbeat older than `WX_HEALTH_HEARTBEAT_STALE_MIN` (default 3) min — the **capture process isn't running** | 503 |
 
 Because non-ok returns **HTTP 503**, a dumb monitor alarms on status code alone:

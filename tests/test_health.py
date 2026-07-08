@@ -33,7 +33,7 @@ def _ago(mins: float) -> str:
 
 def test_ok_when_signals_fresh():
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": _ago(1), "queue_depth": 0}
+          "last_novel_at": _ago(2), "last_stt_ok_at": _ago(1), "queue_depth": 0}
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
 
 
@@ -42,22 +42,47 @@ def test_down_when_no_heartbeat_file():
 
 
 def test_down_when_heartbeat_stale():
-    # heartbeat not flushed in minutes -> capture process is down
+    # heartbeat not flushed in minutes -> capture process is down (the novelty
+    # drought also fires here but must not soften "down" to "degraded")
     hb = {"updated_at": _ago(10), "last_segment_at": _ago(10)}
     assert assess(hb, CONFIG, _NOW)["status"] == "down"
 
 
 def test_degraded_when_audio_silent():
     # process alive (fresh heartbeat) but no segments -> deaf radio
-    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(10), "queue_depth": 0}
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(10),
+          "last_novel_at": _ago(2), "queue_depth": 0}
     r = assess(hb, CONFIG, _NOW)
     assert r["status"] == "degraded"
     assert any("deaf" in c for c in r["checks"])
 
 
+def test_degraded_when_no_novel_speech():
+    # dead-but-not-silent radio: static passes the VAD gate so segments keep
+    # flowing (audio fresh), but everything fingerprints as a repeat and nothing
+    # novel has queued in over an hour -> static/dead carrier, fail loud
+    # (2026-07-07: 4h outage where every check stayed green)
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+          "last_novel_at": _ago(90), "last_stt_ok_at": _ago(1), "queue_depth": 0}
+    r = assess(hb, CONFIG, _NOW)
+    assert r["status"] == "degraded"
+    assert any("novel" in c for c in r["checks"])
+    assert r["last_novel_min"] == 90.0
+
+
+def test_degraded_when_no_novel_reference():
+    # neither last_novel_at nor started_at to measure the drought from -> can't
+    # prove novel content ever arrived, so fail loud
+    hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+          "last_stt_ok_at": _ago(1), "queue_depth": 0}
+    r = assess(hb, CONFIG, _NOW)
+    assert r["status"] == "degraded"
+    assert any("novel" in c for c in r["checks"])
+
+
 def test_not_wedged_during_startup_grace():
-    # just booted: segments queued, first STT still running -> not yet wedged
-    # (stt_ref_age falls back to the recent process start, well under the window)
+    # just booted: segments queued, first STT still running, nothing novel yet ->
+    # not wedged, no novelty drought (both fall back to the recent process start)
     hb = {"updated_at": _ago(0.2), "started_at": _ago(0.4),
           "last_segment_at": _ago(0.3), "last_stt_ok_at": None, "queue_depth": 2}
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
@@ -68,7 +93,7 @@ def test_idle_then_single_segment_not_wedged():
     # idle-then-busy, drains within a cycle -> NOT wedged (the overnight false
     # positive: a single just-queued segment is below the wedged-queue floor).
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": _ago(30), "queue_depth": 1}
+          "last_novel_at": _ago(0.3), "last_stt_ok_at": _ago(30), "queue_depth": 1}
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
 
 
@@ -76,14 +101,14 @@ def test_backlog_with_fresh_stt_not_wedged():
     # post-restart catch-up: queue building (q=4) but STT actively draining
     # (last ok 3m, under the wedge window) -> not wedged
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": _ago(3), "queue_depth": 4}
+          "last_novel_at": _ago(1), "last_stt_ok_at": _ago(3), "queue_depth": 4}
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
 
 
 def test_degraded_when_worker_wedged():
     # a REAL backlog (q>1) stuck with nothing transcribed past the wedge window
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": _ago(15), "queue_depth": 3}
+          "last_novel_at": _ago(1), "last_stt_ok_at": _ago(15), "queue_depth": 3}
     r = assess(hb, CONFIG, _NOW)
     assert r["status"] == "degraded"
     assert any("wedged" in c for c in r["checks"])
@@ -93,8 +118,10 @@ def test_wedged_when_no_stt_reference():
     # backlog queued but neither last_stt_ok nor started_at to measure progress
     # from -> can't prove the worker is draining, so fail loud
     hb = {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
-          "last_stt_ok_at": None, "queue_depth": 2}
-    assert assess(hb, CONFIG, _NOW)["status"] == "degraded"
+          "last_novel_at": _ago(1), "last_stt_ok_at": None, "queue_depth": 2}
+    r = assess(hb, CONFIG, _NOW)
+    assert r["status"] == "degraded"
+    assert any("wedged" in c for c in r["checks"])
 
 
 def test_age_min_tolerates_corrupt_timestamp():

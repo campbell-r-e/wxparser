@@ -210,6 +210,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_API_HOST` / `WX_API_PORT` | `0.0.0.0` / `8080` | API bind |
 | `WX_HEALTH_AUDIO_SILENT_MIN` | `5` | `/health` flags `degraded` after this many minutes of no audio (deaf radio) |
 | `WX_HEALTH_HEARTBEAT_STALE_MIN` | `3` | `/health` flags `down` if the pipeline heartbeat is older than this |
+| `WX_HEALTH_NOVEL_STALE_MIN` | `60` | `/health` flags `degraded` after this many minutes with no novel segment (static/dead carrier) |
 | `WX_WEBHOOK_URL` | `""` (off) | when set, POST each new SAME alert here (opt-in outbound push) |
 | `WX_STREAM_POLL_S` | `3` | `/stream` (SSE) poll interval |
 | `WX_STALE_PRUNE_HOURS` | `24` | nightly prune drops non-home cities not heard in this long |

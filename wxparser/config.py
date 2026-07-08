@@ -177,6 +177,14 @@ class Config:
     # window before flagging — avoids the overnight false positives.
     health_stt_wedged_min: int = int(_env("WX_HEALTH_STT_WEDGED_MIN", "10"))
     health_stt_wedged_queue: int = int(_env("WX_HEALTH_STT_WEDGED_QUEUE", "1"))
+    # A dead radio can still look alive: constant static/carrier above the VAD
+    # gate produces segments that all fingerprint as near-identical repeats, so
+    # audio isn't "silent" yet nothing novel ever reaches STT (seen 2026-07-07:
+    # 4h of static, every segment sim~0.99, zero reports, /health green). On the
+    # real broadcast the changing time announcements alone yield novel segments
+    # every few minutes, so a full hour with nothing passing the novelty gate
+    # means noise, not programming.
+    health_novel_stale_min: int = int(_env("WX_HEALTH_NOVEL_STALE_MIN", "60"))
     # Outbound push (roadmap). OFF by default so the box stays fully offline; set a
     # URL (e.g. a LAN mesh gateway) to POST each new SAME alert as JSON. The SSE
     # /stream endpoint needs nothing here — consumers connect inbound.

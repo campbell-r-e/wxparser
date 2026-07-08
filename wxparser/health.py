@@ -85,8 +85,9 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
     """Derive a fail-loud status from the heartbeat.
 
     down     — no/stale heartbeat: the capture process isn't flushing (likely dead).
-    degraded — heartbeat fresh but audio silent (deaf radio) or STT worker wedged.
-    ok       — segments flowing and the worker draining.
+    degraded — heartbeat fresh but audio silent (deaf radio), nothing novel in a
+               long time (static/dead carrier), or STT worker wedged.
+    ok       — segments flowing, novel content arriving, worker draining.
     """
     now = now or datetime.now(timezone.utc)
     if hb is None:
@@ -104,6 +105,18 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
     if audio_age is None or audio_age > cfg.health_audio_silent_min:
         status = "degraded" if status == "ok" else status
         checks.append(f"audio silent ({_fmt(audio_age)}m) — possible deaf radio")
+    # dead-but-not-silent radio: constant static/carrier passes the VAD gate, so
+    # segments keep flowing but every one fingerprints as a repeat and nothing
+    # novel reaches STT. The real broadcast always produces novel segments within
+    # minutes (time announcements change each cycle), so a long novelty drought
+    # means noise, not programming. Before the first novel segment, measure from
+    # process start so a just-booted pipeline isn't flagged.
+    novel_age = _age_min(hb.get("last_novel_at"), now)
+    novel_ref_age = novel_age if novel_age is not None else _age_min(hb.get("started_at"), now)
+    if novel_ref_age is None or novel_ref_age > cfg.health_novel_stale_min:
+        status = "degraded" if status == "ok" else status
+        checks.append(f"no novel speech ({_fmt(novel_age)}m > "
+                      f"{cfg.health_novel_stale_min}m) — static or dead carrier?")
     # worker wedged: a REAL backlog is stuck, not just one segment that landed
     # after an idle stretch. On a looping broadcast the novelty gate idles STT for
     # many minutes, then a single novel segment queues while last_stt_ok is still
@@ -120,7 +133,8 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
 
     return {"status": status, "checks": checks or ["all signals nominal"],
             "heartbeat_age_min": _round(hb_age), "audio_silent_min": _round(audio_age),
-            "last_stt_ok_min": _round(stt_age), "pipeline": hb}
+            "last_stt_ok_min": _round(stt_age), "last_novel_min": _round(novel_age),
+            "pipeline": hb}
 
 
 def _fmt(v) -> str:
