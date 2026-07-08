@@ -4,18 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from wxparser.config import CONFIG
-from wxparser.db import Database, period_window
+from wxparser.db import period_window
 
 
-def _db() -> Database:
-    db = Database(CONFIG, database="wxparser_test")
-    db.clear()
-    return db
-
-
-def test_city_conditions_latest():
-    db = _db()
+def test_city_conditions_latest(wxdb):
+    db = wxdb
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 61,
                        "votes": 3, "total": 4}, "2026-06-24T06:00:00Z")
     db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 56,
@@ -24,8 +17,8 @@ def test_city_conditions_latest():
     assert by["Muncie"] == 61 and by["Anderson"] == 56
 
 
-def test_min_sightings_filter():
-    db = _db()
+def test_min_sightings_filter(wxdb):
+    db = wxdb
     db.record_reading({"city": "Lulule", "condition": "temperature_f", "value": 72},
                       "2026-06-24T06:00:00Z")  # heard once -> garbage
     db.record_reading({"city": "Anderson", "condition": "temperature_f", "value": 56},
@@ -38,16 +31,16 @@ def test_min_sightings_filter():
     assert any(h["city"] == "Lulule" for h in db.condition_history("temperature_f", None, None, None))
 
 
-def test_text_condition_roundtrip():
-    db = _db()
+def test_text_condition_roundtrip(wxdb):
+    db = wxdb
     db.record_reading({"city": "Muncie", "condition": "sky", "value": "clear"},
                       "2026-06-24T06:00:00Z")
     rows = db.latest_for_condition("sky")
     assert rows[0]["city"] == "Muncie" and rows[0]["value"] == "clear"
 
 
-def test_condition_history_between_times():
-    db = _db()
+def test_condition_history_between_times(wxdb):
+    db = wxdb
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 61},
                       "2026-06-24T06:00:00Z")
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 63},
@@ -57,8 +50,8 @@ def test_condition_history_between_times():
     assert len(h) == 1 and h[0]["value"] == 63
 
 
-def test_forecast_city_and_latest():
-    db = _db()
+def test_forecast_city_and_latest(wxdb):
+    db = wxdb
     db.write_forecast([{"period": "Tonight", "low_f": 61, "precip_pct": 70, "sky": "partly cloudy"}],
                       "2026-06-24T12:00:00Z", city="Muncie")
     fcs = db.latest_forecasts()
@@ -67,8 +60,8 @@ def test_forecast_city_and_latest():
     assert p["low_f"] == 61 and p["valid_from"] is not None
 
 
-def test_latest_forecasts_groups_per_city():
-    db = _db()
+def test_latest_forecasts_groups_per_city(wxdb):
+    db = wxdb
     db.write_forecast([{"period": "Tonight", "low_f": 61}], "2026-06-24T12:00:00Z", city="Muncie")
     db.write_forecast([{"period": "Tonight", "low_f": 59},
                        {"period": "Wednesday", "high_f": 84}],
@@ -79,8 +72,8 @@ def test_latest_forecasts_groups_per_city():
     assert fcs["Muncie"]["issued_at"] == "2026-06-24T12:00:00Z"
 
 
-def test_forecast_confidence_roundtrip():
-    db = _db()
+def test_forecast_confidence_roundtrip(wxdb):
+    db = wxdb
     db.write_forecast([{"period": "Tonight", "low_f": 61,
                         "confidence": {"low_f": 0.53}}], "2026-06-24T18:00:00Z")
     p = db.latest_forecasts()[0]["periods"][0]
@@ -90,16 +83,16 @@ def test_forecast_confidence_roundtrip():
     assert db.latest_forecasts()[0]["periods"][0]["confidence"] is None
 
 
-def test_forecast_history_between_dates():
-    db = _db()
+def test_forecast_history_between_dates(wxdb):
+    db = wxdb
     db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-23T12:00:00Z", city="Muncie")
     db.write_forecast([{"period": "Tonight", "low_f": 61}], "2026-06-24T12:00:00Z", city="Muncie")
     h = db.forecast_history("2026-06-24T00:00:00Z", "2026-06-25T00:00:00Z", None)
     assert len(h) == 1 and h[0]["low_f"] == 61
 
 
-def test_alert_active_then_expires():
-    db = _db()
+def test_alert_active_then_expires(wxdb):
+    db = wxdb
     rec = {"id": "a1", "captured_at": "2026-06-24T06:00:00Z",
            "alert": {"event": "TOR", "event_label": "Tornado Warning", "areas": ["018035"],
                      "counties": ["Delaware County, IN"], "purge_minutes": 45,
@@ -109,8 +102,8 @@ def test_alert_active_then_expires():
     assert len(db.get_active_alerts(now="2026-06-24T07:00:00Z")) == 0
 
 
-def test_write_alert_tolerates_missing_purge():
-    db = _db()
+def test_write_alert_tolerates_missing_purge(wxdb):
+    db = wxdb
     # purge_minutes present-but-None must not crash (expires == captured)
     db.write_alert({"id": "a2", "captured_at": "2026-06-24T06:00:00Z",
                     "alert": {"event": "RWT", "purge_minutes": None, "raw": "ZCZC"}})
@@ -123,8 +116,8 @@ def test_period_window_weekday_night():
     assert vf is not None and vt is not None and vf < vt
 
 
-def test_all_conditions_for_city_and_cities_index():
-    db = _db()
+def test_all_conditions_for_city_and_cities_index(wxdb):
+    db = wxdb
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 77},
                       "2026-06-24T12:00:00Z")
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 78},
@@ -139,8 +132,8 @@ def test_all_conditions_for_city_and_cities_index():
     assert cities["Muncie"]["conditions"] == 2
 
 
-def test_condition_history_pagination():
-    db = _db()
+def test_condition_history_pagination(wxdb):
+    db = wxdb
     for i in range(5):
         db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 70 + i},
                           f"2026-06-24T12:0{i}:00Z")
@@ -151,8 +144,8 @@ def test_condition_history_pagination():
     assert {r["captured_at"] for r in page1} != {r["captured_at"] for r in page2}
 
 
-def test_alerts_history_and_since():
-    db = _db()
+def test_alerts_history_and_since(wxdb):
+    db = wxdb
     for i in range(2):
         db.write_alert({"id": f"a{i}", "captured_at": f"2026-06-24T0{i}:00:00Z",
                         "alert": {"event": "SVR", "event_label": "Severe T-storm",
@@ -165,8 +158,8 @@ def test_alerts_history_and_since():
     assert [a["id"] for a in since] == ["a1"]       # strictly after, ascending
 
 
-def test_observations_and_forecasts_since():
-    db = _db()
+def test_observations_and_forecasts_since(wxdb):
+    db = wxdb
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 70},
                       "2026-06-24T12:00:00Z")
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 72},
@@ -178,8 +171,8 @@ def test_observations_and_forecasts_since():
     assert len(db.forecasts_since("2026-06-24T19:00:00Z", 10)) == 0
 
 
-def test_almanac_roundtrip_min_sightings_and_since():
-    db = _db()
+def test_almanac_roundtrip_min_sightings_and_since(wxdb):
+    db = wxdb
     # numeric field heard twice -> surfaces under min_sightings=2
     db.record_almanac({"field": "precip_year_in", "value": 17.39, "votes": 1, "total": 1},
                       "2026-06-24T06:00:00Z")
@@ -200,22 +193,15 @@ def test_almanac_roundtrip_min_sightings_and_since():
     assert [r["value"] for r in since] == [17.39]             # strictly after, ascending
 
 
-def _raw_db() -> Database:
-    """A test DB with the raw transcript store emptied (clear() is structured-only
-    by design, so it does not touch raw_reports — see reprocess.py invariant)."""
-    db = _db()
-    db._run("TRUNCATE raw_reports")
-    return db
-
-
 def _raw(id_, ca, product, text):
     return {"id": id_, "captured_at": ca, "product_type": product,
             "station": "KJY93", "text": text,
             "segments": [{"start_s": 0.0, "end_s": 1.0, "text": text}]}
 
 
-def test_raw_reports_query_count_since_recent():
-    db = _raw_db()
+def test_raw_reports_query_count_since_recent(wxdb):
+    db = wxdb
+    db._run("TRUNCATE raw_reports")   # clear() is structured-only by design
     for r in [
         _raw("1", "2026-06-24T10:00:00Z", "zone_forecast", "tonight clear"),
         _raw("2", "2026-06-24T11:00:00Z", "current_conditions", "temperature was 70"),
@@ -244,8 +230,9 @@ def test_raw_reports_query_count_since_recent():
     assert [r["id"] for r in db.iter_raw_reports()] == ["1", "2", "3"]
 
 
-def test_raw_reports_upsert_in_place():
-    db = _raw_db()
+def test_raw_reports_upsert_in_place(wxdb):
+    db = wxdb
+    db._run("TRUNCATE raw_reports")   # clear() is structured-only by design
     db.insert_raw_report(_raw("x", "2026-06-24T10:00:00Z", "zone_forecast", "chants of brain"))
     # a term-fix rewrites the same id in place — no duplicate row
     db.insert_raw_report(_raw("x", "2026-06-24T10:00:00Z", "zone_forecast", "chance of rain"))
@@ -254,8 +241,9 @@ def test_raw_reports_upsert_in_place():
     assert db.count_raw_reports(q="chance of rain") == 1
 
 
-def test_raw_reports_empty_store():
-    db = _raw_db()
+def test_raw_reports_empty_store(wxdb):
+    db = wxdb
+    db._run("TRUNCATE raw_reports")   # clear() is structured-only by design
     assert db.query_raw_reports() == [] and db.count_raw_reports() == 0
     assert db.raw_reports_since("2026-01-01T00:00:00Z", 5) == []
     assert db.recent_raw_reports(5) == [] and db.iter_raw_reports() == []

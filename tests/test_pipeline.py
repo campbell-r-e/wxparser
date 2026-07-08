@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from wxparser.config import CONFIG
-from wxparser.db import Database
 from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
 from wxparser.pipeline import apply_readings, write_alert_detail_if_any
 
@@ -20,14 +18,8 @@ class _HB:
         self.touched.append(key)
 
 
-def _db():
-    db = Database(CONFIG, database="wxparser_test")
-    db.clear()
-    return db
-
-
-def test_apply_readings_writes_all_and_touches_hb():
-    db, hb = _db(), _HB()
+def test_apply_readings_writes_all_and_touches_hb(wxdb):
+    db, hb = wxdb, _HB()
     s = apply_readings(_TEXT, "2026-06-24T12:00:00Z",
                        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(), db, hb)
     assert any(r["condition"] == "temperature_f" and r["value"] == 70 for r in s["readings"])
@@ -77,8 +69,8 @@ def test_apply_readings_gate_disabled_by_default():
     assert not s.get("low_confidence") and any(r["value"] == 70 for r in s["readings"])
 
 
-def test_write_alert_detail_paths():
-    db = _db()
+def test_write_alert_detail_paths(wxdb):
+    db = wxdb
     assert write_alert_detail_if_any("x", "2026-06-24T12:00:00Z", "r", "p", None) is None  # no DB
     written = write_alert_detail_if_any(
         "A tornado warning remains in effect until 6:30 PM. The storm is moving east at 30 mph.",

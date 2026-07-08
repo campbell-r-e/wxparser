@@ -46,11 +46,11 @@ def test_tee_to_same_passes_through_and_feeds():
     assert len(list(main._tee_to_same(iter([(np.zeros(4), 0.0)]), None))) == 1
 
 
-def test_emit_alert_lands_raw_report(tmp_path):
+def test_emit_alert_lands_raw_report(tmp_path, make_cfg):
     # _emit_alert lands the SAME envelope in the raw store (the alerts table is
     # covered separately by test_emit_alert_with_db).
     from wxparser.db import Database
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    cfg = make_cfg()
     db = Database(cfg)
     db.clear()
     db._run("TRUNCATE raw_reports")
@@ -59,9 +59,9 @@ def test_emit_alert_lands_raw_report(tmp_path):
     assert len(raws) == 1 and raws[0]["type"] == "same_alert" and "TOR" in raws[0]["id"]
 
 
-def test_run_file_mocked(tmp_path, monkeypatch):
+def test_run_file_mocked(tmp_path, monkeypatch, make_cfg):
     from wxparser.db import Database
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    cfg = make_cfg()
     db = Database(cfg)
     db.clear()
     db._run("TRUNCATE raw_reports")
@@ -74,9 +74,9 @@ def test_run_file_mocked(tmp_path, monkeypatch):
     assert db.count_raw_reports() == 1                   # unchanged
 
 
-def test_run_live_once(tmp_path, monkeypatch):
+def test_run_live_once(tmp_path, monkeypatch, make_cfg):
     from wxparser.db import Database
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
+    cfg = make_cfg(same_enabled=False)
     main._STOP.clear()
     # empty raw store -> the "no recent reports to prime" branch; a home-city
     # (Muncie) forecast -> the matching-city forecast-prime branch
@@ -101,9 +101,9 @@ def test_emit_alert_no_db_is_noop(tmp_path):
     main._emit_alert(parse_header(_HDR), cfg, db=None)
 
 
-def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
+def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch, make_cfg):
     from wxparser.db import Database
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=True)
+    cfg = make_cfg(same_enabled=True)
     main._STOP.clear()
     # seed a stored reading + report so the aggregator/text-dedup priming runs
     db = Database(cfg)
@@ -133,7 +133,7 @@ def test_run_live_repeat_and_same_enabled(tmp_path, monkeypatch):
     main._STOP.clear()
 
 
-def test_stt_worker_full_paths(tmp_path, monkeypatch):
+def test_stt_worker_full_paths(tmp_path, monkeypatch, make_cfg):
     import itertools
     import queue as _q
 
@@ -145,7 +145,7 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
     )
     from wxparser.health import Heartbeat
     main._STOP.clear()
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    cfg = make_cfg()
     db = Database(cfg)
     db.clear()
     texts = iter([
@@ -173,7 +173,7 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch):
     assert {r["field"] for r in db.latest_almanac()} >= {"sunrise", "sunset"}
 
 
-def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch):
+def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch, make_cfg):
     # once=True + a saved segment must set _STOP and exit the loop -- covered here
     # deterministically rather than via the inherently racy run_live(once=True).
     import itertools
@@ -183,7 +183,7 @@ def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch):
     from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
     from wxparser.health import Heartbeat
     main._STOP.clear()
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    cfg = make_cfg()
     db = Database(cfg)
     db.clear()
     monkeypatch.setattr(main, "transcribe_samples",
@@ -200,7 +200,7 @@ def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch):
     main._STOP.clear()
 
 
-def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsys):
+def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsys, make_cfg):
     # a transcript whose measured confidence falls below the floor is saved to
     # the store but NOT voted into the aggregates, and the gate is logged
     import queue as _q
@@ -209,7 +209,7 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
     from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
     from wxparser.health import Heartbeat
     main._STOP.clear()
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
+    cfg = make_cfg(stt_confidence_floor=0.5)
     db = Database(cfg)
     db.clear()
     db._run("TRUNCATE raw_reports")
@@ -231,9 +231,9 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
     assert "low-conf 0.21" in capsys.readouterr().out    # gate logged
 
 
-def test_emit_alert_with_db(tmp_path):
+def test_emit_alert_with_db(tmp_path, make_cfg):
     from wxparser.db import Database
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
+    cfg = make_cfg()
     db = Database(cfg)
     db.clear()
     main._emit_alert(parse_header(_HDR), cfg, db)
@@ -290,8 +290,8 @@ def test_stt_worker_handles_empty_queue():
                      AlmanacAggregator(), None)
 
 
-def test_run_live_breaks_when_stopped(tmp_path, monkeypatch):
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", same_enabled=False)
+def test_run_live_breaks_when_stopped(tmp_path, monkeypatch, make_cfg):
+    cfg = make_cfg(same_enabled=False)
 
     def frames(c, on_retry=None, should_stop=None):
         # run_live clears _STOP on entry, so simulate the stop arriving just after

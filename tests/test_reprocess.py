@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-from wxparser.config import Config
 from wxparser.db import Database
 from wxparser.reprocess import reprocess
-
-
-def _cfg(tmp_path):
-    return Config(out_dir=tmp_path, pg_database="wxparser_test")
 
 
 def _fresh(cfg) -> Database:
@@ -24,8 +19,8 @@ def _seed(db: Database, recs: list[dict]) -> None:
         db.insert_raw_report(r)
 
 
-def test_reprocess_rebuilds_conditions_forecast_almanac_alert(tmp_path):
-    cfg = _cfg(tmp_path)
+def test_reprocess_rebuilds_conditions_forecast_almanac_alert(make_cfg):
+    cfg = make_cfg()
     db = _fresh(cfg)
     _seed(db, [
         {"captured_at": "2026-06-24T12:00:00Z", "id": "t1", "product_type": "current_conditions",
@@ -48,10 +43,10 @@ def test_reprocess_rebuilds_conditions_forecast_almanac_alert(tmp_path):
     assert db.alerts_history_count(None, None, None) == 1 and rows[0]["event"] == "RWT"
 
 
-def test_reprocess_applies_corrections_retroactively(tmp_path):
+def test_reprocess_applies_corrections_retroactively(make_cfg):
     # the garbled home header "Edmondsee" is fixed by the extractor AT REPROCESS
     # TIME over the raw stored text — the whole point of the projection model.
-    cfg = _cfg(tmp_path)
+    cfg = make_cfg()
     db = _fresh(cfg)
     _seed(db, [{
         "captured_at": "2026-06-24T23:00:00Z", "id": "t1", "product_type": "current_conditions",
@@ -62,8 +57,8 @@ def test_reprocess_applies_corrections_retroactively(tmp_path):
     assert conds["temperature_f"] == 68
 
 
-def test_reprocess_empty_store_clears(tmp_path):
-    cfg = _cfg(tmp_path)
+def test_reprocess_empty_store_clears(make_cfg):
+    cfg = make_cfg()
     db = _fresh(cfg)  # raw store emptied — nothing to replay
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 50},
                       "2026-06-24T12:00:00Z")
@@ -71,10 +66,10 @@ def test_reprocess_empty_store_clears(tmp_path):
     assert stats == {} and db.latest_readings() == []   # cleared, nothing to rebuild
 
 
-def test_reprocess_low_confidence_stored_not_voted(tmp_path):
+def test_reprocess_low_confidence_stored_not_voted(make_cfg):
     # a low-confidence transcript replays as stored-but-not-voted, mirroring the
     # live worker's gate, and is counted in low_conf_skipped
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stt_confidence_floor=0.5)
+    cfg = make_cfg(stt_confidence_floor=0.5)
     db = _fresh(cfg)
     _seed(db, [
         {"captured_at": "2026-06-24T12:00:00Z", "id": "t1",
@@ -86,8 +81,8 @@ def test_reprocess_low_confidence_stored_not_voted(tmp_path):
     assert db.all_conditions_for_city("Muncie") == []    # but not voted
 
 
-def test_reprocess_skips_blank_text(tmp_path):
-    cfg = _cfg(tmp_path)
+def test_reprocess_skips_blank_text(make_cfg):
+    cfg = make_cfg()
     db = _fresh(cfg)
     _seed(db, [
         {"captured_at": "2026-06-24T12:00:00Z", "id": "t1",

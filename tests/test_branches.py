@@ -116,9 +116,8 @@ def test_segment_cut_too_short_is_dropped():
 
 
 # --- raw store: every reader round-trips through Postgres ----------------- #
-def test_raw_store_readers_roundtrip(tmp_path):
-    from wxparser.db import Database
-    db = Database(Config(out_dir=tmp_path, pg_database="wxparser_test"))
+def test_raw_store_readers_roundtrip(wxdb):
+    db = wxdb
     db._run("TRUNCATE raw_reports")
     for r in [
         {"id": "1", "captured_at": "2026-06-24T10:00:00Z",
@@ -147,6 +146,18 @@ def test_formats_minimal_snapshot():
     assert net_bulletin(bare).endswith("\n") and "== FORECAST ==" not in sitrep(bare)
 
 
+class _Seg:
+    """Minimal stand-in for an audio segment fed to the STT worker."""
+    samples = np.zeros(16000, dtype=np.int16)
+    duration_s = 1.0
+
+
+def _run_worker(q, cfg, db=None, hb=None):
+    """Drive main._stt_worker once with fresh aggregators (the shared 9-arg call)."""
+    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
+                     ForecastAggregator(), AlmanacAggregator(), db, hb)
+
+
 # --- main: worker with db=None and hb=None (the None-side branches) ------- #
 def test_stt_worker_none_db_hb(tmp_path, monkeypatch):
     main._STOP.clear()
@@ -160,15 +171,11 @@ def test_stt_worker_none_db_hb(tmp_path, monkeypatch):
     q = _q.PriorityQueue()
     seq = itertools.count()
 
-    class Seg:
-        samples = np.zeros(16000, dtype=np.int16)
-        duration_s = 1.0
-    q.put((0, next(seq), (Seg(), "d")))
-    q.put((0, next(seq), (Seg(), "d")))
-    q.put((0, next(seq), (Seg(), "d")))
+    q.put((0, next(seq), (_Seg(), "d")))
+    q.put((0, next(seq), (_Seg(), "d")))
+    q.put((0, next(seq), (_Seg(), "d")))
     q.put((0, next(seq), None))
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), None, None)   # db None, hb None
+    _run_worker(q, cfg)   # db None, hb None
 
 
 def test_worker_error_without_hb(tmp_path, monkeypatch):
@@ -179,22 +186,15 @@ def test_worker_error_without_hb(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "transcribe_samples", boom)
     q = _q.PriorityQueue()
 
-    class Seg:
-        samples = np.zeros(16000, dtype=np.int16)
-        duration_s = 1.0
-    q.put((0, 0, (Seg(), "d")))
+    q.put((0, 0, (_Seg(), "d")))
     q.put((0, 1, None))
-    main._stt_worker(q, Config(out_dir=tmp_path), False, TextDeduper(Config()),
-                     CityConditionsAggregator(), ForecastAggregator(),
-                     AlmanacAggregator(), None, None)  # error, hb None
+    _run_worker(q, Config(out_dir=tmp_path))  # error, hb None
 
 
-def test_worker_db_yes_hb_none(tmp_path, monkeypatch):
-    from wxparser.db import Database
+def test_worker_db_yes_hb_none(monkeypatch, make_cfg, wxdb):
     main._STOP.clear()
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test")
-    db = Database(cfg)
-    db.clear()
+    cfg = make_cfg()
+    db = wxdb
     texts = iter([
         "At Muncie, the temperature was 80 degrees. Tonight, lows in the lower 60s.",
         # an alert PRODUCT with no extractable details -> writes a detail row but
@@ -205,14 +205,10 @@ def test_worker_db_yes_hb_none(tmp_path, monkeypatch):
     q = _q.PriorityQueue()
     seq = itertools.count()
 
-    class Seg:
-        samples = np.zeros(16000, dtype=np.int16)
-        duration_s = 1.0
-    q.put((0, next(seq), (Seg(), "d")))
-    q.put((0, next(seq), (Seg(), "d")))
+    q.put((0, next(seq), (_Seg(), "d")))
+    q.put((0, next(seq), (_Seg(), "d")))
     q.put((0, next(seq), None))
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), db, None)     # db yes, hb None
+    _run_worker(q, cfg, db=db)     # db yes, hb None
     assert db.all_conditions_for_city("Muncie")
 
 

@@ -137,10 +137,8 @@ def test_decode_short_but_nonempty_audio():
     assert decode(np.zeros(5000, dtype=np.float64)) == []   # passes size guard, n_bits < 8
 
 
-def test_raw_reports_filter_branches(tmp_path):
-    from wxparser.config import Config as _C
-    from wxparser.db import Database
-    db = Database(_C(out_dir=tmp_path, pg_database="wxparser_test"))
+def test_raw_reports_filter_branches(wxdb):
+    db = wxdb
     db._run("TRUNCATE raw_reports")
     for r in [
         {"id": "1", "captured_at": "2026-06-24T10:00:00Z",

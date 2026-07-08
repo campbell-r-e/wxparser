@@ -14,8 +14,8 @@ from wxparser.db import Database
 from wxparser.health import Heartbeat
 
 
-def _server(tmp_path):
-    cfg = Config(out_dir=tmp_path, pg_database="wxparser_test", stream_poll_s=0.05)
+def _server(make_cfg):
+    cfg = make_cfg(stream_poll_s=0.05)
     db = Database(cfg)
     db.clear()
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 80,
@@ -61,8 +61,8 @@ def _get(url):
     return (json.loads(body) if body[:1] in "{[" else body)
 
 
-def test_all_json_and_text_endpoints(tmp_path):
-    srv, H = _server(tmp_path)
+def test_all_json_and_text_endpoints(make_cfg):
+    srv, H = _server(make_cfg)
     try:
         assert len(_get(H + "/")["endpoints"]) == 19
         now = _get(H + "/now")
@@ -109,8 +109,8 @@ def test_all_json_and_text_endpoints(tmp_path):
         srv.shutdown()
 
 
-def test_error_codes(tmp_path):
-    srv, H = _server(tmp_path)
+def test_error_codes(make_cfg):
+    srv, H = _server(make_cfg)
 
     def code(path):
         try:
@@ -132,9 +132,9 @@ def test_error_codes(tmp_path):
         srv.shutdown()
 
 
-def test_link_details_handles_missing_timestamp(tmp_path):
+def test_link_details_handles_missing_timestamp(make_cfg):
     # an alert dict lacking captured_at must not crash detail-linking (except path)
-    srv, _ = _server(tmp_path)
+    srv, _ = _server(make_cfg)
     try:
         out = api._Handler._link_details(api._Handler, {"event": "TOR"})
         assert out["spoken"] == [] and out["authoritative"] is True
@@ -142,8 +142,8 @@ def test_link_details_handles_missing_timestamp(tmp_path):
         srv.shutdown()
 
 
-def test_sse_stream_emits(tmp_path):
-    srv, H = _server(tmp_path)
+def test_sse_stream_emits(make_cfg):
+    srv, H = _server(make_cfg)
     try:
         with urllib.request.urlopen(
                 H + "/stream?since=2026-01-01T00:00:00Z", timeout=3) as r:
