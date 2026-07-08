@@ -26,17 +26,28 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 PY="$VENV/bin/python"
 
-git pull -q --ff-only origin main
+git pull -q --ff-only origin main || { echo "$(date -Is) pull failed — aborting" >>"$LOG"; exit 1; }
 
-# make sure the test database exists (idempotent)
-"$PY" - <<'PYEOF' 2>/dev/null || true
+# make sure the test database exists ("already exists" is fine and stays quiet;
+# any other failure — pg8000 missing, Postgres down — must fail loud and roll
+# back like a red suite would: a silent failure here once made every deploy
+# roll back with a misleading TESTS FAILED)
+if ! "$PY" - >>"$LOG" 2>&1 <<'PYEOF'
+import sys
 import pg8000.native as p
 try:
     p.Connection(user="wxparser", host="127.0.0.1", database="wxparser").run(
         "CREATE DATABASE wxparser_test")
-except Exception:
-    pass
+except Exception as e:
+    if "already exists" not in str(e):
+        print(f"test-db creation failed: {e}")
+        sys.exit(1)
 PYEOF
+then
+    git reset --hard "$LOCAL" >>"$LOG" 2>&1
+    echo "$(date -Is) TEST-DB SETUP FAILED — rolled back to ${LOCAL:0:8}, services unchanged" >>"$LOG"
+    exit 1
+fi
 
 if "$PY" -m coverage run -m pytest -q >>"$LOG" 2>&1 && "$PY" -m coverage report >>"$LOG" 2>&1; then
     sudo systemctl restart wxparser wxparser-api
