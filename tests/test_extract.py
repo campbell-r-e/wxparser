@@ -244,6 +244,34 @@ def test_forecast_votes_reject_oneoff_garble():
     assert {p["period"]: p for p in fc.snapshot()}["Sunday"]["high_f"] == 85
 
 
+def test_forecast_low_mid_eighties_is_mishear():
+    # Real airing (2026-07-07): "Wednesday night, mostly clear, lows in the
+    # mid-eighties." — parallel airings said mid-SIXTIES. A forecast low of 85+
+    # never verifies in this climate, so extraction refuses to store it.
+    assert "low_f" not in extract_forecast_fields("Lows in the mid-eighties.")
+    fc = ForecastAggregator()
+    fc.update("The forecast for the Muncie area. Wednesday night, mostly clear, "
+              "lows in the mid-eighties.")
+    snap = {p["period"]: p for p in fc.snapshot()}
+    assert snap["Wednesday Night"].get("low_f") is None
+    assert snap["Wednesday Night"]["sky"] == "clear"  # rest of the period kept
+
+
+def test_forecast_steady_temp_respects_night_low_cap():
+    # an unlabeled steady temp routed onto a night period must clear the same
+    # low cap — "near steady temperature in the upper 80s" is the same mishear
+    fc = ForecastAggregator()
+    fc.update("For Wednesday night, mostly clear, with a near steady "
+              "temperature in the upper 80s.")
+    snap = {p["period"]: p for p in fc.snapshot()}
+    assert snap["Wednesday Night"].get("low_f") is None
+    # a plausible steady temp still routes to the night low as before
+    fc2 = ForecastAggregator()
+    fc2.update("For Wednesday night, mostly clear, with a near steady "
+               "temperature in the upper 60s.")
+    assert {p["period"]: p for p in fc2.snapshot()}["Wednesday Night"]["low_f"] == 68
+
+
 def test_forecast_revision_wins_once_it_dominates():
     # a genuine revision still takes over once it dominates the recent window.
     fc = ForecastAggregator()
@@ -591,6 +619,28 @@ def test_roundup_temperature_of_form():
 def test_roundup_dedup_same_city_value():
     out = CityConditionsAggregator().update("74 at Marion. Marion reported 74.")
     assert sum(1 for r in out if r["city"] == "Marion") == 1
+
+
+def test_roundup_peer_outlier_dropped():
+    # Real mishear (2026-06-28): "...22 at Cincinnati..." for 92 — a lost leading
+    # digit passes the absolute range check but sits 50F off its roundup peers.
+    t = _temps("It was cloudy with a temperature of 74 at Champaign, Illinois, "
+               "72 at Dayton, 22 at Cincinnati.")
+    assert "Cincinnati" not in t
+    assert t["Dayton"] == 72 and t["Champaign"] == 74
+
+
+def test_roundup_peer_outlier_needs_quorum():
+    # with only two readings there is no telling which one is the impostor
+    assert _temps("Nearby, 74 at Marion, 22 at Anderson.") \
+        == {"Marion": 74, "Anderson": 22}
+
+
+def test_roundup_real_front_spread_survives():
+    # a sharp front skews the whole feed together — a genuine 28F end-to-end
+    # spread clusters around the median and every reading is kept
+    assert _temps("Nearby, 40 at Chicago, 55 at Lafayette, 68 at Louisville.") \
+        == {"Chicago": 40, "Lafayette": 55, "Louisville": 68}
 
 
 def test_slot_resolves_novel_garble_after_champaign_anchor():

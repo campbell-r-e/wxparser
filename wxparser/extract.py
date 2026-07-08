@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, deque
+from statistics import median
 
 from .data.place_names import correct_place, is_known_city, resolve_slot
 from dataclasses import dataclass
@@ -202,8 +203,11 @@ def parse_temp_value(phrase: str) -> int | None:
 
 
 # plausible-value bounds per forecast field (highs/steady share the observation
-# temperature range; lows above 100°F are always a mishear)
-_FC_RANGE = {"high_f": _FIELD_RANGE["temperature_f"], "low_f": (-60, 100),
+# temperature range). A forecast LOW of 85+ never verifies in this feed's
+# climate — it's the "lows in the mid-EIGHTIES" mishear of "mid-sixties"
+# (aired twice 2026-07-07; audit_data.py flags any stored night low >= 85),
+# so the cap sits just under it.
+_FC_RANGE = {"high_f": _FIELD_RANGE["temperature_f"], "low_f": (-60, 84),
              "steady_f": _FIELD_RANGE["temperature_f"], "precip_pct": (0, 100)}
 
 
@@ -430,7 +434,11 @@ class ForecastAggregator:
         # period that already has a labeled vote).
         if _is_night_period(period):
             fields.pop("high_f", None)
-            if steady is not None and "low_f" not in fields and not self._has(period, "low_f"):
+            # the steady temp passed the wide steady_f range, but as a LOW it
+            # must also clear the tighter low_f cap (a steady "upper 80s" on a
+            # night period is the same mid-eighties mishear)
+            if (steady is not None and _fc_ok("low_f", steady)
+                    and "low_f" not in fields and not self._has(period, "low_f")):
                 fields["low_f"] = steady
         else:
             fields.pop("low_f", None)
@@ -497,6 +505,24 @@ _RE_AT_TEMP = re.compile(
     rf"[^.]*?\b[Tt]emperature of\s+(-?\d{{1,3}})\b")
 
 
+# One roundup temp readily loses a leading digit to STT ("22 at Cincinnati"
+# for 92, 2026-06-28) yet sails through the absolute range check. With enough
+# peer cities in the same readout the impostor is obvious: drop any reading
+# more than _PEER_MAX_DEV from the median of the list. A real front skews the
+# whole feed together (readings cluster on both sides of the median), so
+# genuine spreads survive; below _PEER_MIN readings there is no quorum to say
+# which value is the wrong one, so nothing is dropped.
+_PEER_MIN = 3
+_PEER_MAX_DEV = 30
+
+
+def _drop_peer_outliers(pairs: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    if len(pairs) < _PEER_MIN:
+        return pairs
+    med = median(v for _, v in pairs)
+    return [(c, v) for c, v in pairs if abs(v - med) <= _PEER_MAX_DEV]
+
+
 def _nearby_temps(text: str) -> list[tuple[str, int]]:
     """(city, temperature_f) for every roundup phrasing in `text`, in textual
     order. Each city is first folded through the alias map (_norm_city); any that
@@ -521,7 +547,7 @@ def _nearby_temps(text: str) -> list[tuple[str, int]]:
             city = resolve_slot(prev_city, text, pos) or city
         out.append((city, temp))
         prev_city = city
-    return out
+    return _drop_peer_outliers(out)
 # Climate-summary / almanac recaps quote PAST or normal values, not live
 # conditions: "Yesterday's low temperature was 55 degrees", "normal high is 85",
 # "record low ...". Their "(high|low) temperature was N degrees" is a substring
