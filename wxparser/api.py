@@ -180,17 +180,27 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
     def _annotate_forecast_age(self, forecasts: list, q: dict) -> list:
-        """Add age_minutes + stale to each forecast issuance (by issued_at)."""
+        """Add age_minutes + stale to each forecast issuance. issued_at only moves
+        when the voted content changes (an unchanged re-airing writes no new
+        issuance), so judging staleness by it alone would flag a perfectly current
+        forecast for most of the day. Staleness is instead judged by
+        last_confirmed_at — the newest zone_forecast airing, changed or not —
+        falling back to issued_at when no airing is on record."""
         threshold = self._stale_after(q)
         now = datetime.now(timezone.utc)
+        aired = self.db.last_product_airing("zone_forecast")
         for fc in forecasts:
             fc["source"] = "stt"; fc["advisory"] = True  # transcribed, not SAME
             ia = fc.get("issued_at")
             if ia:  # pragma: no branch - a stored forecast always has issued_at
-                age = (now - datetime.strptime(ia, "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=timezone.utc)).total_seconds() / 60
-                fc["age_minutes"] = round(age, 1)
-                fc["stale"] = age > threshold
+                confirmed = aired if (aired and aired > ia) else ia
+                fc["last_confirmed_at"] = confirmed
+                for field, ts in (("age_minutes", ia),
+                                  ("confirmed_age_minutes", confirmed)):
+                    fc[field] = round((now - datetime.strptime(
+                        ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                    ).total_seconds() / 60, 1)
+                fc["stale"] = fc["confirmed_age_minutes"] > threshold
             # per-period: which fields the airings disagreed on (low vote agreement)
             for p in fc.get("periods", []):
                 conf = p.get("confidence") or {}

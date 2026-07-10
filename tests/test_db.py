@@ -228,6 +228,9 @@ def test_raw_reports_query_count_since_recent(wxdb):
     # recent = last-n, oldest-first; iter = all, ascending
     assert [r["id"] for r in db.recent_raw_reports(2)] == ["2", "3"]
     assert [r["id"] for r in db.iter_raw_reports()] == ["1", "2", "3"]
+    # last airing of a product = newest captured_at of that type only
+    assert db.last_product_airing("zone_forecast") == "2026-06-24T12:00:00Z"
+    assert db.last_product_airing("current_conditions") == "2026-06-24T11:00:00Z"
 
 
 def test_raw_reports_upsert_in_place(wxdb):
@@ -247,6 +250,7 @@ def test_raw_reports_empty_store(wxdb):
     assert db.query_raw_reports() == [] and db.count_raw_reports() == 0
     assert db.raw_reports_since("2026-01-01T00:00:00Z", 5) == []
     assert db.recent_raw_reports(5) == [] and db.iter_raw_reports() == []
+    assert db.last_product_airing("zone_forecast") is None
 
 
 def _run():

@@ -109,6 +109,29 @@ def test_all_json_and_text_endpoints(make_cfg):
         srv.shutdown()
 
 
+def test_forecast_confirmation_tracks_reairings(make_cfg):
+    srv, H = _server(make_cfg)
+    try:
+        fc = _get(H + "/forecast")["forecasts"][0]
+        # the only recorded airing (12:00Z) predates the issuance (18:00Z) ->
+        # confirmation falls back to the issuance itself
+        assert fc["last_confirmed_at"] == fc["issued_at"] == "2026-06-24T18:00:00Z"
+        assert fc["confirmed_age_minutes"] == fc["age_minutes"]
+        # an unchanged re-airing writes no new issuance yet refreshes the
+        # confirmation: the forecast is only as stale as its last airing
+        api._Handler.db.insert_raw_report(
+            {"id": "t2", "captured_at": "2026-06-25T00:00:00Z",
+             "product_type": "zone_forecast", "text": "tonight clear"})
+        fc = _get(H + "/forecast")["forecasts"][0]
+        assert fc["issued_at"] == "2026-06-24T18:00:00Z"        # unmoved
+        assert fc["last_confirmed_at"] == "2026-06-25T00:00:00Z"
+        assert fc["confirmed_age_minutes"] < fc["age_minutes"]
+        assert fc["stale"] is True    # last aired June 2026 -> stale at any age now
+        assert _get(H + "/forecast?stale_after=99999999")["forecasts"][0]["stale"] is False
+    finally:
+        srv.shutdown()
+
+
 def test_error_codes(make_cfg):
     srv, H = _server(make_cfg)
 

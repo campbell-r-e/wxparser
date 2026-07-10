@@ -442,6 +442,15 @@ class Database:
             s=_parse_iso(since), lim=max(1, limit), off=max(0, offset))
         return [_as_obj(r["payload"]) for r in rows]
 
+    def last_product_airing(self, product_type: str) -> str | None:
+        """captured_at of the newest raw report of this product type — the last
+        time the broadcast aired it, counting unchanged repeats that write no
+        new structured row."""
+        rows = self._query(
+            "SELECT MAX(captured_at) AS at FROM raw_reports "
+            "WHERE product_type = :p", p=product_type)
+        return _ts(rows[0]["at"]) if rows[0]["at"] else None
+
     def recent_raw_reports(self, n: int) -> list[dict]:
         """The last n raw docs, returned OLDEST-first — for priming text-dedup on
         restart."""
