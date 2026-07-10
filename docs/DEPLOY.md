@@ -9,7 +9,8 @@ For day-2 usage see [`USAGE.md`](USAGE.md); for the test/CI side see
 [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 > **Prefer to be asked questions instead?** [`deploy/install.sh`](../deploy/install.sh)
-> is an interactive installer: run it on each machine, pick the role(s) that machine
+> is an interactive installer for **Fedora/RHEL (dnf) and Debian/Ubuntu/Pi OS (apt)**:
+> run it on each machine, pick the role(s) that machine
 > plays (**db / radio / api**), answer the prompts, and it does §2–§12 for you —
 > packages, the clone, whisper.cpp, PostgreSQL (including network auth for a split
 > deployment), `/etc/wxparser.env`, patched systemd units, firewall, and CD. It clones
@@ -69,17 +70,25 @@ machines with no code changes (§13).
 
 ## 2. OS packages
 
-Fedora shown; translate package names for your distro. `arecord`, `amixer`,
-and `alsactl` come from `alsa-utils` and are called as subprocesses — they are
-required at runtime.
+`arecord`, `amixer`, and `alsactl` come from `alsa-utils` and are called as
+subprocesses — they are required at runtime.
 
 ```bash
+# Fedora/RHEL:
 sudo dnf -y install git python3 python3-numpy python3-pg8000 alsa-utils \
                     gcc-c++ cmake make        # compilers only needed to build whisper.cpp
+
+# Debian/Ubuntu/Raspberry Pi OS:
+sudo apt -y install git python3 python3-numpy python3-pip alsa-utils \
+                    build-essential cmake
+sudo python3 -m pip install --break-system-packages 'pg8000>=1.31'
 ```
 
 The systemd units run `/usr/bin/python3` directly (no venv), so the two runtime
-Python deps (`numpy`, `pg8000` — both BSD) must be system packages, as above.
+Python deps (`numpy`, `pg8000` — both BSD) must live system-wide, as above.
+Debian note: the `python3-pg8000` **apt package is too old** (1.10 — no
+`pg8000.native`); pg8000 must come from pip, and `--break-system-packages` is
+deliberate because the services use the system interpreter.
 
 ## 3. Radio → sound card
 
@@ -138,7 +147,8 @@ local-trust `pg_hba` entries for the role on 127.0.0.1:
 
 ```bash
 cd ~/wxparser        # after the clone in §6 — or run it from anywhere in the repo
-deploy/setup-postgres.sh
+deploy/setup-postgres.sh          # Fedora/RHEL
+deploy/setup-postgres-debian.sh   # Debian/Ubuntu/Pi OS
 ```
 
 No passwords are involved: auth is local trust, and the API/pipeline connect via

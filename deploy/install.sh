@@ -48,14 +48,29 @@ confirm() {  # confirm "prompt" "Y|N" -> exit status
 if [ "$(id -u)" = 0 ]; then die "run as a regular user; the script uses sudo where needed"; fi
 command -v sudo >/dev/null || die "sudo is required"
 
-HAVE_DNF=0
-if command -v dnf >/dev/null; then HAVE_DNF=1; fi
-pkg() {  # install packages on Fedora/RHEL; elsewhere just tell the user
-    if [ "$HAVE_DNF" = 1 ]; then
-        sudo dnf -y install "$@"
+PKG_MGR=none  # dnf (Fedora/RHEL) or apt (Debian/Ubuntu/Pi OS); both are supported
+if command -v dnf >/dev/null; then
+    PKG_MGR=dnf
+elif command -v apt-get >/dev/null; then
+    PKG_MGR=apt
+fi
+pkg() {  # install packages; on an unknown distro just tell the user what's needed
+    case $PKG_MGR in
+        dnf) sudo dnf -y install "$@" ;;
+        apt) sudo apt-get update -qq
+             sudo DEBIAN_FRONTEND=noninteractive apt-get -y install "$@" ;;
+        *)   note "no dnf/apt — install these yourself before continuing: $*"
+             confirm "installed?" Y || die "install the packages and re-run" ;;
+    esac
+}
+open_port() {  # open a TCP port in whichever firewall this box runs
+    if command -v firewall-cmd >/dev/null; then
+        sudo firewall-cmd --permanent --add-port="$1"/tcp
+        sudo firewall-cmd --reload
+    elif command -v ufw >/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+        sudo ufw allow "$1"/tcp
     else
-        note "no dnf — install these yourself before continuing: $*"
-        confirm "installed?" Y || die "install the packages and re-run"
+        note "no active firewalld/ufw — make sure port $1/tcp is reachable"
     fi
 }
 
@@ -148,10 +163,27 @@ confirm "apply?" Y || die "aborted — nothing was changed"
 
 say "packages"
 PKGS="git python3"
-if [ $((WANT_RADIO + WANT_API)) -gt 0 ]; then PKGS="$PKGS python3-numpy python3-pg8000"; fi
-if [ "$WANT_RADIO" = 1 ]; then PKGS="$PKGS alsa-utils gcc-c++ cmake make"; fi
+if [ $((WANT_RADIO + WANT_API)) -gt 0 ]; then
+    if [ "$PKG_MGR" = apt ]; then
+        # Debian's python3-pg8000 is ancient (1.10, no pg8000.native) — pip below
+        PKGS="$PKGS python3-numpy python3-pip"
+    else
+        PKGS="$PKGS python3-numpy python3-pg8000"
+    fi
+fi
+if [ "$WANT_RADIO" = 1 ]; then
+    if [ "$PKG_MGR" = apt ]; then
+        PKGS="$PKGS alsa-utils build-essential cmake"
+    else
+        PKGS="$PKGS alsa-utils gcc-c++ cmake make"
+    fi
+fi
 # shellcheck disable=SC2086
 pkg $PKGS
+if [ "$PKG_MGR" = apt ] && [ $((WANT_RADIO + WANT_API)) -gt 0 ]; then
+    # system-wide on purpose: the services run the system python3
+    sudo python3 -m pip install --break-system-packages --quiet 'pg8000>=1.31'
+fi
 
 say "code"
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -163,7 +195,11 @@ fi
 # -- db ----------------------------------------------------------------------
 if [ "$WANT_DB" = 1 ]; then
     say "postgresql"
-    bash "$INSTALL_DIR/deploy/setup-postgres.sh"
+    if [ "$PKG_MGR" = apt ]; then
+        bash "$INSTALL_DIR/deploy/setup-postgres-debian.sh"
+    else
+        bash "$INSTALL_DIR/deploy/setup-postgres.sh"
+    fi
     if [ "$DB_EXPOSE" = 1 ]; then
         sudo -u postgres psql -c "ALTER ROLE wxparser WITH LOGIN PASSWORD '$PG_PASS' CREATEDB;"
         sudo -u postgres psql -c "ALTER SYSTEM SET listen_addresses = '*';"
@@ -173,10 +209,7 @@ if [ "$WANT_DB" = 1 ]; then
                 | sudo tee -a "$PGDATA/pg_hba.conf" >/dev/null
         fi
         sudo systemctl restart postgresql
-        if command -v firewall-cmd >/dev/null; then
-            sudo firewall-cmd --permanent --add-port=5432/tcp
-            sudo firewall-cmd --reload
-        fi
+        open_port 5432
     fi
 fi
 
@@ -265,9 +298,8 @@ if [ ${#UNITS[@]} -gt 0 ]; then sudo systemctl enable --now "${UNITS[@]}"; fi
 if [ ${#TIMERS_ON[@]} -gt 0 ]; then sudo systemctl enable --now "${TIMERS_ON[@]}"; fi
 
 # -- firewall (api) ----------------------------------------------------------
-if [ "$WANT_API" = 1 ] && command -v firewall-cmd >/dev/null; then
-    sudo firewall-cmd --permanent --add-port="$API_PORT"/tcp
-    sudo firewall-cmd --reload
+if [ "$WANT_API" = 1 ]; then
+    open_port "$API_PORT"
 fi
 
 # -- verify ------------------------------------------------------------------
