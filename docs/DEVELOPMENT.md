@@ -1,7 +1,8 @@
 # wxparser development guide
 
 Setup, tests, coverage policy, and the CI/CD pipeline. For *using* the running
-system see [`USAGE.md`](USAGE.md).
+system see [`USAGE.md`](USAGE.md); for standing up a node from scratch see
+[`DEPLOY.md`](DEPLOY.md).
 
 - [1. Local setup](#1-local-setup)
 - [2. Running the tests](#2-running-the-tests)

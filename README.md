@@ -198,6 +198,9 @@ uses). Both keep the answer complete — no result is ever silently capped.
 
 ## Deploy
 
+> **Full step-by-step walkthrough — hardware, radio wiring, whisper.cpp, PostgreSQL,
+> profiles, systemd, firewall, CD: [`docs/DEPLOY.md`](docs/DEPLOY.md)**
+
 ```bash
 deploy/setup-postgres.sh                 # one-time: install + init PostgreSQL, role + dbs
 sudo cp deploy/*.service /etc/systemd/system/ && sudo systemctl daemon-reload
