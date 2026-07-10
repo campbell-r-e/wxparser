@@ -87,6 +87,7 @@ VPN (the API binds `0.0.0.0:8080`). Note: `/health` intentionally answers
      Degree days  heating 0 · cooling 20
 
   FORECAST   (advisory · '?' = airings disagreed)
+     issued 1.5h ago · heard on-air 12m ago
      Tonight          low 61, mostly cloudy, rain 50%?
      Saturday         high 78, partly cloudy, rain 30%
      ...

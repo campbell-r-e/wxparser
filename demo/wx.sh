@@ -129,6 +129,18 @@ fc = d.get("forecast", [])
 periods = fc[0]["periods"] if fc and fc[0].get("periods") else []
 if periods:
     print("\n  FORECAST   (advisory · '?' = airings disagreed)")
+    # freshness: issued = when the voted content last changed; heard on-air =
+    # the newest airing, unchanged repeats included (drives the stale flag)
+    def age(mins):
+        return f"{int(round(mins))}m" if mins < 90 else f"{mins / 60:.1f}h"
+    meta, bits = fc[0], []
+    if meta.get("age_minutes") is not None:
+        bits.append(f"issued {age(meta['age_minutes'])} ago")
+    if meta.get("confirmed_age_minutes") is not None:
+        bits.append(f"heard on-air {age(meta['confirmed_age_minutes'])} ago")
+    if bits:
+        flag = " *stale" if meta.get("stale") else ""
+        print(f"     {' · '.join(bits)}{flag}")
     for p in periods[:6]:
         unc = set(p.get("uncertain") or [])
         def q(field): return "?" if field in unc else ""
