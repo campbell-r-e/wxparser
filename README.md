@@ -230,7 +230,9 @@ uses). Both keep the answer complete — no result is ever silently capped.
 ## Deploy
 
 > **Full step-by-step walkthrough — hardware, radio wiring, whisper.cpp, PostgreSQL,
-> profiles, systemd, firewall, CD: [`docs/DEPLOY.md`](docs/DEPLOY.md)**
+> profiles, systemd, firewall, CD: [`docs/DEPLOY.md`](docs/DEPLOY.md)** — or run the
+> interactive installer, once per machine, picking the role(s) each machine plays
+> (`db` / `radio` / `api`, or all three for a single box): `bash deploy/install.sh`
 
 ```bash
 deploy/setup-postgres.sh                 # one-time: install + init PostgreSQL, role + dbs

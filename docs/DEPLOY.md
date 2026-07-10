@@ -8,6 +8,21 @@ novelty gate drops most repeated audio before STT runs.
 For day-2 usage see [`USAGE.md`](USAGE.md); for the test/CI side see
 [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
+> **Prefer to be asked questions instead?** [`deploy/install.sh`](../deploy/install.sh)
+> is an interactive installer: run it on each machine, pick the role(s) that machine
+> plays (**db / radio / api**), answer the prompts, and it does §2–§12 for you —
+> packages, the clone, whisper.cpp, PostgreSQL (including network auth for a split
+> deployment), `/etc/wxparser.env`, patched systemd units, firewall, and CD. It clones
+> the repo itself, so it just needs to reach the new machine — copy it over from any
+> existing clone (or, if the repo is public to you, fetch the raw file with `gh`/curl):
+>
+> ```bash
+> scp deploy/install.sh newbox:   # from any machine with a clone
+> ssh newbox bash install.sh
+> ```
+>
+> The sections below are the manual path and the reference for what it does.
+
 - [0. What you're deploying](#0-what-youre-deploying)
 - [1. Hardware](#1-hardware)
 - [2. OS packages](#2-os-packages)
@@ -279,7 +294,9 @@ immediate run) do the rest.
 
 Everything above assumes one box. When one low-power machine can't carry all
 three roles, the system splits cleanly into tiers that talk **only through
-PostgreSQL** — there is no service-to-service RPC anywhere:
+PostgreSQL** — there is no service-to-service RPC anywhere. (The quick way:
+run `deploy/install.sh` on each machine and pick its role — it asks these
+questions and applies this whole section. What follows is the manual path.)
 
 ```
 [radio box]  wxparser.service ──────────┐

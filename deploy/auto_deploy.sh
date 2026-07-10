@@ -7,9 +7,11 @@
 # Driven by wxparser-deploy.timer. Append-only log at $LOG.
 set -uo pipefail
 
-REPO=/home/creed/wxparser
-VENV=/home/creed/wxparser-testenv
-LOG=/home/creed/wxparser-deploy.log
+# Paths are env-overridable so deploy/install.sh can point the timer at any
+# account/layout; the defaults match the reference box.
+REPO=${WX_DEPLOY_REPO:-/home/creed/wxparser}
+VENV=${WX_DEPLOY_VENV:-/home/creed/wxparser-testenv}
+LOG=${WX_DEPLOY_LOG:-/home/creed/wxparser-deploy.log}
 cd "$REPO" || exit 1
 
 git fetch -q origin main || { echo "$(date -Is) fetch failed" >>"$LOG"; exit 1; }
@@ -58,7 +60,8 @@ if "$PY" -m coverage run -m pytest -q >>"$LOG" 2>&1 && "$PY" -m coverage report 
     # Environment= in wxparser-deploy.service.
     SERVICES=${WX_DEPLOY_SERVICES:-wxparser wxparser-api}
     if git diff --name-only "$LOCAL" "$REMOTE" | grep -qvE '^(wxparser/(api|verify)\.py|tests/|docs/|README|\.gitignore)'; then
-        # shellcheck disable=SC2086 — word-splitting the unit list is the point
+        # word-splitting the unit list is the point
+        # shellcheck disable=SC2086
         sudo systemctl restart $SERVICES
     else
         # api-only change: restart the API if this machine runs it, else nothing
