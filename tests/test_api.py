@@ -116,7 +116,10 @@ def test_health_prefers_db_heartbeat(make_cfg):
     try:
         api._Handler.db.write_heartbeat(
             "KJY93", {"segments": 42, "updated_at": "2026-06-24T12:00:00Z"})
-        health = _get(H + "/health")
+        try:
+            health = _get(H + "/health")
+        except urllib.error.HTTPError as e:           # fail-loud 503 is the point
+            health = json.loads(e.read().decode())
         assert health["pipeline"]["segments"] == 42   # DB row won over the file
         assert health["status"] == "down"             # and that row is ancient
     finally:
