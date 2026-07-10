@@ -40,6 +40,9 @@ systemd units in `deploy/`:
 
 Everything runs as an ordinary user account; nothing needs root at runtime.
 The box makes **no outbound network calls** unless you opt into the webhook.
+The two services communicate **only through PostgreSQL** (see "Architecture" in
+the [README](../README.md)) — which is why they also split onto separate
+machines with no code changes (§13).
 
 ## 1. Hardware
 

@@ -356,6 +356,12 @@ curl -fsS $H/health >/dev/null || alert "wxparser unhealthy"
 curl -s $H/health | jq '.pipeline.queue_depth'
 ```
 
+The heartbeat itself travels through the database (the `pipeline_health` row, upserted on
+every segment), so `/health` works even when the API runs on a **different machine** than
+the capture box; the `health.json` file in the pipeline's out_dir is the same-box fallback
+and what the AGC timer reads. If the pipeline loses the database, the row goes stale and
+`/health` reports `down` — which is the truth a monitor should act on.
+
 ---
 
 ## 8. Trust & the advisory/authoritative model
@@ -443,7 +449,7 @@ WX_STATION=WXK42 WX_PRIMARY_CITY=Anderson WX_ALSA_DEVICE=plughw:1,0 \
 
 A consumer fans out to each `:PORT/now` (or pages `/export?since=` per instance) and merges
 by `station`. No shared state between instances — separate capture device, database,
-transcript log, and port each.
+out_dir, and port each.
 
 ---
 

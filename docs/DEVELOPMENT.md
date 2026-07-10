@@ -73,7 +73,7 @@ when a branch is truly unreachable or pure I/O glue, and say why in the comment.
 | `test_extract.py` | multi-city conditions extraction, forecast parsing, repeat-voting |
 | `test_db.py` | PostgreSQL store, history, pagination, alert/since readers |
 | `test_same.py` | SAME encode/decode round-trip, FIPS lookup, the live monitor |
-| `test_store.py` | product classification, report building, JSONL query/sync/count |
+| `test_store.py` | product classification, report building, raw-store query/sync/count |
 | `test_dedup.py` | text normalization + rolling-window fuzzy dedup |
 | `test_segment.py` | energy-VAD segmentation over synthetic frames |
 | `test_fingerprint.py` | mel-spectral fingerprint + novelty gate |
@@ -121,6 +121,9 @@ every 10 minutes, which:
    back to the previous commit and **leaves the running services untouched**.
 
 So a bad push can never take the capture box down — it tests first and rolls back.
+A change confined to `wxparser/api.py`/`verify.py`, tests, and docs restarts only the
+API. On a split deployment (DEPLOY.md §13) each machine runs its own timer with
+`WX_DEPLOY_SERVICES` naming the units it owns (default: both).
 Activity is logged to `~/wxparser-deploy.log`. Install on the box with:
 
 ```bash
@@ -167,11 +170,11 @@ code-only changes just need the service restart (the CD does both automatically)
 | `extract.py` | conditions + forecast + almanac extraction, repeat-voting, alert-detail parsing |
 | `pipeline.py` | shared transcript → structured-data step (live worker + reprocess) |
 | `same.py` | SAME AFSK decoder + FIPS/event lookups + live burst monitor |
-| `store.py` | report building, JSONL transcript log, product classification |
+| `store.py` | report building + product classification (persists via `db.raw_reports`) |
 | `db.py` | PostgreSQL store (pg8000) + all query readers |
 | `api.py` | stdlib-http LAN query API (incl. snapshot, export, SSE, EmComm formats) |
 | `verify.py` | forecast-vs-observed scoring over the full record (`/verify`) |
-| `health.py` | pipeline heartbeat + fail-loud status |
+| `health.py` | pipeline heartbeat (write-through: `pipeline_health` row + `health.json`) + fail-loud status |
 | `trust.py` | STT trust scoring (advisory vs authoritative) |
 | `notify.py` | opt-in outbound webhook |
 | `formats.py` | EmComm bulletin / sitrep / APRS renderers |

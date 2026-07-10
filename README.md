@@ -37,7 +37,7 @@ radio line-out → mic-in → arecord (continuous PCM)
    └── VAD segmenter → audio fingerprint → novelty gate
           repeat ─► drop (no STT)
           novel  ─► STT worker (whisper.cpp) → text dedup
-                       ├─► transcript report (JSONL)
+                       ├─► raw transcript report (the immutable source of truth)
                        ├─► per-(city,condition) readings  (voted)
                        └─► forecast periods
                                       ↓
@@ -48,6 +48,35 @@ Two threads decouple capture from the slower-than-real-time transcriber: a **pro
 (capture → segment → fingerprint → gate, plus the SAME monitor) and an **STT worker** that
 drains a queue. Novel segments queue up while a fresh product airs and drain during the long
 stretches where the loop just repeats.
+
+### Architecture: two services, one database
+
+wxparser is two processes around one PostgreSQL database, and the database is the **only
+interface between them** — there is no service-to-service RPC anywhere:
+
+```
+wxparser.service (the WRITE side — sole writer)
+   capture → STT → extract → vote
+   │  writes: raw_reports (immutable transcript store, the source of truth),
+   │          the structured tables projected from it,
+   │          and the pipeline_health heartbeat row
+   ▼
+PostgreSQL ──── the contract ────► wxparser-api.service (the READ side — read-only)
+```
+
+That shape is CQRS with an event-sourcing flavor: the structured serving tables are a
+**pure projection** of `raw_reports`, and `wxparser.reprocess` rebuilds them by replaying
+the raw store — so an improved correction table or extraction regex applies retroactively
+to the whole record. Even the pipeline's liveness heartbeat travels through the DB (the
+`pipeline_health` row), so `/health` reports the truth when the API runs on a different
+machine than the capture box (`health.json` remains as the same-box fallback and for the
+AGC timer).
+
+The practical consequence: the tiers separate cleanly onto up to three machines — the
+radio/pipeline box (the only one that needs a sound card and whisper.cpp), a PostgreSQL
+box, and one or more API boxes — with nothing but `WX_PG_*` env vars pointing them at each
+other. See [`docs/DEPLOY.md` §13](docs/DEPLOY.md#13-splitting-across-three-machines).
+The default deployment remains everything on one box.
 
 ### Components (`wxparser/`)
 
@@ -62,12 +91,12 @@ stretches where the loop just repeats.
 | `extract.py` | multi-city current-conditions + forecast + almanac extraction, repeat-voting, spoken-alert detail parsing |
 | `pipeline.py` | the shared transcript → structured-data step (live worker and offline reprocess both call it, so they can never drift) |
 | `same.py` | SAME AFSK decoder + FIPS/event lookups + live burst monitor |
-| `store.py` | report building, JSONL transcript log, product classification |
+| `store.py` | report building + product classification (reports land in `raw_reports`, the immutable store) |
 | `db.py` | PostgreSQL store (pg8000) + query readers |
 | `api.py` | stdlib-http LAN query API (snapshot, history, export, SSE, EmComm formats) |
 | `verify.py` | forecast-vs-observed scoring over the full record (the `/verify` endpoint) |
 | `trust.py` | STT trust scoring (advisory vs authoritative) |
-| `health.py` | pipeline heartbeat + fail-loud status for `/health` |
+| `health.py` | pipeline heartbeat (write-through to the `pipeline_health` DB row + `health.json`) + fail-loud status for `/health` |
 | `notify.py` | opt-in outbound webhook |
 | `formats.py` | EmComm bulletin / sitrep / APRS renderers |
 | `reprocess.py` | rebuild the structured DB as a pure projection of the raw transcript store |
@@ -77,8 +106,9 @@ stretches where the loop just repeats.
 
 ## Data products
 
-- **Transcripts** — timestamped JSON reports (`transcripts/reports.jsonl`), deduped against the
-  repeating loop; updates link to the report they `supersede`.
+- **Transcripts** — timestamped JSON report docs in the `raw_reports` table (the immutable
+  source of truth everything else is derived from), deduped against the repeating loop;
+  updates link to the report they `supersede`.
 - **Current conditions** — temp / dewpoint / humidity / pressure / wind / sky, extracted from
   the voice and **majority-voted across repeats** to harden numbers against STT slips. Stored
   **per city**: the station's primary city (Muncie) gets the full set; other cities named in
@@ -187,8 +217,9 @@ GET /health                      → pipeline liveness + counts (HTTP 503 when d
 is exclusive. The condition endpoints only surface a city once it's been **heard ≥2 times**
 (`WX_MIN_SIGHTINGS`, override per request with `?min=`) so STT-garbage city names are
 suppressed; `/conditions/history` keeps the raw data. Served from PostgreSQL over the LAN,
-e.g. `curl http://<host>:8080/now`. `/transcripts` and `/export` read the raw JSONL transcript
-log directly (e.g. `curl 'http://<host>:8080/transcripts?product=tornado_warning&limit=20'`).
+e.g. `curl http://<host>:8080/now`. `/transcripts` and `/export` read the raw transcript
+store (`raw_reports`) directly
+(e.g. `curl 'http://<host>:8080/transcripts?product=tornado_warning&limit=20'`).
 
 **Pagination** — the list endpoints return `{total, count, limit, offset, next_offset}`
 alongside the data; page until `next_offset` is `null` to retrieve every row. **Incremental
@@ -321,7 +352,8 @@ WX_STATION=WXK42 WX_PRIMARY_CITY=Anderson WX_ALSA_DEVICE=plughw:1,0 \
   python3 -m wxparser.main   # + a matching wxparser.api on :8081
 ```
 
-Each instance has its own capture device, Postgres database, transcript log, and API port —
+Each instance has its own capture device, Postgres database (raw + structured + heartbeat),
+out_dir, and API port —
 no shared state, no contention. A consumer (dashboard, mesh publisher) fans out to each
 `:PORT/now` (or pages `/export?since=` per instance) and merges by `station`. Template the
 systemd units per instance (`wxparser@.service`) or just set the env block per unit.
