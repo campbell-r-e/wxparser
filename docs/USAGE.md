@@ -8,14 +8,16 @@ ISO-8601 UTC (`2026-06-25T21:39:49Z`). Examples assume `H=http://<host>:8080`.
 - [2. The snapshot — `/now`](#2-the-snapshot--now)
 - [2a. EmComm formats — `/bulletin`, `/sitrep`, `/aprs`](#2a-emcomm-formats)
 - [3. Discovery — `/cities`, `/city`, `/conditions`](#3-discovery)
+- [3a. Almanac — `/almanac`](#3a-almanac--almanac)
 - [4. History & pagination](#4-history--pagination)
 - [5. Incremental sync — `/export`](#5-incremental-sync--export)
 - [6. Live push — SSE `/stream` and the webhook](#6-live-push)
+- [6a. Forecast verification — `/verify`](#6a-forecast-verification--verify)
 - [7. Health & monitoring — `/health`](#7-health--monitoring)
 - [8. Trust & the advisory/authoritative model](#8-trust--the-advisoryauthoritative-model)
-- [9. Operations — nightly cleanup jobs](#9-operations--nightly-cleanup-jobs)
+- [9. Operations — maintenance timers & the reprocess toolkit](#9-operations--maintenance-timers--the-reprocess-toolkit)
 - [10. Multi-transmitter](#10-multi-transmitter)
-- [11. Trialing a better STT model (small.en)](#11-trialing-a-better-stt-model-smallen)
+- [11. STT model selection](#11-stt-model-selection)
 
 ---
 
@@ -65,6 +67,9 @@ and any active alerts — already annotated with freshness and trust.
 - `?city=Anderson` snapshots a different city (nearby cities carry only temperature).
 - `?min=1` lowers the sightings filter (default 2 — see §3); `?stale_after=30` overrides
   the staleness threshold (default 60 min); `?fresh=1` drops stale rows.
+- Forecast `age_minutes`/`stale` measure the time since the forecast **last aired**, not
+  since its content last changed — an unchanged forecast the station keeps re-airing stays
+  fresh, one the station stopped airing goes stale even if it never changed.
 
 ---
 
@@ -375,14 +380,22 @@ So a value heard many times with unanimous votes scores `high`; a one-off or a s
 scores low. Rank or filter by `trust`/`confidence`, and always treat an `advisory` field as
 enrichment — never as the life-safety source (that's the SAME alert / the radio itself).
 
+Two more guards feed this model upstream. A transcript whose mean STT token-confidence falls
+below `WX_STT_CONF_FLOOR` (default 0.5) is stored raw but **never voted** into
+conditions/forecast/almanac. And a voted reading whose winning value holds less than
+`WX_CONFIDENCE_MIN` (default 0.6) of the recent airings is listed in the payload's
+`uncertain` array — the airings disagree, likely an STT mishear.
+
 ---
 
-## 9. Operations — nightly cleanup jobs
+## 9. Operations — maintenance timers & the reprocess toolkit
 
-Three `oneshot` systemd timers keep the store clean (all idempotent, safe to run by hand):
+Four `oneshot` systemd timers keep the input and the store healthy (all idempotent, safe to
+run by hand):
 
 | Timer | When | Job |
 |---|---|---|
+| `wxparser-agc` | every 3 min | keep the capture input level in the decoder's sweet spot — the analog level drifts, and a too-quiet feed silently goes deaf (`agc.py`; adjusts the ALSA mixer from the level the pipeline publishes, persists with `alsactl store`) |
 | `wxparser-fixspelling` | 00:00 | merge STT-misheard city names → canonical (`fix_city_spellings.py`) |
 | `wxparser-fixterms` | 00:30 | fix STT term mis-hearings in stored transcripts (`fix_stt_terms.py`) |
 | `wxparser-prune` | 01:00 | drop non-home cities not heard in >`WX_STALE_PRUNE_HOURS` (24h) (`prune_stale_readings.py`) |
@@ -395,7 +408,18 @@ python3 deploy/prune_stale_readings.py     # ages out stale out-of-state reading
 
 The prune only touches the "latest value" view (`city_conditions`); the append-only history
 (`city_observations`) is never deleted, and a pruned city reappears the moment it's heard
-again. One-off backfills (`fix_precip.py`, `fix_classify.py`) live in `deploy/` too.
+again.
+
+Because the raw transcripts are the source of truth and the structured tables are a pure
+projection of them, improving a correction table or an extraction regex can be applied
+**retroactively** to the whole record:
+
+| Tool | Role |
+|---|---|
+| `deploy/reprocess.sh` (→ `wxparser.reprocess`) | rebuild the structured DB by replaying every stored transcript through the current pipeline |
+| `deploy/propose_corrections.py` | mine the transcripts for consistent STT garbles and **propose** `stt_terms` corrections (review tool — no runtime effect) |
+| `deploy/audit_data.py` | read-only data + transcript integrity audit; ends with `AUDIT: PASS|FAIL (<n> issues)` for monitoring |
+| `deploy/revote_forecast.py` | one-off: recompute the latest forecast issuance from the consensus of recent airings |
 
 ---
 
@@ -421,18 +445,22 @@ transcript log, and port each.
 
 ---
 
-## 11. Trialing a better STT model (small.en)
+## 11. STT model selection
 
-The model is just `WX_WHISPER_MODEL` — the pipeline sizes the encoder context per segment and
-the vocabulary prompt is already wired, so trialing a bigger model is a download + one env var:
+The shipped default is **`small.en-q5_1`** — more accurate than `base.en` on the proper nouns
+and decade words the correctors used to patch, but ~3.4× slower per segment. It keeps up
+because the novelty gate drops most repeated audio before STT runs. The model is just
+`WX_WHISPER_MODEL` — the pipeline sizes the encoder context per segment and the vocabulary
+prompt is already wired, so swapping is a download + one env var.
+
+**Watch `/health` on weaker hardware:** if `pipeline.queue_depth` climbs and stays up, the
+transcriber is falling behind real airings — fall back to the faster model:
 
 ```bash
-bash ~/whisper.cpp/models/download-ggml-model.sh small.en      # or small.en-q5_1 for a slow box
-WX_WHISPER_MODEL=~/whisper.cpp/models/ggml-small.en.bin python3 -m wxparser.main
+bash ~/whisper.cpp/models/download-ggml-model.sh base.en-q5_1
+WX_WHISPER_MODEL=~/whisper.cpp/models/ggml-base.en-q5_1.bin python3 -m wxparser.main
 ```
 
-`small.en` is more accurate than the default `base.en-q5_1` (it would reduce the mis-hearings
-the term/place correctors patch) but ~2-3× slower per segment. **Watch `/health`:** if
-`pipeline.queue_depth` climbs and stays up, the transcriber is falling behind real airings —
-revert to `base.en-q5_1`. Unlike `tiny.en`, `small.en` does not degenerate with the prompt, so
-keep `WX_STT_PROMPT` on.
+Unlike `tiny.en`, both `base.en` and `small.en` absorb the vocabulary prompt cleanly, so keep
+`WX_STT_PROMPT` on. After a model upgrade, `deploy/reprocess.sh` will NOT re-transcribe old
+audio (the WAVs aren't kept) — the better model improves the record from that point forward.

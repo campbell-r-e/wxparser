@@ -35,7 +35,7 @@ The DB connection honours `WX_PG_*` env vars (default `127.0.0.1:5432`, user
 ## 2. Running the tests
 
 ```bash
-coverage run -m pytest            # whole suite (152 tests); branch mode via .coveragerc
+coverage run -m pytest            # whole suite (244 tests); branch mode via .coveragerc
 coverage report -m                # per-file table; fails under 100%
 coverage html && open htmlcov/index.html   # annotated source
 pytest tests/test_extract.py -q   # a single module
@@ -80,6 +80,11 @@ when a branch is truly unreachable or pure I/O glue, and say why in the comment.
 | `test_capture.py` | arecord command, WAV writing, framed streaming (mocked) |
 | `test_api.py` | the HTTP handler end-to-end against a live server + test DB |
 | `test_main.py` | pipeline helpers + a `--once` run with capture/STT mocked |
+| `test_pipeline.py` | the shared transcript → structured-data step |
+| `test_enhance.py` | the optional pre-STT DSP chain |
+| `test_verify.py` | forecast-vs-observed scoring (`/verify`) |
+| `test_profile.py` | station-profile loading + validation |
+| `test_reprocess.py` | DB rebuild from the raw transcript store |
 | `test_health.py` | fail-loud heartbeat + status assessment |
 | `test_trust.py` | STT trust scoring |
 | `test_notify.py` | opt-in webhook push |
@@ -132,11 +137,15 @@ Everything in `deploy/` is tracked and deployable via `git pull`:
 |---|---|
 | `wxparser.service` | the capture → transcribe → store pipeline |
 | `wxparser-api.service` | the LAN query API |
+| `wxparser-agc.{service,timer}` | every 3 min — capture AGC: keep the input level in the decoder's sweet spot (`agc.py`) |
 | `wxparser-fixspelling.{service,timer}` | nightly 00:00 — merge misheard city names (`fix_city_spellings.py`) |
 | `wxparser-fixterms.{service,timer}` | nightly 00:30 — fix STT term mis-hearings in transcripts (`fix_stt_terms.py`) |
 | `wxparser-prune.{service,timer}` | nightly 01:00 — age out stale out-of-state readings (`prune_stale_readings.py`) |
 | `wxparser-deploy.{service,timer}` | every 10 min — the CD auto-deploy above |
-| `fix_precip.py` / `fix_classify.py` | one-off backfills (precip from "%"; product_type reclassification) |
+| `reprocess.sh` | rebuild the structured DB by replaying the raw transcripts through the current pipeline |
+| `propose_corrections.py` | mine transcripts for consistent STT garbles → proposed `stt_terms` entries (review tool) |
+| `audit_data.py` | read-only integrity audit; final `AUDIT: PASS\|FAIL` line for monitoring |
+| `revote_forecast.py` | one-off: recompute the latest forecast issuance from recent-airing consensus |
 | `setup-postgres.sh` | one-time PostgreSQL install + role/db init |
 
 Unit changes need `sudo cp …/*.service /etc/systemd/system/ && sudo systemctl daemon-reload`;
@@ -151,17 +160,22 @@ code-only changes just need the service restart (the CD does both automatically)
 | `capture.py` | persistent `arecord` → frames; retries on device-busy |
 | `segment.py` | energy-VAD segmentation |
 | `fingerprint.py` | mel-spectral fingerprint + cosine novelty gate |
-| `stt.py` | whisper.cpp `whisper-cli` wrapper |
+| `enhance.py` | optional pre-STT DSP chain (off by default, `WX_STT_ENHANCE`) |
+| `stt.py` | whisper.cpp `whisper-cli` wrapper + repetition-loop guard |
 | `dedup.py` | text-level dedup + supersede chains |
-| `extract.py` | conditions + forecast extraction, repeat-voting, alert-detail parsing |
+| `extract.py` | conditions + forecast + almanac extraction, repeat-voting, alert-detail parsing |
+| `pipeline.py` | shared transcript → structured-data step (live worker + reprocess) |
 | `same.py` | SAME AFSK decoder + FIPS/event lookups + live burst monitor |
 | `store.py` | report building, JSONL transcript log, product classification |
 | `db.py` | PostgreSQL store (pg8000) + all query readers |
 | `api.py` | stdlib-http LAN query API (incl. snapshot, export, SSE, EmComm formats) |
+| `verify.py` | forecast-vs-observed scoring over the full record (`/verify`) |
 | `health.py` | pipeline heartbeat + fail-loud status |
 | `trust.py` | STT trust scoring (advisory vs authoritative) |
 | `notify.py` | opt-in outbound webhook |
 | `formats.py` | EmComm bulletin / sitrep / APRS renderers |
+| `reprocess.py` | rebuild the structured DB as a projection of the raw transcripts |
+| `profile.py` / `profiles/` | station-profile loader + bundled KJY93 profile (`WX_PROFILE`) |
 | `main.py` | the producer/worker wiring + service loop |
 | `config.py` | env-overridable settings |
 | `data/` | bundled FIPS table, SAME codes, STT correction tables |

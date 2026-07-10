@@ -9,6 +9,11 @@ Audio is tapped from a dedicated weather radio (a Reecom R-1630) into the PC's m
 RF reception is handled in hardware and the entire software stack stays MIT-licensed and
 permissive.
 
+Everything region-specific — the station callsign/frequency, home city, whisper vocabulary
+prompt, and place-name corrections — lives in a **station profile** (a JSON file selected with
+`WX_PROFILE`), so covering a different NWR transmitter is a drop-in profile, not a code edit
+(see [Station profiles](#station-profiles)).
+
 **Fully offline at runtime:** no network calls of any kind out of the box. Transcription
 (whisper.cpp) and SAME decoding run locally, lookup tables (FIPS→county) are bundled, and the
 data store (PostgreSQL) runs on the same box. (The only way out is opt-in: setting
@@ -51,12 +56,22 @@ stretches where the loop just repeats.
 | `capture.py` | persistent `arecord` → frames / WAVs; retries on transient device-busy |
 | `segment.py` | energy-VAD segmentation (coalesces to product-level on inter-product silence) |
 | `fingerprint.py` | numpy mel-spectral fingerprint + cosine **novelty gate** |
-| `stt.py` | whisper.cpp `whisper-cli` wrapper (`base.en-q5_1`, dynamic `--audio-ctx`, greedy decode, vocabulary prompt) |
+| `enhance.py` | optional pre-STT DSP chain (mains-hum notches + low-pass + spectral subtraction), off by default (`WX_STT_ENHANCE`) |
+| `stt.py` | whisper.cpp `whisper-cli` wrapper (`small.en-q5_1`, dynamic `--audio-ctx`, greedy decode, vocabulary prompt, repetition-loop guard) |
 | `dedup.py` | text-level dedup + `supersedes` update chains |
-| `extract.py` | multi-city current-conditions + forecast extraction, repeat-voting, spoken-alert detail parsing |
+| `extract.py` | multi-city current-conditions + forecast + almanac extraction, repeat-voting, spoken-alert detail parsing |
+| `pipeline.py` | the shared transcript → structured-data step (live worker and offline reprocess both call it, so they can never drift) |
 | `same.py` | SAME AFSK decoder + FIPS/event lookups + live burst monitor |
-| `db.py` | PostgreSQL store (pg8000) |
-| `api.py` | stdlib-http LAN query API |
+| `store.py` | report building, JSONL transcript log, product classification |
+| `db.py` | PostgreSQL store (pg8000) + query readers |
+| `api.py` | stdlib-http LAN query API (snapshot, history, export, SSE, EmComm formats) |
+| `verify.py` | forecast-vs-observed scoring over the full record (the `/verify` endpoint) |
+| `trust.py` | STT trust scoring (advisory vs authoritative) |
+| `health.py` | pipeline heartbeat + fail-loud status for `/health` |
+| `notify.py` | opt-in outbound webhook |
+| `formats.py` | EmComm bulletin / sitrep / APRS renderers |
+| `reprocess.py` | rebuild the structured DB as a pure projection of the raw transcript store |
+| `profile.py` / `profiles/` | station-profile loader + the bundled KJY93 profile |
 | `main.py` | wiring + service loop |
 | `data/` | bundled `fips.json` (US counties), SAME event/originator codes, `place_names.py` STT mis-hearing corrections |
 
@@ -71,7 +86,10 @@ stretches where the loop just repeats.
   **auto-corrected at extraction time** (`data/place_names.py`) so the store never sees STT
   mis-hearings (e.g. "Monthsy"→Muncie, "Deepan"→Dayton).
 - **Forecast** — zone-forecast periods (highs/lows, precip %, sky) with computed
-  `valid_from`/`valid_to`, tagged with the area they cover.
+  `valid_from`/`valid_to`, tagged with the area they cover. Staleness is judged by the last
+  time the forecast **aired**, not the last time its content changed.
+- **Almanac** — the climate-recap segment (year-to-date precipitation and departure,
+  sunrise/sunset, degree days), voted and trust-annotated like conditions.
 - **Alerts** — two layers. The **SAME header** is decoded straight from the audio (event,
   FIPS→county areas, valid time) with **zero STT** — instant and reliable (validated on a real
   over-the-air Required Weekly Test). The **spoken narrative** that follows is transcribed and
@@ -114,6 +132,8 @@ GET /now?city=                   → one call: a city's full current ob + the re
 GET /bulletin?city=              → plain-text read-on-air net bulletin (EmComm/SKYWARN)
 GET /sitrep?city=                → plain-text situation report (Winlink-pasteable/printable)
 GET /aprs?city=&format=text      → APRS weather report + alert bulletins (RF beacon)
+GET /almanac                     → the day's almanac (YTD precip + departure, sunrise/
+                                   sunset, degree days), voted + trust-annotated
 GET /cities                      → cities with data, each with first/last_seen + count
 GET /city/{city}                 → every current condition for one city (the full ob)
 
@@ -130,9 +150,13 @@ GET /conditions/history?condition=&city=&from=&to=&limit=&offset=
 
 Forecast
 GET /forecast                    → latest forecast for all heard cities/areas, each
-                                   issuance annotated with age_minutes + stale
+                                   issuance annotated with age_minutes + stale (age is
+                                   time since it last AIRED, not since content changed)
 GET /forecast/history?from=&to=&city=&limit=&offset=
                                  → historical forecast predictions between dates (paginated)
+GET /verify                      → forecast accuracy scored against what this station
+                                   later observed, over the whole record (temp bias/MAE
+                                   by lead day, sky agreement, Brier-scored rain PoPs)
 
 Transcripts
 GET /transcripts?from=&to=&q=&product=&limit=&offset=
@@ -149,11 +173,13 @@ GET /alerts/history?from=&to=&event=&limit=&offset=
 GET /alerts/details?from=&to=    → structured spoken-warning details on their own
                                    (until, motion, threats, locations, spotter flag)
 
-Bulk / sync
+Bulk / sync / live
 GET /export?since=&limit=        → incremental watermark feed of every store
                                    (observations, forecasts, alerts, alert_details,
-                                   transcripts) captured after `since`
-GET /health                      → liveness + counts
+                                   almanac, transcripts) captured after `since`
+GET /stream                      → live push: Server-Sent Events as new alerts /
+                                   observations / forecasts land (?since= replays first)
+GET /health                      → pipeline liveness + counts (HTTP 503 when degraded/down)
 ```
 
 `from`/`to`/`since` are ISO-8601 (`2026-06-24T12:00:00Z`); `from`/`to` are inclusive, `since`
@@ -182,6 +208,13 @@ sudo firewall-cmd --permanent --add-port=8080/tcp && sudo firewall-cmd --reload
   `postgresql`/`sound`).
 - `wxparser-api.service` — the LAN query API (reads the same DB).
 
+Maintenance timers (all in `deploy/`, all idempotent — see
+[`docs/USAGE.md` §9](docs/USAGE.md) and [`docs/DEVELOPMENT.md` §7](docs/DEVELOPMENT.md)):
+`wxparser-agc` keeps the capture input level in the decoder's sweet spot every 3 minutes (an
+analog level that drifts too quiet makes the box silently go deaf); `wxparser-fixspelling`,
+`wxparser-fixterms`, and `wxparser-prune` run nightly store cleanup; `wxparser-deploy` is the
+pull-based CD.
+
 Run directly for development:
 
 ```bash
@@ -189,17 +222,29 @@ python3 -m wxparser.main      # capture pipeline
 python3 -m wxparser.api       # query API
 ```
 
+### Demo client
+
+[`demo/wx.sh`](demo/README.md) is a one-file shell client for any wxparser node: with no
+arguments it renders a live terminal dashboard (refreshing every 30 s, with forecast
+issued/heard-on-air freshness), and it has subcommands for the main endpoints
+(`demo/wx.sh bulletin`, `demo/wx.sh almanac`, …). Point it at a node with `WX_HOST` or a
+gitignored `demo/.env`.
+
 ## Configuration (env vars)
 
 All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WX_STATION` / `WX_PRIMARY_CITY` | `KJY93` / `Muncie` | station + home city |
+| `WX_PROFILE` | `kjy93_muncie` | station profile: a bundled name (`wxparser/profiles/<name>.json`) or a path to any `.json` |
+| `WX_STATION` / `WX_PRIMARY_CITY` | from profile (`KJY93` / `Muncie`) | station + home city |
+| `WX_TZ` | from profile (`America/Indiana/Indianapolis`) | station timezone — anchors `/verify`'s local-wall-clock windows |
 | `WX_ALSA_DEVICE` | `plughw:0,0` | capture device |
-| `WX_WHISPER_BIN` / `WX_WHISPER_MODEL` | `~/whisper.cpp/...ggml-base.en-q5_1.bin` | STT binary + model (q5_1 = base.en accuracy at ~tiny speed) |
+| `WX_WHISPER_BIN` / `WX_WHISPER_MODEL` | `~/whisper.cpp/...ggml-small.en-q5_1.bin` | STT binary + model (see [STT model](#stt-model-smallen-q5_1-default-baseen-q5_1-fallback)) |
 | `WX_WHISPER_THREADS` | `2` | STT threads |
-| `WX_STT_PROMPT` | local place names (on) | whisper vocabulary-bias prompt; **must be `""` if you point `WX_WHISPER_MODEL` back at `tiny.en`**, which degenerates with any prompt |
+| `WX_STT_PROMPT` | place names from profile (on) | whisper vocabulary-bias prompt; **must be `""` if you point `WX_WHISPER_MODEL` at `tiny.en`**, which degenerates with any prompt |
+| `WX_STT_ENHANCE` | `0` (off) | pre-STT speech-enhancement DSP chain (`enhance.py`) — A/B it on a new deployment before trusting it |
+| `WX_STT_CONF_FLOOR` | `0.5` | transcripts below this mean token-confidence are stored but never voted into conditions/forecast/almanac |
 | `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
 | `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
 | `WX_ALERT_PRIORITY_WINDOW` | `120` | seconds after a SAME burst that captured segments jump the STT queue (warning narrative transcribes ahead of routine backlog) |
@@ -215,23 +260,44 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STREAM_POLL_S` | `3` | `/stream` (SSE) poll interval |
 | `WX_STALE_PRUNE_HOURS` | `24` | nightly prune drops non-home cities not heard in this long |
 
-### Trialing a more accurate STT model (small.en)
+### STT model (small.en-q5_1 default, base.en-q5_1 fallback)
+
+The shipped default is **`small.en-q5_1`** — noticeably more accurate than `base.en` on the
+proper nouns and decade words the correctors used to patch, at a real speed cost (~3.4× slower
+per segment on the Core2 Duo). It keeps up only because the novelty gate drops most repeated
+audio before STT ever runs. **Watch `/health`** on your hardware: if `pipeline.queue_depth`
+climbs and stays up, the transcriber is falling behind real airings — fall back to the faster
+model:
+
+```bash
+bash ~/whisper.cpp/models/download-ggml-model.sh base.en-q5_1
+WX_WHISPER_MODEL=~/whisper.cpp/models/ggml-base.en-q5_1.bin python3 -m wxparser.main
+```
 
 The model is just `WX_WHISPER_MODEL` — the pipeline derives everything else (the encoder
 context is sized per-segment, the vocabulary prompt is already wired, and `model_name`
-self-labels from the path), so trialing a bigger model is a download + one env var, no code
-change. `base.en-q5_1` is the shipped default; `small.en` is the next rung up and would *reduce*
-the STT mis-hearings the term/place correctors patch (decade words, place names):
+self-labels from the path), so swapping models is a download + one env var, no code change.
+(Unlike `tiny.en`, both `base.en` and `small.en` absorb the vocabulary prompt cleanly, so
+leave `WX_STT_PROMPT` on.)
+
+## Station profiles
+
+Porting wxparser to another part of the country is a **profile, not a code edit**. A profile
+JSON carries the station callsign + frequency, home city, timezone, the whisper vocabulary
+prompt (your NWS office's counties/towns), and the place-name correction table for your
+coverage area; the pipeline, the SAME decoder (national FIPS/event tables), and the extraction
+patterns are all generic. Select one with `WX_PROFILE` — a bundled name or a path to any
+`.json`:
 
 ```bash
-bash ~/whisper.cpp/models/download-ggml-model.sh small.en          # or small.en-q5_1 for the slow box
-WX_WHISPER_MODEL=~/whisper.cpp/models/ggml-small.en.bin python3 -m wxparser.main
+WX_PROFILE=/etc/wxparser/wxk97_dayton.json python3 -m wxparser.main
 ```
 
-Tradeoff: more accurate, ~2-3× slower per segment. On a weak box keep the quantized variant
-(`small.en-q5_1`) and watch `/health` — if `queue_depth` climbs and stays up, the transcriber
-is falling behind real airings; revert to `base.en-q5_1`. (Unlike `tiny.en`, `small.en` does
-**not** degenerate with the vocabulary prompt, so leave `WX_STT_PROMPT` on.)
+To add a region: copy `wxparser/profiles/kjy93_muncie.json`, set
+`station`/`frequency_mhz`/`primary_city`/`tz`, replace `stt_prompt` with your local
+counties/towns, and seed `place_corrections` loosely — `deploy/propose_corrections.py` mines
+the stored transcripts for consistent STT garbles so the table fills in from real airings over
+time.
 
 ## Multi-transmitter (run N instances + aggregate)
 
@@ -267,7 +333,7 @@ needed:
 ```bash
 pip install -e '.[test]'         # pytest + coverage
 createdb wxparser_test           # once
-coverage run -m pytest           # whole suite (152 tests), branch mode via .coveragerc
+coverage run -m pytest           # whole suite (244 tests), branch mode via .coveragerc
 coverage report                  # fails under 100%
 ```
 
