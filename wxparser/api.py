@@ -445,7 +445,9 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(doc)
 
     def _ep_health(self, q: dict) -> None:
-        health = assess(Heartbeat.read(self.cfg), self.cfg)
+        # DB first (works across machines), health.json as the same-box fallback
+        hb = self.db.read_heartbeat() or Heartbeat.read(self.cfg)
+        health = assess(hb, self.cfg)
         health.update({"generated_at": _now_iso(),
                        "station": self.cfg.station,
                        "conditions": len(self.db.list_conditions()),

@@ -130,3 +130,31 @@ def test_age_min_tolerates_corrupt_timestamp():
     assert _age_min("not-a-date", now) is None        # corrupt -> None, no crash
     assert _age_min(None, now) is None                # missing -> None
     assert _age_min("2026-06-26T00:00:00Z", now) is not None   # valid -> float
+
+
+def test_flush_writes_through_to_db(tmp_path):
+    class DBStub:
+        def __init__(self):
+            self.written = []
+
+        def write_heartbeat(self, station, payload):
+            self.written.append((station, payload))
+
+    cfg = Config(out_dir=tmp_path)
+    stub = DBStub()
+    hb = Heartbeat(cfg, db=stub)
+    hb.flush()
+    station, payload = stub.written[-1]
+    assert station == cfg.station and payload["updated_at"]
+    assert Heartbeat.read(cfg)["updated_at"] == payload["updated_at"]  # file leg too
+
+
+def test_flush_survives_db_failure(tmp_path):
+    class ExplodingDB:
+        def write_heartbeat(self, station, payload):
+            raise RuntimeError("db down")
+
+    cfg = Config(out_dir=tmp_path)
+    hb = Heartbeat(cfg, db=ExplodingDB())
+    hb.flush()                                # a DB outage must never crash capture
+    assert Heartbeat.read(cfg)                # the file still flushed

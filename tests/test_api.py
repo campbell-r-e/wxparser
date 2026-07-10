@@ -109,6 +109,20 @@ def test_all_json_and_text_endpoints(make_cfg):
         srv.shutdown()
 
 
+def test_health_prefers_db_heartbeat(make_cfg):
+    """A pipeline on ANOTHER machine publishes through the DB; the API must read
+    that row and ignore the local health.json (which the fixture also wrote)."""
+    srv, H = _server(make_cfg)
+    try:
+        api._Handler.db.write_heartbeat(
+            "KJY93", {"segments": 42, "updated_at": "2026-06-24T12:00:00Z"})
+        health = _get(H + "/health")
+        assert health["pipeline"]["segments"] == 42   # DB row won over the file
+        assert health["status"] == "down"             # and that row is ancient
+    finally:
+        srv.shutdown()
+
+
 def test_forecast_confirmation_tracks_reairings(make_cfg):
     srv, H = _server(make_cfg)
     try:

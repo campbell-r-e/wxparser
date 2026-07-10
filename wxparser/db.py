@@ -151,6 +151,13 @@ _SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS ix_raw_time ON raw_reports(captured_at)",
     "CREATE INDEX IF NOT EXISTS ix_raw_product ON raw_reports(product_type, captured_at)",
+    # pipeline liveness heartbeat (see health.py) — published through the DB so
+    # the API can assess /health from a different machine than the capture box
+    """CREATE TABLE IF NOT EXISTS pipeline_health (
+        station TEXT PRIMARY KEY,
+        updated_at TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL
+    )""",
 ]
 
 # A fixed advisory-lock key serializes schema creation across the co-starting
@@ -409,6 +416,25 @@ class Database:
             pl=json.dumps(report, ensure_ascii=False),
             fp=report.get("fingerprint"), sup=report.get("supersedes"),
         )
+
+    def write_heartbeat(self, station: str, payload: dict) -> None:
+        """Publish the pipeline heartbeat (health.py flushes one per segment).
+        One row per station, upserted in place — tiny and bounded."""
+        self._run(
+            "INSERT INTO pipeline_health (station, updated_at, payload) "
+            "VALUES (:st, now(), CAST(:pl AS jsonb)) "
+            "ON CONFLICT (station) DO UPDATE SET "
+            "updated_at=EXCLUDED.updated_at, payload=EXCLUDED.payload",
+            st=station, pl=json.dumps(payload),
+        )
+
+    def read_heartbeat(self) -> dict | None:
+        """The newest published heartbeat, or None if no pipeline has written one.
+        One pipeline instance per database is the invariant (multi-transmitter
+        runs one DB per instance), so newest-row is the instance's heartbeat."""
+        rows = self._run(
+            "SELECT payload FROM pipeline_health ORDER BY updated_at DESC LIMIT 1")
+        return _as_obj(rows[0][0]) if rows else None
 
     def _raw_where(self, frm, to, q, product) -> tuple[str, dict]:
         where, params = self._time_range("WHERE 1=1", {}, "captured_at", frm, to)
@@ -709,7 +735,7 @@ class Database:
 
     def clear(self) -> None:
         self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts, "
-                  "alert_details, almanac, almanac_observations")
+                  "alert_details, almanac, almanac_observations, pipeline_health")
 
     def close(self) -> None:
         with self._lock:

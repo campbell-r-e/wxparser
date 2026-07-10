@@ -258,7 +258,7 @@ def run_live(cfg: Config, once: bool = False) -> int:
     if readings or fcs or alm:
         print(f"  (primed: {len(readings)} city readings, {len(fcs)} forecast areas, "
               f"{len(alm)} almanac fields)", flush=True)
-    hb = Heartbeat(cfg)
+    hb = Heartbeat(cfg, db)
     hb.flush()  # publish "starting" immediately so /health isn't down on boot
     q: "queue.PriorityQueue" = queue.PriorityQueue()
     seq = itertools.count()  # tie-breaker so PriorityQueue never compares payloads

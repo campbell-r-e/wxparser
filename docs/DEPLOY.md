@@ -21,6 +21,7 @@ For day-2 usage see [`USAGE.md`](USAGE.md); for the test/CI side see
 - [10. Verify it's alive](#10-verify-its-alive)
 - [11. Maintenance timers](#11-maintenance-timers)
 - [12. Optional: pull-based CD](#12-optional-pull-based-cd)
+- [13. Splitting across three machines](#13-splitting-across-three-machines)
 
 ---
 
@@ -268,3 +269,85 @@ tail -f ~/wxparser-deploy.log      # "DEPLOYED <sha>" / "TESTS FAILED — rolled
 `git reset --hard`, which wipes them. Make changes in a separate clone, push,
 and let the timer (or `sudo systemctl start wxparser-deploy.service` for an
 immediate run) do the rest.
+
+---
+
+## 13. Splitting across three machines
+
+Everything above assumes one box. When one low-power machine can't carry all
+three roles, the system splits cleanly into tiers that talk **only through
+PostgreSQL** — there is no service-to-service RPC anywhere:
+
+```
+[radio box]  wxparser.service ──────────┐
+             + wxparser-agc.timer       │  writes: raw_reports + structured
+             (sound card, whisper.cpp)  ▼  tables + pipeline_health heartbeat
+[db box]     PostgreSQL  ◄──────────────┤
+                                        ▲  reads only
+[api box]    wxparser-api.service ──────┘  (no audio, no whisper, no numpy-heavy DSP)
+```
+
+Architecturally this is CQRS: the pipeline is the sole writer, the API is a
+read-only consumer, and the structured tables are a projection of the raw
+transcript store. The pipeline's liveness heartbeat also flows through the DB
+(the `pipeline_health` row), so `/health` works from any machine;
+`health.json` remains on the radio box for the AGC timer and as a same-box
+fallback.
+
+### The DB box
+
+Run `deploy/setup-postgres.sh` as usual, then open Postgres to the LAN with
+password auth (the stock setup is localhost-trust):
+
+```bash
+sudo -u postgres psql -c "ALTER ROLE wxparser WITH LOGIN PASSWORD 'CHANGE-ME' CREATEDB;"
+# /var/lib/pgsql/data/postgresql.conf:
+#   listen_addresses = '*'
+# /var/lib/pgsql/data/pg_hba.conf — ABOVE the localhost-trust lines, scoped to your LAN:
+#   host wxparser,wxparser_test wxparser 192.168.68.0/22 scram-sha-256
+sudo systemctl restart postgresql
+sudo firewall-cmd --permanent --add-port=5432/tcp && sudo firewall-cmd --reload
+```
+
+(`CREATEDB` is what lets each machine's CD run recreate `wxparser_test`, §12.)
+
+### The radio box
+
+The only machine that needs the sound card, whisper.cpp, and `alsa-utils`.
+Install `wxparser.service` + `wxparser-agc.timer` (§8/§11) and point them at
+the DB box. Put the credentials in a root-owned env file rather than the unit:
+
+```bash
+sudo install -m 600 /dev/null /etc/wxparser.env
+sudo tee /etc/wxparser.env >/dev/null <<'EOF'
+WX_PG_HOST=192.168.68.x
+WX_PG_PASSWORD=CHANGE-ME
+EOF
+# in each unit's [Service] section:  EnvironmentFile=/etc/wxparser.env
+```
+
+The nightly cleanup timers (§11) are DB jobs — run them here (or anywhere with
+DB access), just once, not on every machine.
+
+### The API box
+
+The lightest role: `git`, `python3`, `python3-pg8000`, `python3-numpy`, the
+repo, and `wxparser-api.service` with the same `EnvironmentFile`. No audio
+stack, no whisper, no profile concerns beyond `WX_STATION` labeling. Open
+`:8080` to the LAN (§9). You can run several of these against one DB if you
+ever want redundancy.
+
+### CD on a split deployment
+
+Each machine runs its own `wxparser-deploy.timer` (each needs DB access for
+the gated suite). Tell each one which units it owns via
+`WX_DEPLOY_SERVICES` in `wxparser-deploy.service`:
+
+```ini
+# radio box:
+Environment=WX_DEPLOY_SERVICES=wxparser
+# api box:
+Environment=WX_DEPLOY_SERVICES=wxparser-api
+```
+
+Unset, it defaults to both — the single-box behavior.

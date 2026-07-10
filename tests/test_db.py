@@ -253,6 +253,13 @@ def test_raw_reports_empty_store(wxdb):
     assert db.last_product_airing("zone_forecast") is None
 
 
+def test_heartbeat_roundtrip_and_upsert(wxdb):
+    assert wxdb.read_heartbeat() is None               # no pipeline has written yet
+    wxdb.write_heartbeat("KJY93", {"segments": 1, "updated_at": "2026-06-24T12:00:00Z"})
+    wxdb.write_heartbeat("KJY93", {"segments": 2, "updated_at": "2026-06-24T12:01:00Z"})
+    assert wxdb.read_heartbeat()["segments"] == 2      # upserted in place, newest wins
+
+
 def _run():
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

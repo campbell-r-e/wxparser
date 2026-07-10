@@ -2,10 +2,18 @@
 
 The capture/STT pipeline runs in the `wxparser` process; the query API runs in a
 separate `wxparser-api` process and can't see its in-memory state. So the
-producer/worker update a `Heartbeat` that is flushed to `out_dir/health.json`,
-and the API reads that file in `/health` and derives ok / degraded / down from
-the freshness of the signals — so a monitor can alarm when the box goes deaf or
-the STT worker wedges, instead of the failure being silent.
+producer/worker update a `Heartbeat` that is flushed on every segment, and the
+API derives ok / degraded / down from the freshness of the signals — so a
+monitor can alarm when the box goes deaf or the STT worker wedges, instead of
+the failure being silent.
+
+The flush is write-through to two places. The `pipeline_health` DB row is the
+transport the API reads — it works when the API runs on a different machine
+than the capture box. `out_dir/health.json` is kept for same-machine consumers
+(the AGC timer reads the segment levels from it) and as the API's fallback when
+no DB heartbeat exists. A DB hiccup must never take capture down, so the DB leg
+swallows its own failures: the file keeps flushing, the DB row goes stale, and
+/health reports `down` on staleness — which is the truth a monitor should see.
 """
 
 from __future__ import annotations
@@ -33,10 +41,12 @@ def _age_min(ts, now: datetime) -> float | None:
 
 
 class Heartbeat:
-    """Thread-safe pipeline-liveness state, flushed atomically to health.json."""
+    """Thread-safe pipeline-liveness state, flushed to the DB and health.json."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, db=None):
         self._path = cfg.out_dir / "health.json"
+        self._station = cfg.station
+        self._db = db  # anything with write_heartbeat(station, payload); None = file only
         self._lock = threading.Lock()
         self._d: dict = {
             "started_at": _now(),
@@ -72,9 +82,17 @@ class Heartbeat:
             os.replace(tmp, self._path)
         except OSError:  # pragma: no cover - defensive: health must never crash capture
             pass
+        if self._db is not None:
+            try:
+                self._db.write_heartbeat(self._station, data)
+            except Exception:
+                # a DB outage must not crash capture; staleness of the DB row is
+                # itself the down signal /health reports
+                pass
 
     @staticmethod
     def read(cfg: Config) -> dict | None:
+        """The health.json fallback — same-machine deployments and the AGC."""
         try:
             return json.loads((cfg.out_dir / "health.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -91,7 +109,7 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
     """
     now = now or datetime.now(timezone.utc)
     if hb is None:
-        return {"status": "down", "checks": ["no heartbeat file — pipeline not running?"]}
+        return {"status": "down", "checks": ["no heartbeat — pipeline not running?"]}
 
     hb_age = _age_min(hb.get("updated_at"), now)
     audio_age = _age_min(hb.get("last_segment_at"), now)
