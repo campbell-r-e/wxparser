@@ -67,9 +67,11 @@ and any active alerts — already annotated with freshness and trust.
 - `?city=Anderson` snapshots a different city (nearby cities carry only temperature).
 - `?min=1` lowers the sightings filter (default 2 — see §3); `?stale_after=30` overrides
   the staleness threshold (default 60 min); `?fresh=1` drops stale rows.
-- Forecast `age_minutes`/`stale` measure the time since the forecast **last aired**, not
-  since its content last changed — an unchanged forecast the station keeps re-airing stays
-  fresh, one the station stopped airing goes stale even if it never changed.
+- Forecast freshness has two clocks: `age_minutes` counts from `issued_at`, which only
+  moves when the voted **content changes**; `confirmed_age_minutes` counts from
+  `last_confirmed_at`, the newest time the forecast **aired** (changed or not). `stale` is
+  judged on the latter — an unchanged forecast the station keeps re-airing stays fresh,
+  one the station stopped airing goes stale even if it never changed.
 
 ---
 

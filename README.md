@@ -149,9 +149,10 @@ GET /conditions/history?condition=&city=&from=&to=&limit=&offset=
                                  → historical readings between two times (paginated)
 
 Forecast
-GET /forecast                    → latest forecast for all heard cities/areas, each
-                                   issuance annotated with age_minutes + stale (age is
-                                   time since it last AIRED, not since content changed)
+GET /forecast                    → latest forecast for all heard cities/areas; each
+                                   issuance carries age_minutes (since issued) plus
+                                   confirmed_age_minutes (since it last AIRED, changed
+                                   or not) — stale is judged on the latter
 GET /forecast/history?from=&to=&city=&limit=&offset=
                                  → historical forecast predictions between dates (paginated)
 GET /verify                      → forecast accuracy scored against what this station
