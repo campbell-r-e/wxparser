@@ -14,8 +14,8 @@ from wxparser.db import Database
 from wxparser.health import Heartbeat
 
 
-def _server(make_cfg):
-    cfg = make_cfg(stream_poll_s=0.05)
+def _server(make_cfg, **cfg_overrides):
+    cfg = make_cfg(stream_poll_s=0.05, **cfg_overrides)
     db = Database(cfg)
     db.clear()
     db.record_reading({"city": "Muncie", "condition": "temperature_f", "value": 80,
@@ -145,6 +145,29 @@ def test_forecast_confirmation_tracks_reairings(make_cfg):
         assert fc["confirmed_age_minutes"] < fc["age_minutes"]
         assert fc["stale"] is True    # last aired June 2026 -> stale at any age now
         assert _get(H + "/forecast?stale_after=99999999")["forecasts"][0]["stale"] is False
+    finally:
+        srv.shutdown()
+
+
+def test_almanac_uses_longer_stale_window(make_cfg):
+    """Almanac/climate fields air a few times a day and stay valid until the next
+    recap, so they get a longer staleness window than current conditions — the
+    same-age reading is 'stale' as a condition but fresh as an almanac field, and
+    an explicit ?stale_after= still overrides the almanac default."""
+    # window wide enough to clear the (weeks-old) seeded 2026-06-24 almanac rows
+    srv, H = _server(make_cfg, almanac_stale_after_min=99_999_999)
+    try:
+        alm = _get(H + "/almanac")
+        assert alm["stale_after_min"] == 99_999_999
+        assert alm["almanac"] and all(r["stale"] is False for r in alm["almanac"])
+        # /now surfaces the same non-stale almanac (snapshot uses the almanac window)
+        assert all(r["stale"] is False for r in _get(H + "/now")["almanac"])
+        # current conditions keep the short current-conditions window -> still stale
+        city = _get(H + "/city/Muncie?stale_after=60")
+        assert city["stale_after_min"] == 60
+        # an explicit ?stale_after= overrides the almanac default the other way
+        stale = _get(H + "/almanac?stale_after=1")["almanac"]
+        assert stale and all(r["stale"] is True for r in stale)
     finally:
         srv.shutdown()
 

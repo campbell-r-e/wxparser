@@ -199,6 +199,12 @@ class Config:
     # aired it (infrequently-named cities/fields drift from reality between
     # airings). Clients can override per request with ?stale_after=.
     condition_stale_after_min: int = int(_env("WX_STALE_AFTER_MIN", "60"))
+    # Almanac/climate fields (sunrise/sunset, YTD precip, degree days) air only a
+    # few times a day and stay valid until the next day's recap, so the 60-min
+    # current-conditions window above wrongly flags them stale within an hour of
+    # every airing. Judge them against a full day instead — clients can still
+    # override per request with ?stale_after=.
+    almanac_stale_after_min: int = int(_env("WX_ALMANAC_STALE_AFTER_MIN", "1440"))
     # a voted reading whose winning value holds less than this share of the recent
     # airings is flagged `uncertain` (the airings disagree — likely an STT mishear,
     # at risk of being off by a lot). Clients see the flag and can distrust it.

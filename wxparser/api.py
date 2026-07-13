@@ -84,17 +84,24 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return self.min_sightings
 
-    def _stale_after(self, q: dict) -> int:
+    def _stale_after(self, q: dict, default: int | None = None) -> int:
+        """Minutes-until-stale for a view: an explicit ?stale_after= wins, else the
+        per-view default (`default`), else the current-conditions window. Almanac
+        views pass their own longer default so slow-cadence climate fields aren't
+        flagged stale within an hour of every airing."""
+        fallback = self.cfg.condition_stale_after_min if default is None else default
         try:
-            return max(1, int(q.get("stale_after", self.cfg.condition_stale_after_min)))
+            return max(1, int(q.get("stale_after", fallback)))
         except (ValueError, TypeError):
-            return self.cfg.condition_stale_after_min
+            return fallback
 
-    def _annotate_age(self, rows: list, q: dict) -> list:
+    def _annotate_age(self, rows: list, q: dict, default_stale: int | None = None) -> list:
         """Add age_minutes + stale to each reading (by captured_at); ?fresh=1
-        drops the stale ones. (Conditions already carry an agreement/confidence
-        trust block via trust.mark; forecasts get theirs in _annotate_forecast_age.)"""
-        threshold = self._stale_after(q)
+        drops the stale ones. `default_stale` overrides the current-conditions
+        staleness window for slow-cadence views (almanac). (Conditions already
+        carry an agreement/confidence trust block via trust.mark; forecasts get
+        theirs in _annotate_forecast_age.)"""
+        threshold = self._stale_after(q, default_stale)
         now = datetime.now(timezone.utc)
         out = []
         for r in rows:
@@ -112,10 +119,13 @@ class _Handler(BaseHTTPRequestHandler):
             out.append(r)
         return out
 
-    def _trusted(self, rows: list, q: dict, drop_stale: bool = False) -> list:
+    def _trusted(self, rows: list, q: dict, drop_stale: bool = False,
+                 default_stale: int | None = None) -> list:
         """Trust-mark + age-annotate a reading list. Index/snapshot views keep
-        stale rows (?fresh= suppressed); pass drop_stale=True to honor it."""
-        return mark_trust(self._annotate_age(rows, q if drop_stale else dict(q, fresh="")))
+        stale rows (?fresh= suppressed); pass drop_stale=True to honor it.
+        `default_stale` carries a per-view staleness window (almanac)."""
+        return mark_trust(
+            self._annotate_age(rows, q if drop_stale else dict(q, fresh=""), default_stale))
 
     def _paginate(self, q: dict, default: int, count_fn, rows_fn) -> tuple[list, dict]:
         """Shared limit/offset parsing -> rows -> {total,count,...} envelope."""
@@ -255,7 +265,8 @@ class _Handler(BaseHTTPRequestHandler):
              if r["city"].lower() != city.lower()], q)
         forecast = self._annotate_forecast_age(self.db.latest_forecasts(), q)
         alerts = [self._link_details(a) for a in self.db.get_active_alerts()]
-        almanac = self._trusted(self.db.latest_almanac(self._min(q)), q)
+        almanac = self._trusted(self.db.latest_almanac(self._min(q)), q,
+                                default_stale=self.cfg.almanac_stale_after_min)
         return {"generated_at": _now_iso(), "station": self.cfg.station, "city": city,
                 "conditions": conds, "roundup": roundup, "almanac": almanac,
                 "forecast": forecast, "alerts": alerts}
@@ -361,9 +372,10 @@ class _Handler(BaseHTTPRequestHandler):
                     "stale_after_min": self._stale_after(q), "cities": cities})
 
     def _ep_almanac(self, q: dict) -> None:
-        rows = self._trusted(self.db.latest_almanac(self._min(q)), q)
+        stale = self.cfg.almanac_stale_after_min
+        rows = self._trusted(self.db.latest_almanac(self._min(q)), q, default_stale=stale)
         self._send({"generated_at": _now_iso(), "min_sightings": self._min(q),
-                    "stale_after_min": self._stale_after(q), "almanac": rows})
+                    "stale_after_min": self._stale_after(q, stale), "almanac": rows})
 
     def _ep_forecast(self, q: dict) -> None:
         self._send({"forecasts": self._annotate_forecast_age(self.db.latest_forecasts(), q)})
