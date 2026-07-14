@@ -521,6 +521,41 @@ def test_conditions_low_frequency_field_ages_out():
     assert agg.voters[("Muncie", "humidity_pct")].best().value == 64
 
 
+def test_conditions_temperature_tracks_recent_over_long_window():
+    # temperature airs ~2x/cycle and legitimately changes hour to hour, so a long
+    # majority window trails the real value by hours. It votes over a short window,
+    # so a morning run at 67 gives way to the current cycle's 69 instead of 67
+    # winning on sheer count — the noon "67 while it read 69" lag.
+    agg = CityConditionsAggregator()
+    for _ in range(8):
+        agg.update("At Muncie, it was clear. The temperature was 67 degrees.")
+    for _ in range(3):
+        agg.update("At Muncie, it was clear. The temperature was 69 degrees.")
+    assert agg.voters[("Muncie", "temperature_f")].best().value == 69
+    # temperature gets the short window; a slow field (sky) keeps the long one, so
+    # the same run of airings leaves sky voting over all 11 sightings.
+    assert agg.voters[("Muncie", "temperature_f")].samples.maxlen == 5
+    assert agg.voters[("Muncie", "sky")].samples.maxlen == 15
+    # control: over the long window the eight stale 67s would still out-vote the 69s
+    long = _FieldVoter(maxlen=15)
+    for _ in range(8):
+        long.add(67)
+    for _ in range(3):
+        long.add(69)
+    assert long.best().value == 67
+
+
+def test_conditions_temperature_rejects_lone_stt_outlier():
+    # the short window is still deep enough that a single garbled reading loses to
+    # its neighbours (the reason it's a vote and not just latest-wins).
+    agg = CityConditionsAggregator()
+    for _ in range(2):
+        agg.update("At Muncie, it was 68 degrees.")
+    agg.update("At Muncie, it was 97 degrees.")   # lone mishear
+    agg.update("At Muncie, it was 68 degrees.")
+    assert agg.voters[("Muncie", "temperature_f")].best().value == 68
+
+
 def test_conditions_prime_seeds_value_until_fresh_airing():
     # a restart primes from the stored latest reading; the primed value serves
     # (seeded at the current tick, so not instantly stale) until a live airing votes.
@@ -801,6 +836,19 @@ def test_extract_almanac_degree_days_and_normal_week():
     assert out["heating_degree_days"] == 0 and out["normal_precip_week_in"] == 1.1
     assert extract_almanac("There were 6 cooling degree days yesterday.")[
         "cooling_degree_days"] == 6
+
+
+def test_extract_almanac_degree_days_spelled_out():
+    # STT renders small counts as words as often as digits; a word-only day used to
+    # be dropped, freezing the vote on the prior digit value.
+    assert extract_almanac("There were nine cooling degree days yesterday.")[
+        "cooling_degree_days"] == 9
+    assert extract_almanac("There were twenty one heating degree days yesterday.")[
+        "heating_degree_days"] == 21
+    # an unparseable count is skipped, not crashed on or stored as garbage
+    out = extract_almanac(
+        "There were several heating degree days and several cooling degree days yesterday.")
+    assert "heating_degree_days" not in out and "cooling_degree_days" not in out
 
 
 def test_extract_almanac_ignores_non_climate_and_range():

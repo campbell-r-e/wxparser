@@ -596,6 +596,16 @@ class CityConditionsAggregator:
     # window spans hours and a morning value out-votes the current one. Bound each
     # field's vote to sightings from the last `stale_ticks` transcripts (one tick
     # per update); ~60 keeps roughly the last 1-2h of airings.
+    # Temperature is a live reading that legitimately changes hour to hour, and it
+    # airs ~2x per cycle (the full ob plus the "once again ... it was N degrees"
+    # recap), so the default 15-deep window spans ~7h and the voted value trails the
+    # real temperature by hours (67 at noon while it read 69 and was climbing).
+    # Vote temperature over a short window instead: recent enough to track the
+    # diurnal curve, still deep enough that a lone STT mishear ("97" for "67") is
+    # outvoted by its neighbours. Slow fields (sky, humidity, pressure trend) keep
+    # the long window, where re-hearing the same value is what buys robustness.
+    _FIELD_MAXLEN = {"temperature_f": 5}
+
     def __init__(self, maxlen: int = 15, primary_city: str = "Muncie",
                  stale_ticks: int = 60):
         self.maxlen = maxlen
@@ -658,8 +668,11 @@ class CityConditionsAggregator:
         return readings
 
     def _voter(self, city: str, condition: str) -> _FieldVoter:
-        return self.voters.setdefault(
-            (city, condition), _FieldVoter(self.maxlen, stale=self.stale_ticks))
+        key = (city, condition)
+        if key not in self.voters:
+            maxlen = self._FIELD_MAXLEN.get(condition, self.maxlen)
+            self.voters[key] = _FieldVoter(maxlen, stale=self.stale_ticks)
+        return self.voters[key]
 
     def _reading(self, city: str, condition: str, value) -> dict:
         voter = self._voter(city, condition)
@@ -743,8 +756,13 @@ _RE_NORMAL_PRECIP = re.compile(
 # Yesterday's heating/cooling degree days ("there were no/5 heating degree days").
 # Anchored on were/was so the season-to-date total ("this leaves 288 ...") can't
 # be mistaken for the daily value.
-_RE_HDD = re.compile(r"(?:were|was)\s+(no|\d{1,3})\s+heating degree days?", re.I)
-_RE_CDD = re.compile(r"(?:were|was)\s+(no|\d{1,3})\s+cooling degree days?", re.I)
+# The count is "no", a digit ("12"), or spelled out ("nine", "twenty one") — STT
+# renders small counts as words about as often as digits, so a word-only day
+# silently kept yesterday's digit value in the vote. words_to_int() handles all
+# three; the capture is anchored between were/was and "... degree days" so it
+# can't swallow the season-to-date total ("this leaves 288 ...").
+_RE_HDD = re.compile(r"(?:were|was)\s+([\w\- ]+?)\s+heating degree days?", re.I)
+_RE_CDD = re.compile(r"(?:were|was)\s+([\w\- ]+?)\s+cooling degree days?", re.I)
 
 _ALMANAC_RANGE = {
     "precip_year_in": (0.0, 200.0),
@@ -767,8 +785,8 @@ def _norm_clock(s: str) -> str:
     return f"{int(m.group(1))}:00 {mer}"
 
 
-def _degree_days(token: str) -> int:
-    return 0 if token.lower() == "no" else int(token)
+def _degree_days(token: str) -> int | None:
+    return 0 if token.strip().lower() == "no" else words_to_int(token)
 
 
 def extract_almanac(text: str) -> dict:
@@ -789,10 +807,10 @@ def extract_almanac(text: str) -> dict:
         out["precip_departure_in"] = -v if m.group(2).lower() == "below" else v
     if m := _RE_NORMAL_PRECIP.search(text):
         out["normal_precip_week_in"] = float(m.group(1))
-    if m := _RE_HDD.search(text):
-        out["heating_degree_days"] = _degree_days(m.group(1))
-    if m := _RE_CDD.search(text):
-        out["cooling_degree_days"] = _degree_days(m.group(1))
+    if (m := _RE_HDD.search(text)) and (v := _degree_days(m.group(1))) is not None:
+        out["heating_degree_days"] = v
+    if (m := _RE_CDD.search(text)) and (v := _degree_days(m.group(1))) is not None:
+        out["cooling_degree_days"] = v
     _drop_out_of_range(out, _ALMANAC_RANGE)
     return out
 
