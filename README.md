@@ -1,13 +1,13 @@
 # wxparser
 
-A fully-offline, radio-only local weather server. It continuously listens to the NOAA
-Weather Radio (NWR) broadcast from **KJY93 Muncie, IN (162.425 MHz)**, transcribes the voice
-loop, decodes SAME/EAS digital alerts, and turns it all into **structured, queryable weather
-data** — sourced entirely from the radio, working even when the internet is down.
+A fully-offline, radio-only local weather server. It continuously listens to **your local
+NOAA Weather Radio (NWR) broadcast**, transcribes the voice loop, decodes SAME/EAS digital
+alerts, and turns it all into **structured, queryable weather data** — sourced entirely
+from the radio, working even when the internet is down.
 
-Audio is tapped from a dedicated weather radio (a Reecom R-1630) into the PC's mic/line-in, so
-RF reception is handled in hardware and the entire software stack stays MIT-licensed and
-permissive.
+Audio is tapped from a dedicated weather radio into the PC's mic/line-in, so RF reception is
+handled in hardware and the entire software stack stays MIT-licensed and permissive. (The
+reference deployment listens to KJY93 Muncie, IN — 162.425 MHz — through a Reecom R-1630.)
 
 Everything region-specific — the station callsign/frequency, home city, whisper vocabulary
 prompt, and place-name corrections — lives in a **station profile** (a JSON file selected with
@@ -27,7 +27,7 @@ capture is the `arecord` subprocess (a GPL tool used across a process boundary, 
 NWR replays the same loop of products every few minutes until NWS updates content, and the
 audio is deterministic TTS. wxparser fingerprints the audio to detect repeats and runs
 speech-to-text **only on genuinely novel** segments, so it keeps up even on weak hardware
-(it's running on a 2-core Core2 Duo).
+(the reference deployment runs on a 2-core Core2 Duo).
 
 ```
 radio line-out → mic-in → arecord (continuous PCM)
@@ -100,7 +100,7 @@ The default deployment remains everything on one box.
 | `notify.py` | opt-in outbound webhook |
 | `formats.py` | EmComm bulletin / sitrep / APRS renderers |
 | `reprocess.py` | rebuild the structured DB as a pure projection of the raw transcript store |
-| `profile.py` / `profiles/` | station-profile loader + the bundled KJY93 profile |
+| `profile.py` / `profiles/` | station-profile loader + the bundled example profile (KJY93 / east-central Indiana) |
 | `main.py` | wiring + service loop |
 | `data/` | bundled `fips.json` (US counties), SAME event/originator codes, `place_names.py` STT mis-hearing corrections |
 
@@ -111,7 +111,7 @@ The default deployment remains everything on one box.
   updates link to the report they `supersede`.
 - **Current conditions** — temp / dewpoint / humidity / pressure / wind / sky, extracted from
   the voice and **majority-voted across repeats** to harden numbers against STT slips. Stored
-  **per city**: the station's primary city (Muncie) gets the full set; other cities named in
+  **per city**: the station's primary city (from the profile) gets the full set; other cities named in
   the broadcast (the "Nearby …" list and regional temp roundup) get temperature. City names are
   **auto-corrected at extraction time** (`data/place_names.py`) so the store never sees STT
   mis-hearings (e.g. "Monthsy"→Muncie, "Deepan"→Dayton).
@@ -376,7 +376,7 @@ needed:
 ```bash
 pip install -e '.[test]'         # pytest + coverage
 createdb wxparser_test           # once
-coverage run -m pytest           # whole suite (244 tests), branch mode via .coveragerc
+coverage run -m pytest           # whole suite, branch mode via .coveragerc
 coverage report                  # fails under 100%
 ```
 
