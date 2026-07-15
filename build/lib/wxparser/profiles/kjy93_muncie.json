@@ -1,0 +1,169 @@
+{
+  "station": "KJY93",
+  "frequency_mhz": 162.425,
+  "primary_city": "Muncie",
+  "stt_prompt": "NOAA Weather Radio for east central Indiana. Counties: Delaware, Madison, Henry, Randolph, Jay, Blackford, Grant, Wayne, Tipton, Hamilton, Howard. Towns: Muncie, Anderson, Marion, Portland, Winchester, New Castle, Richmond, Yorktown, Albany, Dunkirk, Alexandria, Gas City, Hartford City.",
+  "roundup_cities": [
+    "Muncie", "Anderson", "Marion", "Portland", "Richmond", "Shelbyville",
+    "Indianapolis", "Lafayette", "Fort Wayne", "South Bend", "Terre Haute",
+    "Bloomington", "Evansville", "Chicago", "Champaign", "Lima", "Cincinnati",
+    "Dayton", "Louisville", "New Castle", "Winchester", "Yorktown", "Albany",
+    "Dunkirk", "Alexandria", "Gas City", "Hartford City"
+  ],
+  "slot_anchors": {
+    "Anderson": "Indianapolis",
+    "Indianapolis": "Marion",
+    "Marion": "Portland",
+    "Portland": "Richmond",
+    "Richmond": "Shelbyville",
+    "South Bend": "Fort Wayne",
+    "Fort Wayne": "Lafayette",
+    "Lafayette": "Terre Haute",
+    "Terre Haute": "Bloomington",
+    "Bloomington": "Evansville",
+    "Chicago": "Champaign",
+    "Champaign": "Lima",
+    "Lima": "Dayton",
+    "Dayton": "Cincinnati",
+    "Cincinnati": "Louisville"
+  },
+  "roundup_leadins": {
+    "just outside indiana": "Lima"
+  },
+  "place_corrections": {
+    "Muncie": [
+      "Monthsy",
+      "Munsee",
+      "Muncey",
+      "Muncy",
+      "Munci",
+      "Muncee",
+      "Munsie",
+      "Munsy",
+      "Monsey",
+      "Munce",
+      "Mun See",
+      "Muns",
+      "Edmondsee",
+      "Edmonsee",
+      "Edmundsee"
+    ],
+    "Terre Haute": [
+      "Terrehold",
+      "Terrehald",
+      "Terrehalt",
+      "Terrahold",
+      "Terrahaut",
+      "Terrell",
+      "Terrelld",
+      "Terrellt",
+      "Terre Hold",
+      "Terre Halt",
+      "Terreault",
+      "Terrell Hope",
+      "Terre Hope",
+      "Terreld",
+      "Terre Hoeck",
+      "Terrejo",
+      "Terrellton",
+      "Terre Hogue",
+      "Terahoe",
+      "Terre Ljogt",
+      "Terahood",
+      "Terre Hoe",
+      "Terre Hoeg",
+      "Terroch",
+      "Terrema Hope",
+      "Terre",
+      "Terrellot",
+      "Terahook",
+      "Terre Hote",
+      "Terrell Hook",
+      "Terre Hook"
+    ],
+    "Champaign": [
+      "Champagne",
+      "Campaign",
+      "Champ Pain",
+      "Sham Pain",
+      "Champion"
+    ],
+    "Bloomington": [
+      "Blumant",
+      "Bloomingville"
+    ],
+    "Evansville": [
+      "In Evansville",
+      "And Evansville",
+      "Ed Evansville"
+    ],
+    "Indianapolis": [
+      "Indian Apple"
+    ],
+    "Shelbyville": [
+      "Shelby",
+      "And Shelbyville"
+    ],
+    "Lima": [
+      "Lyle",
+      "Laima",
+      "Laimo",
+      "Loomo",
+      "Lulule",
+      "Lulevel",
+      "Lyme",
+      "Lima Ohio",
+      "Leema",
+      "Limo",
+      "Lime",
+      "La Mile",
+      "La",
+      "Lyma",
+      "Lionel",
+      "Lionel Hill",
+      "Lionel Hyle",
+      "Lionel High",
+      "Lamel Hyle",
+      "Lamel Highl",
+      "Blime",
+      "Blame",
+      "Lyman",
+      "Lymo",
+      "Lymele",
+      "Mlima",
+      "Mllema",
+      "Limee",
+      "Lymel",
+      "Lymal Hyle",
+      "Delimah",
+      "Llamville"
+    ],
+    "South Bend": [
+      "South End",
+      "Southend",
+      "South And",
+      "Soft End"
+    ],
+    "Marion": [
+      "Merriam",
+      "Meridian",
+      "Mary Ann",
+      "Marian",
+      "Merion"
+    ],
+    "Louisville": [
+      "Blue",
+      "Luhl",
+      "And Louisville"
+    ],
+    "Dayton": [
+      "Deepan",
+      "Deep",
+      "Deepin",
+      "Deepen"
+    ],
+    "Portland": [
+      "Ridgebrough"
+    ]
+  }
+}

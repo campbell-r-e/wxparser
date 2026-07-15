@@ -10,20 +10,22 @@ and querying live in db.py.
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from .config import Config
+from .stt import Transcript
+
+SCHEMA_VERSION = 1
+
+import re
+
 from .extract import (
-    RE_PERIOD_HDR,
+    _RE_PERIOD_HDR,
     extract_almanac,
     extract_forecast_fields,
     extract_observation,
 )
-from .stt import Transcript
-from .timefmt import utc_now_iso as _utc_now_iso
-
-SCHEMA_VERSION = 1
 
 # Explicit, authoritative product names (a literal warning/statement title beats
 # any structural guess). The routine loop products — forecast and conditions —
@@ -87,7 +89,7 @@ def classify(text: str) -> str:
         return "almanac"
     # 4) forecast: a period header, an extracted high/low/precip, or the
     #    unmistakable forecast-narrative phrasing between the labelled lines.
-    if RE_PERIOD_HDR.search(text) is not None:
+    if _RE_PERIOD_HDR.search(text) is not None:
         return "zone_forecast"
     fc = extract_forecast_fields(text)
     if any(fc.get(k) is not None for k in ("high_f", "low_f", "precip_pct", "steady_f")):
@@ -95,6 +97,10 @@ def classify(text: str) -> str:
     if _RE_FORECASTY.search(text):
         return "zone_forecast"
     return "unknown"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def build_report(

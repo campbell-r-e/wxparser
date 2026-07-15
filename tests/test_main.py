@@ -200,6 +200,47 @@ def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch, make_cfg):
     main._STOP.clear()
 
 
+def test_stt_worker_fails_loud_on_store_error(monkeypatch, make_cfg):
+    # a failure past transcribe (e.g. a DB outage outliving the reconnect) must
+    # take the whole process down for systemd, not silently kill the worker
+    # thread while the producer queues audio forever
+    import itertools
+    import queue as _q
+
+    from wxparser.extract import (
+        AlmanacAggregator,
+        CityConditionsAggregator,
+        ForecastAggregator,
+    )
+    main._STOP.clear()
+    cfg = make_cfg()
+    monkeypatch.setattr(main, "transcribe_samples",
+                        lambda s, c: _t("At Muncie, the temperature was 80 degrees."))
+
+    def boom(*a, **k):
+        raise RuntimeError("db gone")
+    monkeypatch.setattr(main, "_handle_transcript", boom)
+    died = []
+    monkeypatch.setattr(main, "_die", lambda: died.append(True))
+    q = _q.PriorityQueue()
+
+    class Seg:
+        samples = np.zeros(16000, dtype=np.int16)
+        duration_s = 1.0
+    q.put((0, next(itertools.count()), (Seg(), "d")))
+    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
+                     ForecastAggregator(), AlmanacAggregator(), None, None)
+    assert died == [True] and main._STOP.is_set()        # fail-loud path taken
+    main._STOP.clear()
+
+
+def test_die_hard_exits(monkeypatch):
+    codes = []
+    monkeypatch.setattr(main.os, "_exit", lambda code: codes.append(code))
+    main._die()
+    assert codes == [1]
+
+
 def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsys, make_cfg):
     # a transcript whose measured confidence falls below the floor is saved to
     # the store but NOT voted into the aggregates, and the gate is logged

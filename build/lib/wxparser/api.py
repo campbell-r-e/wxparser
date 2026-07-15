@@ -52,9 +52,12 @@ from .config import CONFIG, Config
 from .db import Database
 from .formats import aprs_bulletins, aprs_weather, net_bulletin, sitrep
 from .health import Heartbeat, assess
-from .timefmt import utc_now_iso as _now_iso
 from .trust import mark as mark_trust
 from .verify import verify as verify_forecasts
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # friendly condition name -> stored key
 _CONDITION_ALIASES = {
@@ -108,9 +111,8 @@ def _sync_window(sections: dict, since: str) -> tuple[dict, str, bool]:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    # wired by serve() (or a test harness) before the server starts
-    db: Database | None = None
-    cfg: Config | None = None
+    db: Database = None
+    cfg: Config = None
     min_sightings: int = 2
     protocol_version = "HTTP/1.1"
 
@@ -343,8 +345,7 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 self._send({"error": "not found", "path": path}, 404)
         except Exception as e:  # pragma: no cover - defensive: never crash on a bad read
-            print(f"! 500 on {path}: {e}", flush=True)   # detail to the log,
-            self._send({"error": "internal error"}, 500)  # not to the client
+            self._send({"error": str(e)}, 500)
 
     def _ep_index(self, q: dict) -> None:
         self._send({"endpoints": [

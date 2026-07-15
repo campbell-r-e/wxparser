@@ -2,17 +2,9 @@
 
 The live STT worker (main._stt_worker) and the offline reprocess (reprocess.py)
 both call these, so the two can never drift in how a transcript becomes structured
-data. That's what lets the DB be a re-derivable *projection* of the raw transcript
-store: replaying the stored transcripts through the same step rebuilds the same
-conditions/forecasts/almanac/alert-details.
-
-Known approximation: the projection converges on the same VALUES, but vote
-provenance (votes/total/sightings, hence trust scores) can differ from what the
-live path served — live votes before text-dedup, so boundary-shifted repeats
-contribute voting events that are never stored and thus never replayed; restart
-priming likewise seeds voters with one latest-value sample instead of history.
-Also note the pruning/revote maintenance timers (deploy/) edit the serving
-tables out of band; a reprocess resurrects whatever they trimmed.
+data. That's what lets the DB be a faithful, re-derivable *projection* of the raw
+transcript store: replaying the stored transcripts through the same step rebuilds
+the same conditions/forecasts/almanac/alert-details.
 """
 from __future__ import annotations
 

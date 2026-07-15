@@ -24,7 +24,10 @@ import threading
 from datetime import datetime, timezone
 
 from .config import Config
-from .timefmt import utc_now_iso as _now
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _age_min(ts, now: datetime) -> float | None:

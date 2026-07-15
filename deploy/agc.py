@@ -60,12 +60,20 @@ def amixer(*args: str) -> str:
 
 def get_ctl(ctl: str) -> int:
     m = re.search(r"(\d+) \[\d{1,3}%\]", amixer("sget", ctl))
-    return int(m.group(1)) if m else 0
+    if m is None:
+        # a missing/renamed mixer control must not silently read as gain 0 —
+        # the loop would then "adjust" a control that isn't there forever
+        log(f"FATAL: mixer control '{ctl}' not found on card {CARD}")
+        raise SystemExit(1)
+    return int(m.group(1))
 
 
 def set_ctl(ctl: str, value: int) -> None:
-    subprocess.run(["amixer", "-c", CARD, "sset", ctl, str(value)],
-                   capture_output=True, text=True)
+    r = subprocess.run(["amixer", "-c", CARD, "sset", ctl, str(value)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        log(f"FATAL: amixer sset {ctl}={value} failed: {r.stderr.strip()}")
+        raise SystemExit(1)
 
 
 # Front Mic Boost is the effective control on this card (~+10 dB/step); Capture

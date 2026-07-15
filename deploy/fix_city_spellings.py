@@ -23,101 +23,31 @@ from datetime import datetime, timezone
 import pg8000.native
 
 # --- canonical name + its mis-spellings ----------------------------------- #
-# Key = correct spelling, value = STT variants to fold into it (matched
-# case-insensitively). Add new variants here as you spot them in the data;
-# anything not listed is left untouched.
-CORRECTIONS: dict[str, list[str]] = {
-    "Muncie": [
-        "Monthsy",  # the variant whisper-tiny actually produces most often
-        "Munsee", "Muncey", "Muncy", "Munci", "Muncee",
-        "Munsie", "Munsy", "Monsey", "Munce", "Mun See", "Muns",
-    ],
-    # "... at Terre Haute ..." — whisper-tiny mangles the silent-final-syllable.
-    # "Terre Haute reports a temperature of..." also scatters into "Terrell Hope
-    # report(s)..." and the "Terre Ho-" / "Tera-" cluster below.
-    "Terre Haute": [
-        "Terrehold", "Terrehald", "Terrehalt", "Terrahold", "Terrahaut",
-        "Terrell", "Terrelld", "Terrellt", "Terre Hold", "Terre Halt",
-        "Terreault",  # "...79 Edterreault and 80 Ed Evansville..."
-        "Terrell Hope", "Terre Hope", "Terreld", "Terre Hoeck", "Terrell Hoeck", "Terrejo",
-        "Terrellton", "Terre Hogue", "Terahoe", "Terre Ljogt", "Terahood",
-        "Terre Hoe", "Terre Hoeg", "Terroch", "Terrema Hope", "Terre",
-        "Terrellot", "Terahook", "Terre Hote",
-    ],
-    # "... at Champaign, Illinois ..." — homophones of the French word.
-    "Champaign": [
-        "Champagne", "Campaign", "Champ Pain", "Sham Pain", "Champion",
-    ],
-    # "... at Bloomington ..." — unambiguous "Bloom-" prefix garbles.
-    "Bloomington": [
-        "Blumant", "Bloomingville",
-    ],
-    # Conjunction-leak garbles: the decoder folds the preceding "and"/"at"/"Ed"
-    # into the city token ("...and 80 Ed Evansville...").
-    "Evansville": [
-        "In Evansville", "And Evansville", "Ed Evansville",
-    ],
-    # "Indianapolis" heard as the two-word "Indian Apple". "Minneapolis" is
-    # confirmed by slot: "In Minneapolis, it was cloudy... Elsewhere across
-    # Indiana..." — the roundup always leads with Indianapolis there.
-    "Indianapolis": [
-        "Indian Apple", "Minneapolis",
-    ],
-    # "Shelbyville" clipped to its first two syllables.
-    "Shelbyville": [
-        "Shelby", "And Shelbyville",
-    ],
-    # "... at Lima, Ohio ..." — pronounced "LYE-muh", so it scatters badly.
-    # By far the worst-mangled name: confirmed by context, every one of these
-    # sits in the post-Champaign / "just outside Indiana" slot that the clean
-    # runs decode as "Lima, Ohio" ("...69 at Champaign, Illinois, 67 at Lima...").
-    "Lima": [
-        "Lyle", "Laima", "Laimo", "Laim", "Loomo", "Lulule", "Lulevel",
-        "Lyme", "Lima Ohio", "Leema",
-        "Limo", "Lime",  # "...Lima, Ohio, just outside Indiana, it was sunny..."
-        "La Mile", "La",  # post-Champaign slot (parallels "...69 at Lyle...")
-        "Lyma",
-        # "...67 at Lionel Hill..." / "...67 at Lionel..." family.
-        "Lionel", "Lionel Hill", "Lionel Hyle", "Lionel High",
-        "Lamel Hyle", "Lamel Highl",
-        # "...and 70 at Blime a while..." (spurious leading 'B').
-        "Blime", "Blame",
-        # "...Just outside Indiana, Ed Lyman..." / "...71 in Lyman..."
-        "Lyman", "Lymo", "Lymele", "Mlima", "Mllema", "Limee",
-        "Lymel", "Lymal Hyle", "Delimah", "Llamville",
-        "Lina",  # "...Ed Lina, Ohio, it was cloudy with a temperature of 75."
-    ],
-    # "... at South Bend ..." — the 'b' drops out.
-    "South Bend": [
-        "South End", "Southend", "South And",
-    ],
-    # "... at Marion ..." (MAIR-ee-un) — heard as a three-syllable name.
-    "Marion": [
-        "Merriam", "Meridian", "Mary Ann", "Marian", "Merion",
-    ],
-    # "... at Louisville ..." — the out-of-state tail slot after Cincinnati;
-    # the decoder collapses the name to a fragment ("...at Blue or more?", or
-    # "...73 at Luhl" parallel to the clean "...73 at Louisville").
-    "Louisville": [
-        "Blue", "Luhl", "And Louisville",
-        # 2026-07-08 audit: all three sit in Louisville's slots — "At Loovel,
-        # it was cloudy with a temperature of..." (the singleton before "Once
-        # again, at Muncie") and "...and 83 at Riverville/Wivill." closing the
-        # out-of-state tail; parallel airings the same evening read 83 too.
-        "Loovel", "Riverville", "Wivill",
-    ],
-    # "... at Portland ..." (Portland, IN) — slot after Marion ("63 at Portland"
-    # heard as "63 at Ridgebrough").
-    "Portland": [
-        "Ridgebrough",
-    ],
-    # "... at Dayton ..." — confirmed by temperature cross-reference: the
-    # "Deepan"/"Deep" readings (64F @ 13Z, 78F @ 22Z on 2026-06-24) match KDAY's
-    # actual obs, not Kokomo/Tipton. tiny.en just mangles Dayton some runs.
-    "Dayton": [
-        "Deepan", "Deep", "Deepin", "Deepen", "The Dayton",
-    ],
-}
+# The correction table lives in the station profile (place_corrections in
+# wxparser/profiles/<name>.json, selected by WX_PROFILE) — the same single
+# source of truth extraction uses at write time, so the two can't drift. This
+# script re-reads it every run and retro-folds rows stored before a variant
+# was added. LOCAL_EXTRAS is for deployment-local variants you are still
+# confirming; promote them into the profile once proven.
+import json
+from pathlib import Path
+
+
+def _profile_corrections() -> dict[str, list[str]]:
+    name = os.environ.get("WX_PROFILE", "kjy93_muncie")
+    path = (Path(name) if name.endswith(".json") else
+            Path(__file__).resolve().parent.parent
+            / "wxparser" / "profiles" / f"{name}.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {city: list(variants)
+            for city, variants in data.get("place_corrections", {}).items()}
+
+
+LOCAL_EXTRAS: dict[str, list[str]] = {}
+
+CORRECTIONS: dict[str, list[str]] = _profile_corrections()
+for _city, _variants in LOCAL_EXTRAS.items():
+    CORRECTIONS.setdefault(_city, []).extend(_variants)
 
 # --- non-city hallucinations to delete outright --------------------------- #
 # Tokens whisper emits in a city slot that are NOT garbles of any real station

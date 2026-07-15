@@ -19,7 +19,6 @@ import pg8000.exceptions
 import pg8000.native
 
 from .config import CONFIG, Config
-from .timefmt import ISO_FMT
 
 from .data.same_events import event_label
 from .extract import ALMANAC_NUMERIC
@@ -131,10 +130,8 @@ _SCHEMA = [
         PRIMARY KEY (captured_at, field)
     )""",
     "CREATE INDEX IF NOT EXISTS ix_alm_obs ON almanac_observations(field, captured_at)",
-    # Raw transcript landing zone (PLAN §5.1) — the source of truth the
+    # Raw transcript landing zone (PLAN §5.1) — the immutable source of truth the
     # structured tables above are a re-derivable projection of (see reprocess.py).
-    # Append-mostly rather than strictly immutable: rows are never deleted, but a
-    # term-fix (deploy/fix_stt_terms.py) or supersede rewrites a row in place by id.
     # Replaces the append-only transcripts/reports.jsonl file: `payload` holds the
     # whole report doc, and the columns beside it are denormalized out of it purely
     # so the /transcripts filters (from/to/q/product) and the /export watermark feed
@@ -187,7 +184,7 @@ _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 
 
 def _iso(dt: datetime) -> str:
-    return dt.strftime(ISO_FMT)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _parse_iso(s):
@@ -218,20 +215,6 @@ def _value(row: dict):
         n = row["value_num"]
         return int(n) if float(n).is_integer() else n
     return row.get("value_text")
-
-
-def _reading(row: dict, *ident: str, ts: str = "captured_at") -> dict:
-    """The reading shape every conditions/almanac reader serves: identity
-    columns, the voted value, the capture stamp, and vote provenance
-    (sightings when the query selected it)."""
-    out = {k: row[k] for k in ident}
-    out["value"] = _value(row)
-    out["captured_at"] = _ts(row[ts])
-    out["votes"] = row["votes"]
-    out["total"] = row["total"]
-    if "sightings" in row:
-        out["sightings"] = row["sightings"]
-    return out
 
 
 def period_window(period: str, issued: datetime) -> tuple[str | None, str | None]:
@@ -514,7 +497,9 @@ class Database:
         rows = self._query(
             "SELECT field,value_num,value_text,votes,total,sightings,last_seen "
             "FROM almanac WHERE sightings >= :m ORDER BY field", m=min_sightings)
-        return [_reading(r, "field", ts="last_seen") for r in rows]
+        return [{"field": r["field"], "value": _value(r), "captured_at": _ts(r["last_seen"]),
+                 "votes": r["votes"], "total": r["total"], "sightings": r["sightings"]}
+                for r in rows]
 
     def latest_almanac_readings(self) -> list[dict]:
         """field -> value for priming the aggregator on restart."""
@@ -527,7 +512,8 @@ class Database:
             "FROM almanac_observations WHERE captured_at > :s "
             "ORDER BY captured_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
-        return [_reading(r, "field") for r in rows]
+        return [{"field": r["field"], "value": _value(r), "captured_at": _ts(r["captured_at"]),
+                 "votes": r["votes"], "total": r["total"]} for r in rows]
 
     def alert_details_between(self, frm: str, to: str) -> list[dict]:
         """Structured spoken-alert details captured in [frm, to] (newest first)."""
@@ -564,7 +550,9 @@ class Database:
             "FROM city_conditions WHERE condition=:c AND sightings >= :m "
             "ORDER BY city", c=condition, m=min_sightings,
         )
-        return [_reading(r, "city", ts="last_seen") for r in rows]
+        return [{"city": r["city"], "value": _value(r), "captured_at": _ts(r["last_seen"]),
+                 "votes": r["votes"], "total": r["total"], "sightings": r["sightings"]}
+                for r in rows]
 
     def _obs_where(self, condition: str, city: str | None,
                    frm: str | None, to: str | None) -> tuple[str, dict]:
@@ -587,7 +575,9 @@ class Database:
             f"SELECT city,condition,value_num,value_text,captured_at,votes,total "
             f"FROM city_observations {where} ORDER BY captured_at DESC LIMIT :lim OFFSET :off",
             lim=limit, off=offset, **params)
-        return [_reading(r, "city", "condition") for r in rows]
+        return [{"city": r["city"], "condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["captured_at"]), "votes": r["votes"], "total": r["total"]}
+                for r in rows]
 
     # --- readers: forecast ----------------------------------------------- #
     @staticmethod
@@ -692,7 +682,9 @@ class Database:
             "SELECT condition, value_num, value_text, last_seen, votes, total, sightings "
             "FROM city_conditions WHERE LOWER(city)=LOWER(:c) AND sightings >= :m ORDER BY condition",
             c=city, m=min_sightings)
-        return [_reading(r, "condition", ts="last_seen") for r in rows]
+        return [{"condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["last_seen"]), "votes": r["votes"],
+                 "total": r["total"], "sightings": r["sightings"]} for r in rows]
 
     def cities(self, min_sightings: int = 1) -> list[dict]:
         """Distinct cities with data, with per-city condition count and freshness."""
@@ -711,7 +703,9 @@ class Database:
             "FROM city_observations WHERE captured_at > :s "
             "ORDER BY captured_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
-        return [_reading(r, "city", "condition") for r in rows]
+        return [{"city": r["city"], "condition": r["condition"], "value": _value(r),
+                 "captured_at": _ts(r["captured_at"]), "votes": r["votes"], "total": r["total"]}
+                for r in rows]
 
     def forecasts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         rows = self._query(

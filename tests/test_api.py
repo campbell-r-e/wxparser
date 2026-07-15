@@ -9,7 +9,6 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 import wxparser.api as api
-from wxparser.config import Config
 from wxparser.db import Database
 from wxparser.health import Heartbeat
 
@@ -208,12 +207,81 @@ def test_link_details_handles_missing_timestamp(make_cfg):
 def test_sse_stream_emits(make_cfg):
     srv, H = _server(make_cfg)
     try:
+        # since= replay makes the first event batch deterministic: the seeded
+        # alert (oldest stamp) must arrive without waiting on live data.
         with urllib.request.urlopen(
                 H + "/stream?since=2026-01-01T00:00:00Z", timeout=3) as r:
-            data = r.read(300)   # connected line + first event batch
-        assert b"event:" in data or b"connected" in data
-    except Exception:
-        pass                     # best-effort: the handler ran either way
+            data = r.read(400)   # connected line + start of the replay batch
+        assert b": connected" in data
+        assert b"event: alert" in data
+        assert b"data: {" in data
+    finally:
+        srv.shutdown()
+
+
+def test_sync_window_no_truncation_and_empty():
+    rows = [{"captured_at": f"2026-01-01T00:00:0{i}Z"} for i in range(3)]
+    out, nxt, more = api._sync_window({"a": (rows, "captured_at", 5)},
+                                      "2026-01-01T00:00:00Z")
+    assert out["a"] == rows and nxt == rows[-1]["captured_at"] and more is False
+    out, nxt, more = api._sync_window({"a": ([], "captured_at", 5)}, "start")
+    assert out["a"] == [] and nxt == "start" and more is False
+
+
+def test_sync_window_trims_split_stamp_group():
+    # 4 rows fetched with limit 3: stamp "03" is split by the fetch horizon, so
+    # the cutoff stops at "02" and both "03" rows wait for the next page.
+    rows = [{"captured_at": s} for s in ("01", "02", "03", "03")]
+    out, nxt, more = api._sync_window({"a": (rows, "captured_at", 3)}, "00")
+    assert [r["captured_at"] for r in out["a"]] == ["01", "02"]
+    assert nxt == "02" and more is True
+
+
+def test_sync_window_truncated_section_caps_complete_ones():
+    # THE original /export bug: a complete section's newer rows must be deferred
+    # (not skipped) when another section is still truncated behind them.
+    trunc = [{"captured_at": s} for s in ("01", "02", "03")]  # limit 2
+    full = [{"captured_at": s} for s in ("01", "05")]
+    out, nxt, more = api._sync_window(
+        {"t": (trunc, "captured_at", 2), "f": (full, "captured_at", 5)}, "00")
+    assert nxt == "02" and more is True
+    assert [r["captured_at"] for r in out["f"]] == ["01"]  # "05" deferred
+
+
+def test_sync_window_min_across_truncated_sections():
+    a = [{"captured_at": s} for s in ("01", "04", "05")]  # limit 2 -> safe "04"
+    b = [{"captured_at": s} for s in ("01", "02", "03")]  # limit 2 -> safe "02"
+    _, nxt, more = api._sync_window(
+        {"a": (a, "captured_at", 2), "b": (b, "captured_at", 2)}, "00")
+    assert nxt == "02" and more is True
+
+
+def test_sync_window_single_stamp_page_still_advances():
+    # one capture wider than the whole page: advance through it anyway — a
+    # permanently stuck client is worse than the horizon overflow.
+    rows = [{"captured_at": "07"} for _ in range(4)]
+    out, nxt, more = api._sync_window({"a": (rows, "captured_at", 3)}, "00")
+    assert nxt == "07" and len(out["a"]) == 3 and more is True
+
+
+def test_export_pages_losslessly(make_cfg):
+    srv, H = _server(make_cfg)
+    try:
+        db = api._Handler.db
+        for i in range(6):  # 6 rows, paged 2 at a time -> 3+ hops, zero skips
+            db.record_reading(
+                {"city": f"C{i}", "condition": "temperature_f", "value": 70 + i},
+                f"2026-06-25T00:0{i}:00Z")
+        got, since, hops = [], "2026-06-24T23:00:00Z", 0
+        while True:
+            page = _get(H + f"/export?since={since}&limit=2")
+            got += [r["captured_at"] + r["city"] for r in page["observations"]]
+            since = page["next_since"]
+            hops += 1
+            assert hops < 20
+            if not page["more"]:
+                break
+        assert got == [f"2026-06-25T00:0{i}:00ZC{i}" for i in range(6)]  # all, once, in order
     finally:
         srv.shutdown()
 

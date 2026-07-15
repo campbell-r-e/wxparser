@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wxparser"
-version = "1.0.0"
+version = "1.0.1"
 description = "Fully-offline local weather server: NOAA Weather Radio capture, whisper.cpp transcription, SAME/EAS alert decoding, and a structured weather query API"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.11"  # matches the CI matrix; older floors were never tested
 # Audio capture is the `arecord` subprocess (process boundary, honours PLAN §2.2)
 # and STT is the whisper.cpp `whisper-cli` subprocess. In-process deps:
 #  - numpy (BSD): Phase 2 VAD + spectral fingerprint / novelty gate
@@ -24,4 +24,18 @@ wxparser = "wxparser.main:main"
 wxparser-api = "wxparser.api:main"
 
 [tool.setuptools]
-packages = ["wxparser"]
+# wxparser.data is a real subpackage; profiles/ and the bundled lookup JSONs
+# are runtime-required data — without these a `pip install .` produced a
+# package that crashed on import (profile.load / fips lookups).
+packages = ["wxparser", "wxparser.data"]
+
+[tool.setuptools.package-data]
+wxparser = ["profiles/*.json", "profiles/README.md"]
+"wxparser.data" = ["*.json"]
+
+[tool.ruff.lint]
+# Gate on fatal errors only (syntax, undefined names) — the 100% line+branch
+# test gate does the heavy lifting. The E702/E402-style compound statements
+# and grouped imports a default ruff run flags are accepted house style, not
+# regressions; this config makes a plain `ruff check .` say so.
+select = ["E9", "F63", "F7", "F82"]

@@ -18,7 +18,7 @@ from wxparser.extract import (
 )
 from wxparser.fingerprint import _pool_time
 from wxparser.formats import aprs_weather, sitrep
-from wxparser.same import SAMEMonitor, decode, fips_county, looks_like_same, parse_header
+from wxparser.same import SAMEMonitor, decode, fips_county, looks_like_same
 from wxparser.segment import _finish
 
 

@@ -26,7 +26,9 @@ FIELDS = ("high_f", "low_f", "precip_pct", "sky")
 
 c = pg.Connection(user=os.environ.get("WX_PG_USER", "wxparser"),
                   host=os.environ.get("WX_PG_HOST", "127.0.0.1"),
-                  database=os.environ.get("WX_PG_DATABASE", "wxparser"))
+                  port=int(os.environ.get("WX_PG_PORT", "5432")),
+                  database=os.environ.get("WX_PG_DATABASE", "wxparser"),
+                  password=os.environ.get("WX_PG_PASSWORD") or None)
 
 
 def mode_and_agreement(values):

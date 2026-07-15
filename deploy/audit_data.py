@@ -7,6 +7,7 @@ Run on the box:  python3 deploy/audit_data.py
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -15,8 +16,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # import wxparser
 import pg8000.native as pg  # noqa: E402
 from wxparser.data.same_events import EVENT_CODES  # noqa: E402
+from wxparser.stt import _HALLUCINATIONS, _NON_SPEECH_MARKERS  # noqa: E402
 
-c = pg.Connection(user="wxparser", host="127.0.0.1", database="wxparser")
+c = pg.Connection(user=os.environ.get("WX_PG_USER", "wxparser"),
+                  host=os.environ.get("WX_PG_HOST", "127.0.0.1"),
+                  port=int(os.environ.get("WX_PG_PORT", "5432")),
+                  database=os.environ.get("WX_PG_DATABASE", "wxparser"),
+                  password=os.environ.get("WX_PG_PASSWORD") or None)
 issues: list[str] = []
 
 
@@ -74,8 +80,11 @@ print("=== forecast fields flagged uncertain (<0.6 agreement): %s ===" % (uncert
 # ---- transcripts: integrity (from the raw_reports store) ----
 n = blank = 0
 prod = Counter()
-HALLUC = {"i hate it", "thank you", "thanks for watching", "please subscribe",
-          "subscribe", "bye", "you", "[music]"}
+# same junk-transcript catalogue the pipeline uses (stt.py), so the audit's
+# idea of "hallucination" can't drift from the code that filters them; the
+# bracketed markers are compared alnum-stripped like the loop below strips.
+HALLUC = _HALLUCINATIONS | {
+    re.sub(r"[^a-z0-9 ]", "", m).strip() for m in _NON_SPEECH_MARKERS}
 for pt, ty, text in q("SELECT product_type, type, text FROM raw_reports"):
     n += 1
     prod[pt or ty or "?"] += 1

@@ -11,7 +11,7 @@ import numpy as np
 import wxparser.stt as stt
 from wxparser.config import Config
 from wxparser.stt import (
-    TranscriptSegment, Transcript, _audio_ctx_for, is_blank, is_repetitive,
+    Transcript, _audio_ctx_for, is_blank, is_repetitive,
 )
 
 

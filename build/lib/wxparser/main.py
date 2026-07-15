@@ -28,8 +28,14 @@ import sys
 import threading
 import time
 import traceback
-from collections.abc import Iterator
 from pathlib import Path
+
+from collections.abc import Iterator
+
+# STT queue priorities (lower = transcribed first). Spoken warning narratives
+# captured just after a SAME burst jump ahead of routine forecast/conditions.
+_PRIO_ALERT = 0
+_PRIO_NORMAL = 10
 
 from .capture import stream_frames
 from .config import CONFIG, Config
@@ -48,12 +54,7 @@ from .same import SAMEMessage, SAMEMonitor
 from .segment import segment_level_dbfs, segment_stream
 from .store import build_alert, build_report
 from .stt import Transcript, is_blank, transcribe, transcribe_samples
-from .timefmt import utc_now_iso as _utc_now_iso
-
-# STT queue priorities (lower = transcribed first). Spoken warning narratives
-# captured just after a SAME burst jump ahead of routine forecast/conditions.
-_PRIO_ALERT = 0
-_PRIO_NORMAL = 10
+from .store import _utc_now_iso
 
 _STOP = threading.Event()
 

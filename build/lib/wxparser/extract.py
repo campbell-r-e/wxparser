@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import re
 from collections import Counter, deque
-from dataclasses import dataclass
 from statistics import median
 
 from .data.place_names import correct_place, is_known_city, resolve_slot
+from dataclasses import dataclass
 
 # --- small spoken-number parser (whisper sometimes spells numbers out) ------- #
 _UNITS = {
@@ -139,7 +139,7 @@ _PERIOD_NAME = (
 # ("...mid 80s. Four Thursday night..."). Accepting "four/fore" here lets the
 # real header open the period so its trailing "chance of rain N%" attaches to
 # that day instead of leaking onto the carry-over period.
-RE_PERIOD_HDR = re.compile(
+_RE_PERIOD_HDR = re.compile(
     rf"(?:^|[.,]\s+|\b(?:for|fore|four)\s+)({_PERIOD_NAME})\b(?=[\s,.]|$)", re.I)
 # Climate outlook / almanac — NOT a daily forecast ("8 to 14 day outlook ...
 # temperatures above normal", "normal high is 85"). Parsing it as periods invents
@@ -407,7 +407,7 @@ class ForecastAggregator:
         Returns (spans, first_header, has_tail): has_tail is True when carry-over
         text precedes the first header (it exists only when that header isn't at
         the segment start). Advances self._current to the last header seen."""
-        matches = list(RE_PERIOD_HDR.finditer(text))
+        matches = list(_RE_PERIOD_HDR.finditer(text))
         if not matches:
             return [(self._current, text)], None, False
         spans: list[tuple[str | None, str]] = []

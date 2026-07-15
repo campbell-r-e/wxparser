@@ -110,7 +110,7 @@ elif [ "$WANT_DB" = 1 ]; then
 fi
 if [ "$WANT_DB" = 0 ]; then
     say "no db role here — where is PostgreSQL?"
-    PG_HOST=$(ask "PostgreSQL host" "192.168.68.57")
+    PG_HOST=$(ask "PostgreSQL host" "192.168.1.10")
     PG_PASS=$(ask_secret "password for the 'wxparser' DB role")
 fi
 
