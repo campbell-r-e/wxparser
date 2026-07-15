@@ -336,6 +336,11 @@ counties/towns, and seed `place_corrections` loosely — `deploy/propose_correct
 the stored transcripts for consistent STT garbles so the table fills in from real airings over
 time.
 
+**[docs/PORTING.md](docs/PORTING.md) is the full porting guide**: every profile key
+(including the optional `roundup_cities`/`slot_anchors`/`roundup_leadins` recovery maps and
+the `tz` default gotcha), hardware sizing, the two `deploy/` scripts that carry
+deployment-local data, and the first-week correction/reprocess/audit workflow.
+
 ## Multi-transmitter (run N instances + aggregate)
 
 One instance = one transmitter. To cover several NWR stations, run **one instance per
