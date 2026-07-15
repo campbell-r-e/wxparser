@@ -16,6 +16,9 @@ tables out of band; a reprocess resurrects whatever they trimmed.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from .dedup import TextDeduper
 from .extract import (
     AlmanacAggregator,
     CityConditionsAggregator,
@@ -25,9 +28,26 @@ from .extract import (
 from .store import ALERT_PRODUCTS
 
 
-def apply_readings(text: str, captured_at, aggregator: CityConditionsAggregator,
-                   forecast: ForecastAggregator, almanac: AlmanacAggregator,
-                   db, hb=None, *, confidence: float | None = None,
+@dataclass
+class PipelineState:
+    """The collaborators one transcript flows through, bundled so the live
+    worker, the offline replay, and apply_readings share one small signature
+    instead of threading six parallel parameters everywhere.
+
+    `db` and `hb` stay deliberately untyped (anything with the writer /
+    heartbeat methods; None disables that leg) so this use-case module never
+    imports the gateway or the heartbeat. `deduper` is None on the replay
+    path — reprocess replays an already-deduped store."""
+    aggregator: CityConditionsAggregator
+    forecast: ForecastAggregator
+    almanac: AlmanacAggregator
+    deduper: TextDeduper | None = None
+    db: object | None = None
+    hb: object | None = None
+
+
+def apply_readings(text: str, captured_at, state: PipelineState, *,
+                   confidence: float | None = None,
                    confidence_floor: float = 0.0) -> dict:
     """Vote this transcript's conditions/forecast/almanac into the aggregators and
     persist the results, stamped with captured_at. Returns a summary for logging.
@@ -44,22 +64,24 @@ def apply_readings(text: str, captured_at, aggregator: CityConditionsAggregator,
             and 0.0 < confidence < confidence_floor):
         return {"readings": [], "forecast": False, "almanac": [],
                 "low_confidence": True}
+    db, hb = state.db, state.hb
     readings = []
-    for r in aggregator.update(text):
+    for r in state.aggregator.update(text):
         if db is not None:
             db.record_reading(r, captured_at)
         if hb is not None:
             hb.touch("last_extraction_at")
         readings.append(r)
     forecast_written = False
-    if forecast.update(text):
+    if state.forecast.update(text):
         if db is not None:
-            db.write_forecast(forecast.snapshot(), captured_at, city=forecast.city)
+            db.write_forecast(state.forecast.snapshot(), captured_at,
+                              city=state.forecast.city)
         if hb is not None:
             hb.touch("last_extraction_at")
         forecast_written = True
     almanac_readings = []
-    for r in almanac.update(text):
+    for r in state.almanac.update(text):
         if db is not None:
             db.record_almanac(r, captured_at)
         if hb is not None:

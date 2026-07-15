@@ -219,6 +219,28 @@ def test_sse_stream_emits(make_cfg):
         srv.shutdown()
 
 
+def test_flag_param_parsing_is_uniform():
+    f = api._Handler._flag
+    assert f({"x": "1"}, "x", False) and f({"x": "true"}, "x", False)
+    assert f({"x": "YES"}, "x", False)                      # case-insensitive
+    assert not f({"x": "0"}, "x", True) and not f({"x": "false"}, "x", True)
+    assert not f({"x": "no"}, "x", True)
+    assert f({}, "x", True) is True and f({}, "x", False) is False
+    assert f({"x": "junk"}, "x", True) is True              # unrecognized -> default
+
+
+def test_details_flag_consistent_across_alert_endpoints(make_cfg):
+    # regression: ?details=false used to ENABLE linking on /alerts/active while
+    # disabling it on /alerts/history — both must honor the same convention now
+    srv, H = _server(make_cfg)
+    try:
+        assert "spoken" not in _get(H + "/alerts/active?details=false")["alerts"][0]
+        assert "spoken" in _get(H + "/alerts/active?details=yes")["alerts"][0]
+        assert "spoken" in _get(H + "/alerts/history?details=yes")["alerts"][0]
+    finally:
+        srv.shutdown()
+
+
 def test_sync_window_no_truncation_and_empty():
     rows = [{"captured_at": f"2026-01-01T00:00:0{i}Z"} for i in range(3)]
     out, nxt, more = api._sync_window({"a": (rows, "captured_at", 5)},

@@ -33,3 +33,15 @@ def test_mark_annotates_rows_in_place():
     rows = [{"city": "Muncie", "value": 77, "votes": 2, "total": 2, "sightings": 8}]
     mark(rows)
     assert rows[0]["advisory"] is True and "trust" in rows[0]
+
+
+def test_knobs_are_tunable():
+    # the scoring knobs come from Config in production (WX_TRUST_*); verify the
+    # parameters actually steer the outcome
+    strict = field_trust(votes=6, total=6, sightings=6, sightings_full=12.0)
+    assert strict["trust"] == 0.5                       # saturation point moved
+    relabeled = field_trust(votes=6, total=6, sightings=12, high=1.01)
+    assert relabeled["confidence"] == "medium"          # same trust, new label
+    rows = [{"votes": 6, "total": 6, "sightings": 12}]
+    mark(rows, high=1.01, low=0.5)
+    assert rows[0]["confidence"] == "medium"

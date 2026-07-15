@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from wxparser.config import CONFIG, Config
+from wxparser.config import Config
+from wxparser.timefmt import ISO_FMT
+
+CONFIG = Config()  # a plain default config for the assess() tests below
 from wxparser.health import Heartbeat, assess
 
 _NOW = datetime(2026, 6, 25, 18, 0, 0, tzinfo=timezone.utc)
@@ -28,7 +31,7 @@ def test_heartbeat_read_missing_is_none(tmp_path):
 
 
 def _ago(mins: float) -> str:
-    return (_NOW - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (_NOW - timedelta(minutes=mins)).strftime(ISO_FMT)
 
 
 def test_ok_when_signals_fresh():

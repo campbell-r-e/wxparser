@@ -45,4 +45,16 @@ def load(name: str | None = None) -> dict:
     return data
 
 
-PROFILE = load()
+_cache: dict | None = None
+
+
+def get_profile() -> dict:
+    """The active station profile, loaded once on FIRST USE — importing wxparser
+    does no disk I/O and reads no env vars; WX_PROFILE is honored up to the
+    moment the first Config() is built (or the first place-name lookup runs),
+    and a missing/invalid profile fails there instead of at import time in
+    whatever module happened to load first."""
+    global _cache
+    if _cache is None:
+        _cache = load()
+    return _cache

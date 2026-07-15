@@ -21,6 +21,9 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
+# project timestamp format (kept local: this script is standalone by design)
+ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 import pg8000.native
 
 PRIMARY = os.environ.get("WX_PRIMARY_CITY", "Muncie")
@@ -38,7 +41,7 @@ def _connect() -> pg8000.native.Connection:
 
 
 def main() -> None:
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamp = datetime.now(timezone.utc).strftime(ISO_FMT)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=HOURS)
     conn = _connect()
     try:

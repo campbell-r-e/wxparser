@@ -20,6 +20,9 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
+# project timestamp format (kept local: this script is standalone by design)
+ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 import pg8000.native
 
 # --- canonical name + its mis-spellings ----------------------------------- #
@@ -167,7 +170,7 @@ def _drop_junk(conn, table: str, junk: str) -> int:
 
 
 def main() -> None:
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamp = datetime.now(timezone.utc).strftime(ISO_FMT)
     conn = _connect()
     total = 0
     dropped = 0

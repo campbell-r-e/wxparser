@@ -31,6 +31,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 
+# project timestamp format (kept local: this script is standalone by design)
+ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
 CARD = os.environ.get("WX_ALSA_CARD", "0")
 CAPTURE = "Capture"          # ADC gain, 0-31, fine
 BOOST = "Front Mic Boost"    # coarse, 0-3, ~+10 dB/step
@@ -50,7 +53,7 @@ BOOST_MIN, BOOST_MAX = 0, 3
 
 
 def log(msg: str) -> None:
-    print(f"[{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}] agc: {msg}", flush=True)
+    print(f"[{datetime.now(timezone.utc).strftime(ISO_FMT)}] agc: {msg}", flush=True)
 
 
 def amixer(*args: str) -> str:
@@ -101,7 +104,7 @@ def lower_gain(cap: int, boost: int) -> tuple[int, int]:
 def _age_min(ts: str | None) -> float | None:
     if not ts:
         return None
-    then = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    then = datetime.strptime(ts, ISO_FMT).replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - then).total_seconds() / 60.0
 
 

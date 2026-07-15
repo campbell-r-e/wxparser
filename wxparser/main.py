@@ -32,7 +32,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from .capture import stream_frames
-from .config import CONFIG, Config
+from .config import Config
 from .db import Database
 from .dedup import TextDeduper
 from .extract import (
@@ -43,7 +43,7 @@ from .extract import (
 from .fingerprint import Fingerprinter, NoveltyGate
 from .health import Heartbeat
 from .notify import post_webhook
-from .pipeline import apply_readings, write_alert_detail_if_any
+from .pipeline import PipelineState, apply_readings, write_alert_detail_if_any
 from .same import SAMEMessage, SAMEMonitor
 from .segment import segment_level_dbfs, segment_stream
 from .store import build_alert, build_report
@@ -149,13 +149,9 @@ def _stt_worker(
     q: "queue.PriorityQueue",
     cfg: Config,
     once: bool,
-    deduper: TextDeduper,
-    aggregator: CityConditionsAggregator,
-    forecast: ForecastAggregator,
-    almanac: AlmanacAggregator,
-    db: Database | None,
-    hb: Heartbeat | None = None,
+    state: PipelineState,
 ) -> None:
+    hb = state.hb
     while not _STOP.is_set():
         try:
             prio, _seq, payload = q.get(timeout=0.5)
@@ -180,8 +176,7 @@ def _stt_worker(
             print(f"  . novel-but-blank {seg.duration_s:5.1f}s", flush=True)
         else:
             try:
-                saved = _handle_transcript(transcript, seg, digest, cfg, deduper,
-                                           aggregator, forecast, almanac, db, hb)
+                saved = _handle_transcript(transcript, seg, digest, cfg, state)
             except Exception:
                 # A persistent failure here (DB outage outliving the driver's
                 # reconnect, a projection bug) would otherwise kill only THIS
@@ -208,12 +203,7 @@ def _handle_transcript(
     seg,
     digest: str,
     cfg: Config,
-    deduper: TextDeduper,
-    aggregator: CityConditionsAggregator,
-    forecast: ForecastAggregator,
-    almanac: AlmanacAggregator,
-    db: Database | None,
-    hb: Heartbeat | None,
+    state: PipelineState,
 ) -> dict | None:
     """Vote, log, and store one non-blank transcript; returns the saved report
     (None when text-dedup dropped it as a repeat)."""
@@ -224,7 +214,7 @@ def _handle_transcript(
     # transcripts, so the DB stays a re-derivable projection of them.
     # Skip voting on low-confidence transcripts (still stored, just not
     # voted) so a mangled reading can't sway the aggregates.
-    summary = apply_readings(text, now, aggregator, forecast, almanac, db, hb,
+    summary = apply_readings(text, now, state,
                              confidence=transcript.avg_confidence,
                              confidence_floor=cfg.stt_confidence_floor)
     if summary.get("low_confidence"):
@@ -234,10 +224,10 @@ def _handle_transcript(
         print(f"[{now}] OBS  {r['city']}: {r['condition']}={r['value']}", flush=True)
     for r in summary["almanac"]:
         print(f"[{now}] ALM  {r['field']}={r['value']}", flush=True)
-    saved = _save(transcript, cfg, seg.duration_s, digest, deduper, db)
-    if saved is not None and db is not None:
+    saved = _save(transcript, cfg, seg.duration_s, digest, state.deduper, state.db)
+    if saved is not None and state.db is not None:
         details = write_alert_detail_if_any(
-            text, now, saved["id"], saved["product_type"], db)
+            text, now, saved["id"], saved["product_type"], state.db)
         if details:
             print(f"[{now}] ALERT-DETAIL {saved['product_type']}: {details}", flush=True)
     return saved
@@ -256,7 +246,9 @@ def run_live(cfg: Config, once: bool = False) -> int:
     fp = Fingerprinter(cfg)
     gate = NoveltyGate(cfg)
     deduper = TextDeduper(cfg)
-    aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
+    aggregator = CityConditionsAggregator(primary_city=cfg.primary_city,
+                                            peer_min=cfg.peer_min_cities,
+                                            peer_max_dev=cfg.peer_max_dev_f)
     forecast = ForecastAggregator()
     almanac = AlmanacAggregator()
     db = Database(cfg)
@@ -283,12 +275,11 @@ def run_live(cfg: Config, once: bool = False) -> int:
               f"{len(alm)} almanac fields)", flush=True)
     hb = Heartbeat(cfg, db)
     hb.flush()  # publish "starting" immediately so /health isn't down on boot
+    state = PipelineState(aggregator=aggregator, forecast=forecast, almanac=almanac,
+                          deduper=deduper, db=db, hb=hb)
     q: "queue.PriorityQueue" = queue.PriorityQueue()
     seq = itertools.count()  # tie-breaker so PriorityQueue never compares payloads
-    worker = threading.Thread(
-        target=_stt_worker,
-        args=(q, cfg, once, deduper, aggregator, forecast, almanac, db, hb), daemon=True
-    )
+    worker = threading.Thread(target=_stt_worker, args=(q, cfg, once, state), daemon=True)
     worker.start()
 
     # SAME decode runs here on the producer thread; when a burst fires, open a
@@ -351,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", type=Path, help="transcribe an existing WAV instead of capturing")
     args = parser.parse_args(argv)
 
-    cfg = CONFIG
+    cfg = Config()
     if args.file:
         return run_file(args.file, cfg)
     return run_live(cfg, once=args.once)

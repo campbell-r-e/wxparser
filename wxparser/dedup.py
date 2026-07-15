@@ -41,7 +41,9 @@ def similarity(a: str, b: str) -> float:
 @dataclass
 class DedupResult:
     kind: str               # "new" | "update" | "duplicate"
-    supersedes: str | None  # id of the report this updates (kind == "update")
+    # id of the matched prior report: the one this updates (kind == "update")
+    # or the one it duplicates (kind == "duplicate"); None for "new"
+    supersedes: str | None
 
 
 class TextDeduper:

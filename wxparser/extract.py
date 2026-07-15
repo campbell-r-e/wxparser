@@ -512,18 +512,23 @@ _RE_AT_TEMP = re.compile(
 # whole feed together (readings cluster on both sides of the median), so
 # genuine spreads survive; below _PEER_MIN readings there is no quorum to say
 # which value is the wrong one, so nothing is dropped.
+# (deployment-tunable through Config: WX_PEER_MIN_CITIES / WX_PEER_MAX_DEV_F,
+# passed into CityConditionsAggregator by main/reprocess)
 _PEER_MIN = 3
 _PEER_MAX_DEV = 30
 
 
-def _drop_peer_outliers(pairs: list[tuple[str, int]]) -> list[tuple[str, int]]:
-    if len(pairs) < _PEER_MIN:
+def _drop_peer_outliers(pairs: list[tuple[str, int]],
+                        peer_min: int = _PEER_MIN,
+                        max_dev: int = _PEER_MAX_DEV) -> list[tuple[str, int]]:
+    if len(pairs) < peer_min:
         return pairs
     med = median(v for _, v in pairs)
-    return [(c, v) for c, v in pairs if abs(v - med) <= _PEER_MAX_DEV]
+    return [(c, v) for c, v in pairs if abs(v - med) <= max_dev]
 
 
-def _nearby_temps(text: str) -> list[tuple[str, int]]:
+def _nearby_temps(text: str, peer_min: int = _PEER_MIN,
+                  peer_max_dev: int = _PEER_MAX_DEV) -> list[tuple[str, int]]:
     """(city, temperature_f) for every roundup phrasing in `text`, in textual
     order. Each city is first folded through the alias map (_norm_city); any that
     is STILL unknown is then recovered from its slot when possible — e.g. the
@@ -547,7 +552,7 @@ def _nearby_temps(text: str) -> list[tuple[str, int]]:
             city = resolve_slot(prev_city, text, pos) or city
         out.append((city, temp))
         prev_city = city
-    return _drop_peer_outliers(out)
+    return _drop_peer_outliers(out, peer_min, peer_max_dev)
 # Climate-summary / almanac recaps quote PAST or normal values, not live
 # conditions: "Yesterday's low temperature was 55 degrees", "normal high is 85",
 # "record low ...". Their "(high|low) temperature was N degrees" is a substring
@@ -607,10 +612,13 @@ class CityConditionsAggregator:
     _FIELD_MAXLEN = {"temperature_f": 5}
 
     def __init__(self, maxlen: int = 15, primary_city: str = "Muncie",
-                 stale_ticks: int = 60):
+                 stale_ticks: int = 60, peer_min: int = _PEER_MIN,
+                 peer_max_dev: int = _PEER_MAX_DEV):
         self.maxlen = maxlen
         self.primary_city = primary_city
         self.stale_ticks = stale_ticks
+        self.peer_min = peer_min
+        self.peer_max_dev = peer_max_dev
         self._tick = 0
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
 
@@ -621,7 +629,7 @@ class CityConditionsAggregator:
         readings: list[dict] = []
         # Regional-roundup temps belong to the named cities (all three phrasings:
         # "74 at Marion", "Marion reported 74", "at Marion ... temperature of 74").
-        nearby = _nearby_temps(text)
+        nearby = _nearby_temps(text, self.peer_min, self.peer_max_dev)
         seen: set[tuple[str, int]] = set()
         for city_raw, val in nearby:
             city = _norm_city(city_raw)

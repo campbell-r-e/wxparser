@@ -27,8 +27,8 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from wxparser.config import CONFIG                        # noqa: E402
-from wxparser.data.place_names import PLACE_CORRECTIONS  # noqa: E402
+from wxparser.config import Config                        # noqa: E402
+from wxparser.data.place_names import place_corrections   # noqa: E402
 from wxparser.data.stt_terms import TERM_CORRECTIONS     # noqa: E402
 from wxparser.db import Database                          # noqa: E402
 from wxparser.extract import _DECADE_WORDS               # noqa: E402
@@ -57,8 +57,9 @@ COMMON_WORDS = {
     "pines", "area", "areas", "day", "days", "rivers", "river", "lake", "lakes",
 }
 HANDLED = {v.lower() for vs in TERM_CORRECTIONS.values() for v in vs} | {"close", "flows"}
-PLACES = ({c.lower() for c in PLACE_CORRECTIONS}
-          | {v.lower() for vs in PLACE_CORRECTIONS.values() for v in vs})
+_CORRECTIONS = place_corrections()
+PLACES = ({c.lower() for c in _CORRECTIONS}
+          | {v.lower() for vs in _CORRECTIONS.values() for v in vs})
 
 
 def temp_label(tok: str) -> str | None:
@@ -97,7 +98,7 @@ def main() -> int:
     ap.add_argument("--examples", type=int, default=2)
     args = ap.parse_args()
 
-    db = Database(CONFIG)
+    db = Database(Config())
     try:
         texts = load_texts(db)
     finally:

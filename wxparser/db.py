@@ -18,8 +18,8 @@ from datetime import datetime, timedelta, timezone
 import pg8000.exceptions
 import pg8000.native
 
-from .config import CONFIG, Config
-from .timefmt import ISO_FMT
+from .config import Config
+from .timefmt import ISO_FMT, parse_iso_utc
 
 from .data.same_events import event_label
 from .extract import ALMANAC_NUMERIC
@@ -193,7 +193,7 @@ def _iso(dt: datetime) -> str:
 def _parse_iso(s):
     if s is None or isinstance(s, datetime):
         return s
-    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return parse_iso_utc(s)
 
 
 def _ts(v):
@@ -253,7 +253,7 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
 
 
 class Database:
-    def __init__(self, cfg: Config = CONFIG, database: str | None = None):
+    def __init__(self, cfg: Config, database: str | None = None):
         self._cfg = cfg
         self._database = database or cfg.pg_database
         self._lock = threading.Lock()

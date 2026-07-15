@@ -48,11 +48,11 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from .config import CONFIG, Config
+from .config import Config
 from .db import Database
 from .formats import aprs_bulletins, aprs_weather, net_bulletin, sitrep
 from .health import Heartbeat, assess
-from .timefmt import utc_now_iso as _now_iso
+from .timefmt import ISO_FMT, parse_iso_utc, utc_now_iso as _now_iso
 from .trust import mark as mark_trust
 from .verify import verify as verify_forecasts
 
@@ -114,6 +114,19 @@ class _Handler(BaseHTTPRequestHandler):
     min_sightings: int = 2
     protocol_version = "HTTP/1.1"
 
+    @staticmethod
+    def _flag(q: dict, name: str, default: bool) -> bool:
+        """One boolean query-param convention for every endpoint: 1/true/yes on,
+        0/false/no off, anything else (or absent) -> the endpoint's default.
+        (Before this, /alerts/active and /alerts/history parsed details= with
+        opposite semantics — ?details=false ENABLED linking on one of them.)"""
+        value = str(q.get(name, "")).lower()
+        if value in ("1", "true", "yes"):
+            return True
+        if value in ("0", "false", "no"):
+            return False
+        return default
+
     def _min(self, q: dict) -> int:
         try:
             return max(1, int(q.get("min", self.min_sightings)))
@@ -143,14 +156,13 @@ class _Handler(BaseHTTPRequestHandler):
         for r in rows:
             ca = r.get("captured_at")
             if ca:
-                age = (now - datetime.strptime(ca, "%Y-%m-%dT%H:%M:%SZ").replace(
-                    tzinfo=timezone.utc)).total_seconds() / 60
+                age = (now - parse_iso_utc(ca)).total_seconds() / 60
                 r["age_minutes"] = round(age, 1)
                 r["stale"] = age > threshold
             else:  # pragma: no cover - readings always carry captured_at
                 r["age_minutes"] = None
                 r["stale"] = None
-            if q.get("fresh") in ("1", "true") and r.get("stale"):
+            if self._flag(q, "fresh", False) and r.get("stale"):
                 continue
             out.append(r)
         return out
@@ -161,7 +173,9 @@ class _Handler(BaseHTTPRequestHandler):
         stale rows (?fresh= suppressed); pass drop_stale=True to honor it.
         `default_stale` carries a per-view staleness window (almanac)."""
         return mark_trust(
-            self._annotate_age(rows, q if drop_stale else dict(q, fresh=""), default_stale))
+            self._annotate_age(rows, q if drop_stale else dict(q, fresh=""), default_stale),
+            sightings_full=self.cfg.trust_sightings_full,
+            high=self.cfg.trust_high, low=self.cfg.trust_low)
 
     def _paginate(self, q: dict, default: int, count_fn, rows_fn) -> tuple[list, dict]:
         """Shared limit/offset parsing -> rows -> {total,count,...} envelope."""
@@ -192,7 +206,7 @@ class _Handler(BaseHTTPRequestHandler):
         observations, and forecasts as they land, ordered by capture time."""
         watermark = since or _now_iso()
         try:  # validate before committing a 200 event-stream (else a bad since
-            datetime.strptime(watermark, "%Y-%m-%dT%H:%M:%SZ")  # would error mid-stream)
+            parse_iso_utc(watermark)  # would error mid-stream)
         except ValueError:
             self._send({"error": "since= must be ISO-8601 (e.g. 2026-06-24T12:00:00Z)"}, 400)
             return
@@ -249,9 +263,8 @@ class _Handler(BaseHTTPRequestHandler):
                 fc["last_confirmed_at"] = confirmed
                 for field, ts in (("age_minutes", ia),
                                   ("confirmed_age_minutes", confirmed)):
-                    fc[field] = round((now - datetime.strptime(
-                        ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                    ).total_seconds() / 60, 1)
+                    fc[field] = round(
+                        (now - parse_iso_utc(ts)).total_seconds() / 60, 1)
                 fc["stale"] = fc["confirmed_age_minutes"] > threshold
             # per-period: which fields the airings disagreed on (low vote agreement)
             for p in fc.get("periods", []):
@@ -271,10 +284,10 @@ class _Handler(BaseHTTPRequestHandler):
         (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
         alert = self._authoritative(alert)
         try:
-            ca = datetime.strptime(alert["captured_at"], "%Y-%m-%dT%H:%M:%SZ")
+            ca = parse_iso_utc(alert["captured_at"])
             frm = (ca - timedelta(seconds=self.cfg.alert_link_pre_buffer_s)
-                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            to = alert.get("expires_at") or ca.strftime("%Y-%m-%dT%H:%M:%SZ")
+                   ).strftime(ISO_FMT)
+            to = alert.get("expires_at") or ca.strftime(ISO_FMT)
             alert = dict(alert)
             alert["spoken"] = self.db.alert_details_between(frm, to)
         except (KeyError, ValueError):
@@ -461,7 +474,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _ep_alerts_active(self, q: dict) -> None:
         alerts = self.db.get_active_alerts()
-        if q.get("details", "1") != "0":
+        if self._flag(q, "details", True):
             alerts = [self._link_details(a) for a in alerts]
         self._send({"alerts": alerts})
 
@@ -470,7 +483,7 @@ class _Handler(BaseHTTPRequestHandler):
         rows, paging = self._paginate(
             q, 100, lambda: self.db.alerts_history_count(*args),
             lambda lim, off: self.db.alerts_history(*args, lim, off))
-        if q.get("details") in ("1", "true"):
+        if self._flag(q, "details", False):
             rows = [self._link_details(a) for a in rows]
         else:
             rows = [self._authoritative(a) for a in rows]
@@ -479,8 +492,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _ep_alerts_details(self, q: dict) -> None:
         now = datetime.now(timezone.utc)
-        to = q.get("to") or now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        frm = q.get("from") or (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        to = q.get("to") or now.strftime(ISO_FMT)
+        frm = q.get("from") or (now - timedelta(hours=24)).strftime(ISO_FMT)
         self._send({"from": frm, "to": to,
                     "details": self.db.alert_details_between(frm, to)})
 
@@ -511,7 +524,7 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
-def serve(cfg: Config = CONFIG) -> None:  # pragma: no cover - blocking server bootstrap
+def serve(cfg: Config) -> None:  # pragma: no cover - blocking server bootstrap
     _Handler.db = Database(cfg)
     _Handler.cfg = cfg
     _Handler.min_sightings = cfg.api_min_sightings
@@ -530,7 +543,7 @@ def serve(cfg: Config = CONFIG) -> None:  # pragma: no cover - blocking server b
 
 
 def main() -> int:  # pragma: no cover - CLI entry
-    serve(CONFIG)
+    serve(Config())
     return 0
 
 

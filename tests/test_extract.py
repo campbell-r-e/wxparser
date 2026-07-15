@@ -870,3 +870,16 @@ def test_almanac_aggregator_votes_primes_snapshots():
     primed = AlmanacAggregator()
     primed.prime([{"field": "sunset", "value": "9:15 PM"}])
     assert primed.snapshot()["sunset"]["value"] == "9:15 PM"
+
+
+def test_roundup_peer_band_is_tunable():
+    # the band comes from Config in production (WX_PEER_MIN_CITIES /
+    # WX_PEER_MAX_DEV_F); verify the aggregator parameters actually steer it
+    text = ("It was cloudy with a temperature of 74 at Champaign, Illinois, "
+            "72 at Dayton, 60 at Cincinnati.")
+    default = CityConditionsAggregator().update(text)
+    assert any(r["city"] == "Cincinnati" for r in default)      # within ±30
+    tight = CityConditionsAggregator(peer_max_dev=5).update(text)
+    assert not any(r["city"] == "Cincinnati" for r in tight)    # outside ±5
+    no_quorum = CityConditionsAggregator(peer_min=4, peer_max_dev=5).update(text)
+    assert any(r["city"] == "Cincinnati" for r in no_quorum)    # only 3 cities

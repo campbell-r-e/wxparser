@@ -28,7 +28,8 @@ from pathlib import Path
 # `import wxparser` resolves to the same package the capture service uses.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from wxparser.config import CONFIG  # noqa: E402
+from wxparser.config import Config  # noqa: E402
+from wxparser.timefmt import utc_now_iso  # noqa: E402
 from wxparser.data.stt_terms import correct_terms  # noqa: E402
 from wxparser.db import Database  # noqa: E402
 
@@ -55,8 +56,8 @@ def _correct_record(rec: dict) -> bool:
 
 
 def main() -> None:
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    db = Database(CONFIG)
+    stamp = utc_now_iso()
+    db = Database(Config())
     changed = 0
     try:
         for rec in db.iter_raw_reports():

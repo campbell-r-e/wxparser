@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 import wxparser.main as main
+from wxparser.pipeline import PipelineState
 from wxparser.config import Config
 from wxparser.dedup import TextDeduper
 from wxparser.same import parse_header
@@ -165,8 +166,9 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch, make_cfg):
     for _ in range(5):
         q.put((0, next(seq), (Seg(), "d")))
     q.put((0, next(seq), None))                  # poison pill (after the 5 segments)
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    main._stt_worker(q, cfg, False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=db, hb=Heartbeat(cfg)))
     # OBS, forecast, an alert detail, and an almanac field were all written
     assert db.all_conditions_for_city("Muncie")
     assert db.alert_details_between("2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
@@ -194,8 +196,9 @@ def test_stt_worker_once_stops_after_save(tmp_path, monkeypatch, make_cfg):
         samples = np.zeros(16000, dtype=np.int16)
         duration_s = 1.0
     q.put((0, next(itertools.count()), (Seg(), "d")))   # one saveable segment
-    main._stt_worker(q, cfg, True, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    main._stt_worker(q, cfg, True, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=db, hb=Heartbeat(cfg)))
     assert main._STOP.is_set()                           # once + save -> stop set, loop exits
     main._STOP.clear()
 
@@ -228,8 +231,9 @@ def test_stt_worker_fails_loud_on_store_error(monkeypatch, make_cfg):
         samples = np.zeros(16000, dtype=np.int16)
         duration_s = 1.0
     q.put((0, next(itertools.count()), (Seg(), "d")))
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), None, None)
+    main._stt_worker(q, cfg, False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=None, hb=None))
     assert died == [True] and main._STOP.is_set()        # fail-loud path taken
     main._STOP.clear()
 
@@ -265,8 +269,9 @@ def test_stt_worker_low_confidence_stored_not_voted(tmp_path, monkeypatch, capsy
         duration_s = 1.0
     q.put((0, 0, (Seg(), "d")))
     q.put((0, 1, None))                                  # poison pill
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), db, Heartbeat(cfg))
+    main._stt_worker(q, cfg, False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=db, hb=Heartbeat(cfg)))
     assert not db.all_conditions_for_city("Muncie")      # not voted
     assert db.count_raw_reports() == 1                    # still stored (in raw_reports)
     assert "low-conf 0.21" in capsys.readouterr().out    # gate logged
@@ -304,8 +309,9 @@ def test_stt_worker_survives_transcribe_error(tmp_path, monkeypatch):
     q.put((0, 0, (_Seg(), "digest")))
     q.put((0, 1, None))                                    # poison AFTER the segment
     # swallows the STT error (covers the except path, incl. the heartbeat update)
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), None, Heartbeat(cfg))
+    main._stt_worker(q, cfg, False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=None, hb=Heartbeat(cfg)))
 
 
 def test_stt_worker_handles_empty_queue():
@@ -326,9 +332,9 @@ def test_stt_worker_handles_empty_queue():
                 raise _q.Empty                            # first call: queue empty -> continue
             return (0, 0, None)                            # then poison -> break
         def task_done(self): pass
-    main._stt_worker(_Q(), Config(), False, TextDeduper(Config()),
-                     CityConditionsAggregator(), ForecastAggregator(),
-                     AlmanacAggregator(), None)
+    main._stt_worker(_Q(), Config(), False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(Config())))
 
 
 def test_run_live_breaks_when_stopped(tmp_path, monkeypatch, make_cfg):

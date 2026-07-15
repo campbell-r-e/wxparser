@@ -9,6 +9,7 @@ import queue as _q
 import numpy as np
 
 import wxparser.main as main
+from wxparser.pipeline import PipelineState
 from wxparser.config import Config
 from wxparser.dedup import TextDeduper
 from wxparser.extract import (
@@ -154,8 +155,9 @@ class _Seg:
 
 def _run_worker(q, cfg, db=None, hb=None):
     """Drive main._stt_worker once with fresh aggregators (the shared 9-arg call)."""
-    main._stt_worker(q, cfg, False, TextDeduper(cfg), CityConditionsAggregator(),
-                     ForecastAggregator(), AlmanacAggregator(), db, hb)
+    main._stt_worker(q, cfg, False, PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
+        deduper=TextDeduper(cfg), db=db, hb=hb))
 
 
 # --- main: worker with db=None and hb=None (the None-side branches) ------- #

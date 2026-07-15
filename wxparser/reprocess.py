@@ -21,11 +21,11 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 
-from .config import CONFIG, Config
+from .config import Config
 from .data.stt_terms import correct_terms
 from .db import Database
 from .extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
-from .pipeline import apply_readings, write_alert_detail_if_any
+from .pipeline import PipelineState, apply_readings, write_alert_detail_if_any
 
 
 def reprocess(cfg: Config, db: Database, source_db: Database | None = None) -> dict:
@@ -36,9 +36,11 @@ def reprocess(cfg: Config, db: Database, source_db: Database | None = None) -> d
     records = (source_db or db).iter_raw_reports()
     records.sort(key=lambda r: r.get("captured_at", ""))  # capture order = vote order
 
-    aggregator = CityConditionsAggregator(primary_city=cfg.primary_city)
-    forecast = ForecastAggregator()
-    almanac = AlmanacAggregator()
+    state = PipelineState(
+        aggregator=CityConditionsAggregator(primary_city=cfg.primary_city,
+                                            peer_min=cfg.peer_min_cities,
+                                            peer_max_dev=cfg.peer_max_dev_f),
+        forecast=ForecastAggregator(), almanac=AlmanacAggregator(), db=db)
     db.clear()
     stats: Counter = Counter()
     for rec in records:
@@ -56,8 +58,7 @@ def reprocess(cfg: Config, db: Database, source_db: Database | None = None) -> d
                 continue
             ca = rec.get("captured_at")
             conf = (rec.get("stt") or {}).get("avg_confidence")
-            summary = apply_readings(text, ca, aggregator, forecast, almanac, db,
-                                     confidence=conf,
+            summary = apply_readings(text, ca, state, confidence=conf,
                                      confidence_floor=cfg.stt_confidence_floor)
             if summary.get("low_confidence"):
                 stats["low_conf_skipped"] += 1
@@ -71,18 +72,19 @@ def main(argv=None) -> int:  # pragma: no cover - CLI entry
     ap.add_argument("--into", help="target database name (default: the configured DB, "
                     "rebuilt in place — run with the capture service stopped)")
     args = ap.parse_args(argv)
+    cfg = Config()
     if args.into:
         # Raw lives in the configured DB; project it into a fresh target DB.
-        source = Database(CONFIG)
-        target = Database(CONFIG, database=args.into)
-        stats = reprocess(CONFIG, target, source_db=source)
+        source = Database(cfg)
+        target = Database(cfg, database=args.into)
+        stats = reprocess(cfg, target, source_db=source)
         source.close()
         target.close()
     else:
-        db = Database(CONFIG)
-        stats = reprocess(CONFIG, db)
+        db = Database(cfg)
+        stats = reprocess(cfg, db)
         db.close()
-    print(f"reprocess complete ({args.into or CONFIG.pg_database}): {stats}", flush=True)
+    print(f"reprocess complete ({args.into or cfg.pg_database}): {stats}", flush=True)
     return 0
 
 

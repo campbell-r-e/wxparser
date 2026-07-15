@@ -23,7 +23,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import Config
-from .db import Database
+from .timefmt import parse_iso_utc
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # the gateway is injected — a use case never imports it live
+    from .db import Database
 
 # spoken sky wordings folded onto one ordinal cloudiness ladder
 LADDER = {"clear": 0, "sunny": 0, "fair": 0, "mostly sunny": 1, "partly sunny": 1,
@@ -35,7 +39,7 @@ _EVERYTHING = 10_000_000   # reader limit that means "the whole record"
 
 
 def _utc(ts: str) -> datetime:
-    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return parse_iso_utc(ts)
 
 
 def _by_day(readings: list[dict], tz: ZoneInfo) -> dict[date, list[tuple[datetime, object]]]:

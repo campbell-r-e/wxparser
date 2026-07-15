@@ -3,20 +3,34 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 import pytest
 
 from wxparser import profile
-from wxparser.config import CONFIG
-from wxparser.data.place_names import PLACE_CORRECTIONS
+from wxparser.config import Config
+from wxparser.data.place_names import place_corrections
 
 
 def test_default_profile_drives_config_and_places():
     # the default (KJY93) profile must preserve the original hard-coded behaviour
-    assert CONFIG.station == "KJY93" and CONFIG.primary_city == "Muncie"
-    assert abs(CONFIG.frequency_mhz - 162.425) < 1e-6
-    assert "Muncie" in PLACE_CORRECTIONS and "Edmondsee" in PLACE_CORRECTIONS["Muncie"]
-    assert "Indiana" in CONFIG.whisper_prompt
+    cfg = Config()
+    assert cfg.station == "KJY93" and cfg.primary_city == "Muncie"
+    assert abs(cfg.frequency_mhz - 162.425) < 1e-6
+    corrections = place_corrections()
+    assert "Muncie" in corrections and "Edmondsee" in corrections["Muncie"]
+    assert "Indiana" in cfg.whisper_prompt
+
+
+def test_import_does_no_profile_io():
+    # importing wxparser must not read env vars or the profile JSON — the
+    # profile loads on FIRST USE (Config() or a place-name lookup), so WX_*
+    # overrides set before construction are always honored. Checked in a fresh
+    # interpreter because this suite has long since triggered the load.
+    code = ("import wxparser.config, wxparser.data.place_names, wxparser.profile as p; "
+            "raise SystemExit(0 if p._cache is None else 1)")
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
 
 
 def test_load_default_and_by_name():
@@ -53,5 +67,6 @@ def test_resolve_slot_without_leadins_returns_none(monkeypatch):
     # can't be recovered, so resolve_slot returns None.
     from wxparser.data import place_names as pn
 
+    pn._ensure_loaded()  # load first, so the lazy init can't overwrite the patch
     monkeypatch.setattr(pn, "ROUNDUP_LEADINS", {})
     assert pn.resolve_slot(None, "an unknown roundup city here", 12) is None

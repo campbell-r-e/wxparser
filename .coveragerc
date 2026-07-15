@@ -10,5 +10,6 @@ fail_under = 100
 exclude_lines =
     pragma: no cover
     if __name__ == .__main__.:
+    if TYPE_CHECKING:
     raise AssertionError
     raise NotImplementedError

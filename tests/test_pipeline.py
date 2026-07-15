@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from wxparser.extract import AlmanacAggregator, CityConditionsAggregator, ForecastAggregator
-from wxparser.pipeline import apply_readings, write_alert_detail_if_any
+from wxparser.pipeline import PipelineState, apply_readings, write_alert_detail_if_any
 
 # conditions + forecast + almanac in one transcript, to exercise every branch
 _TEXT = ("At Muncie, it was clear. The temperature was 70 degrees. Tonight, clear. "
@@ -20,8 +20,8 @@ class _HB:
 
 def test_apply_readings_writes_all_and_touches_hb(wxdb):
     db, hb = wxdb, _HB()
-    s = apply_readings(_TEXT, "2026-06-24T12:00:00Z",
-                       CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(), db, hb)
+    s = apply_readings(_TEXT, "2026-06-24T12:00:00Z", PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(), db=db, hb=hb))
     assert any(r["condition"] == "temperature_f" and r["value"] == 70 for r in s["readings"])
     assert s["forecast"] is True
     assert {a["field"] for a in s["almanac"]} >= {"sunrise", "sunset"}
@@ -31,15 +31,16 @@ def test_apply_readings_writes_all_and_touches_hb(wxdb):
 
 def test_apply_readings_db_none_still_extracts():
     # no DB / no heartbeat: extraction still runs and returns the readings
-    s = apply_readings(_TEXT, "2026-06-24T12:00:00Z",
-                       CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(), None)
+    s = apply_readings(_TEXT, "2026-06-24T12:00:00Z", PipelineState(
+        CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator()))
     assert any(r["value"] == 70 for r in s["readings"]) and s["forecast"] is True and s["almanac"]
 
 
 def _apply(confidence, floor):
-    return apply_readings(_TEXT, "2026-06-24T12:00:00Z", CityConditionsAggregator(),
-                          ForecastAggregator(), AlmanacAggregator(), None,
-                          confidence=confidence, confidence_floor=floor)
+    return apply_readings(
+        _TEXT, "2026-06-24T12:00:00Z",
+        PipelineState(CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator()),
+        confidence=confidence, confidence_floor=floor)
 
 
 def test_apply_readings_low_confidence_is_skipped():
