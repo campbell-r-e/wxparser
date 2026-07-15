@@ -71,7 +71,8 @@ def _save(
     db: Database | None = None,
 ) -> dict | None:
     """Build, text-dedup, and land a report in the raw transcript store. Returns
-    the saved report (or None if it was dropped as a duplicate)."""
+    the saved report (or None if it was dropped as a duplicate).
+    """
     report = build_report(transcript, cfg, duration_s=duration_s, fingerprint=fingerprint)
     tag = "NEW"
     if deduper is not None:
@@ -141,7 +142,8 @@ def run_file(wav_path: Path, cfg: Config) -> int:
 def _die() -> None:
     """Hard-exit the whole process (not just the calling thread). A worker
     thread dying inside an otherwise-live process is invisible to systemd's
-    Restart= — os._exit makes the failure a process death it can act on."""
+    Restart= — os._exit makes the failure a process death it can act on.
+    """
     os._exit(1)
 
 
@@ -206,7 +208,8 @@ def _handle_transcript(
     state: PipelineState,
 ) -> dict | None:
     """Vote, log, and store one non-blank transcript; returns the saved report
-    (None when text-dedup dropped it as a repeat)."""
+    (None when text-dedup dropped it as a repeat).
+    """
     text = transcript.text
     now = _utc_now_iso()
     # vote BEFORE dedup so boundary-shifted repeats still contribute readings.
@@ -247,12 +250,13 @@ def run_live(cfg: Config, once: bool = False) -> int:
     gate = NoveltyGate(cfg)
     deduper = TextDeduper(cfg)
     aggregator = CityConditionsAggregator(primary_city=cfg.primary_city,
-                                            peer_min=cfg.peer_min_cities,
-                                            peer_max_dev=cfg.peer_max_dev_f)
+                                          peer_min=cfg.peer_min_cities,
+                                          peer_max_dev=cfg.peer_max_dev_f)
     forecast = ForecastAggregator()
     almanac = AlmanacAggregator()
     db = Database(cfg)
-    print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})", flush=True)
+    print(f"  (postgres store: {cfg.pg_user}@{cfg.pg_host}:{cfg.pg_port}/{cfg.pg_database})",
+          flush=True)
     # prime text-dedup from the raw transcript store so a restart keeps state
     recent = db.recent_raw_reports(cfg.text_history)
     deduper.prime(recent)
@@ -302,7 +306,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
 
     def _publish(label: str, tail: str = "") -> None:
         """Flush the segment counters to the heartbeat and print the status line
-        both novelty branches share."""
+        both novelty branches share.
+        """
         hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
         hb.flush()
         print(f"  {label} {seg.duration_s:5.1f}s sim={sim:.3f}{tail} "
@@ -339,7 +344,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="wxparser", description=__doc__)
     parser.add_argument("--once", action="store_true", help="stop after first novel save")
-    parser.add_argument("--file", type=Path, help="transcribe an existing WAV instead of capturing")
+    parser.add_argument("--file", type=Path,
+                        help="transcribe an existing WAV instead of capturing")
     args = parser.parse_args(argv)
 
     cfg = Config()

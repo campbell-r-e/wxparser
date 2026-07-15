@@ -46,7 +46,8 @@ def _frame_dbfs(frame: np.ndarray) -> float:
 def segment_level_dbfs(samples: np.ndarray) -> tuple[float, float]:
     """(rms_dbfs, peak_dbfs) of an int16 PCM segment. Published per segment to the
     heartbeat so the AGC backstop can keep capture gain in the decoder's sweet
-    spot (speech above the VAD floor, peaks below clipping)."""
+    spot (speech above the VAD floor, peaks below clipping).
+    """
     if samples.size == 0:
         return -120.0, -120.0
     x = np.abs(samples.astype(np.float64) / 32768.0)

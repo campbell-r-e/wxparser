@@ -148,7 +148,8 @@ def test_raw_reports_filter_branches(wxdb):
     ]:
         db.insert_raw_report(r)
     assert [r["id"] for r in db.query_raw_reports(to="2026-06-24T11:00:00Z")] == ["1"]
-    assert [r["id"] for r in db.query_raw_reports(frm="2026-06-24T11:00:00Z")] == ["2"]  # frm filter
+    # frm filter
+    assert [r["id"] for r in db.query_raw_reports(frm="2026-06-24T11:00:00Z")] == ["2"]
     assert db.count_raw_reports(frm="2026-06-24T11:00:00Z") == 1
     assert db.count_raw_reports(to="2026-06-24T11:00:00Z", q="tonight") == 1
     assert db.count_raw_reports(product="current_conditions") == 1

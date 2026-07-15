@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # import wxparser
 import pg8000.native as pg  # noqa: E402
 from wxparser.data.same_events import EVENT_CODES  # noqa: E402
-from wxparser.stt import _HALLUCINATIONS, _NON_SPEECH_MARKERS  # noqa: E402
+from wxparser.stt import HALLUCINATIONS, NON_SPEECH_MARKERS  # noqa: E402
 
 c = pg.Connection(user=os.environ.get("WX_PG_USER", "wxparser"),
                   host=os.environ.get("WX_PG_HOST", "127.0.0.1"),
@@ -32,16 +32,26 @@ def q(sql):
 
 # ---- DB: range / logic violations (impossible stored values) ----
 CHECKS = {
-    "obs temp <-40|>120":   "SELECT count(*) FROM city_observations WHERE condition='temperature_f' AND (value_num<-40 OR value_num>120)",
-    "obs dewpt <-50|>90":   "SELECT count(*) FROM city_observations WHERE condition='dewpoint_f' AND (value_num<-50 OR value_num>90)",
-    "obs humid <0|>100":    "SELECT count(*) FROM city_observations WHERE condition='humidity_pct' AND (value_num<0 OR value_num>100)",
-    "obs press <25|>33":    "SELECT count(*) FROM city_observations WHERE condition='pressure_in' AND (value_num<25 OR value_num>33)",
-    "obs wind <0|>120":     "SELECT count(*) FROM city_observations WHERE condition='wind_speed_mph' AND (value_num<0 OR value_num>120)",
-    "fc high <-30|>120":    "SELECT count(*) FROM forecasts WHERE high_f IS NOT NULL AND (high_f<-30 OR high_f>120)",
-    "fc low <-40|>90":      "SELECT count(*) FROM forecasts WHERE low_f IS NOT NULL AND (low_f<-40 OR low_f>90)",
-    "fc precip <0|>100":    "SELECT count(*) FROM forecasts WHERE precip_pct IS NOT NULL AND (precip_pct<0 OR precip_pct>100)",
-    "fc high<low":          "SELECT count(*) FROM forecasts WHERE high_f IS NOT NULL AND low_f IS NOT NULL AND high_f<low_f",
-    "fc night low>=85":     "SELECT count(*) FROM forecasts WHERE period ILIKE '%night%' AND low_f>=85",
+    "obs temp <-40|>120":   "SELECT count(*) FROM city_observations WHERE "
+                            "condition='temperature_f' AND (value_num<-40 OR value_num>120)",
+    "obs dewpt <-50|>90":   "SELECT count(*) FROM city_observations WHERE "
+                            "condition='dewpoint_f' AND (value_num<-50 OR value_num>90)",
+    "obs humid <0|>100":    "SELECT count(*) FROM city_observations WHERE "
+                            "condition='humidity_pct' AND (value_num<0 OR value_num>100)",
+    "obs press <25|>33":    "SELECT count(*) FROM city_observations WHERE "
+                            "condition='pressure_in' AND (value_num<25 OR value_num>33)",
+    "obs wind <0|>120":     "SELECT count(*) FROM city_observations WHERE "
+                            "condition='wind_speed_mph' AND (value_num<0 OR value_num>120)",
+    "fc high <-30|>120":    "SELECT count(*) FROM forecasts WHERE "
+                            "high_f IS NOT NULL AND (high_f<-30 OR high_f>120)",
+    "fc low <-40|>90":      "SELECT count(*) FROM forecasts WHERE "
+                            "low_f IS NOT NULL AND (low_f<-40 OR low_f>90)",
+    "fc precip <0|>100":    "SELECT count(*) FROM forecasts WHERE "
+                            "precip_pct IS NOT NULL AND (precip_pct<0 OR precip_pct>100)",
+    "fc high<low":          "SELECT count(*) FROM forecasts WHERE "
+                            "high_f IS NOT NULL AND low_f IS NOT NULL AND high_f<low_f",
+    "fc night low>=85":     "SELECT count(*) FROM forecasts WHERE "
+                            "period ILIKE '%night%' AND low_f>=85",
 }
 print("=== DB range/logic violations ===")
 for name, sql in CHECKS.items():
@@ -61,14 +71,16 @@ if bad_cities:
 arows = q("SELECT event, areas FROM alerts")
 bad_ev = sorted({r[0] for r in arows if r[0] and r[0].upper() not in EVENT_CODES})
 bad_fips = [f for r in arows for f in (r[1] or []) if not re.match(r"^0\d{5}$", str(f))]
-print("=== alerts: %d, bad event codes: %s, bad FIPS: %s ===" % (len(arows), bad_ev or "none", bad_fips or "none"))
+print("=== alerts: %d, bad event codes: %s, bad FIPS: %s ==="
+      % (len(arows), bad_ev or "none", bad_fips or "none"))
 if bad_ev:
     issues.append("bad event codes %s" % bad_ev)
 if bad_fips:
     issues.append("bad FIPS %s" % bad_fips)
 
 # ---- DB: forecast values flagged uncertain (low vote agreement) ----
-unc = q("SELECT period, confidence FROM forecasts WHERE issued_at=(SELECT max(issued_at) FROM forecasts) AND confidence IS NOT NULL")
+unc = q("SELECT period, confidence FROM forecasts "
+        "WHERE issued_at=(SELECT max(issued_at) FROM forecasts) AND confidence IS NOT NULL")
 uncertain = []
 for period, conf in unc:
     cf = conf if isinstance(conf, dict) else json.loads(conf or "{}")
@@ -83,8 +95,8 @@ prod = Counter()
 # same junk-transcript catalogue the pipeline uses (stt.py), so the audit's
 # idea of "hallucination" can't drift from the code that filters them; the
 # bracketed markers are compared alnum-stripped like the loop below strips.
-HALLUC = _HALLUCINATIONS | {
-    re.sub(r"[^a-z0-9 ]", "", m).strip() for m in _NON_SPEECH_MARKERS}
+HALLUC = HALLUCINATIONS | {
+    re.sub(r"[^a-z0-9 ]", "", m).strip() for m in NON_SPEECH_MARKERS}
 for pt, ty, text in q("SELECT product_type, type, text FROM raw_reports"):
     n += 1
     prod[pt or ty or "?"] += 1

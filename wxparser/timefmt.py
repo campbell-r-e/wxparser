@@ -22,5 +22,6 @@ def parse_iso_utc(stamp: str) -> datetime:
     """Parse a project-format stamp back to an aware UTC datetime.
 
     Raises ValueError on anything that isn't exactly the project format —
-    callers that accept client input use that as their validation."""
+    callers that accept client input use that as their validation.
+    """
     return datetime.strptime(stamp, ISO_FMT).replace(tzinfo=timezone.utc)

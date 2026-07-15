@@ -63,7 +63,7 @@ class Fingerprinter:
         n_frames = 1 + (x.size - self.n_fft) // self.hop
         mel = np.empty((n_frames, self.cfg.fp_n_mels), dtype=np.float64)
         for i in range(n_frames):
-            seg = x[i * self.hop : i * self.hop + self.n_fft] * self.window
+            seg = x[i * self.hop:i * self.hop + self.n_fft] * self.window
             mag = np.abs(np.fft.rfft(seg, n=self.n_fft))
             mel[i] = np.log1p(self.fb @ (mag * mag))
 
@@ -94,7 +94,8 @@ def _pool_time(mel: np.ndarray, time_bins: int) -> np.ndarray:
 
 class NoveltyGate:
     """Keeps recent fingerprints; the caller compares best_similarity() to the
-    configured threshold to decide novelty (main.py's repeat/novel branch)."""
+    configured threshold to decide novelty (main.py's repeat/novel branch).
+    """
 
     def __init__(self, cfg: Config):
         self.history: deque[np.ndarray] = deque(maxlen=cfg.gate_history)

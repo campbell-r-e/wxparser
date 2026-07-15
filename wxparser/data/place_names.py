@@ -46,7 +46,8 @@ _loaded = False
 def _ensure_loaded() -> None:
     """Populate the module tables from the active profile, once. Idempotent —
     and a no-op after the first call, so tests may monkeypatch the tables
-    AFTER triggering a load without this overwriting the patch."""
+    AFTER triggering a load without this overwriting the patch.
+    """
     global _loaded, PLACE_CORRECTIONS, _LOOKUP, ROUNDUP_CITIES, SLOT_ANCHORS, ROUNDUP_LEADINS
     if _loaded:
         return
@@ -82,7 +83,8 @@ def is_known_city(name: str) -> bool:
     """True if `name` is a recognized canonical city in the roundup roster.
 
     Used to decide whether a roundup entry needs positional recovery. With no
-    roster configured, treat every name as known (disables the slot pass)."""
+    roster configured, treat every name as known (disables the slot pass).
+    """
     _ensure_loaded()
     return not ROUNDUP_CITIES or name in ROUNDUP_CITIES
 

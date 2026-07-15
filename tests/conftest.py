@@ -16,7 +16,8 @@ from wxparser.db import Database
 def _ensure_test_db():
     """Create the wxparser_test database if it doesn't exist, so `pytest` is one
     command on a fresh machine (a running Postgres with a CREATEDB-capable role
-    is still required — that's the store the suite deliberately tests for real)."""
+    is still required — that's the store the suite deliberately tests for real).
+    """
     cfg = Config()
     try:
         pg8000.native.Connection(
@@ -38,7 +39,8 @@ def _ensure_test_db():
 @pytest.fixture(autouse=True)
 def _reset_stop_flag():
     """The capture loop's stop signal is a module global; reset it around every
-    test so a run_live/worker test can't leak its shutdown state into the next."""
+    test so a run_live/worker test can't leak its shutdown state into the next.
+    """
     main._STOP.clear()
     yield
     main._STOP.clear()
@@ -47,7 +49,8 @@ def _reset_stop_flag():
 @pytest.fixture
 def make_cfg(tmp_path):
     """Config factory pinned to the test database and this test's tmp out_dir —
-    the triad every DB-touching test used to spell out inline."""
+    the triad every DB-touching test used to spell out inline.
+    """
     def _make(**overrides) -> Config:
         return Config(out_dir=tmp_path, pg_database="wxparser_test", **overrides)
     return _make
@@ -56,7 +59,8 @@ def make_cfg(tmp_path):
 @pytest.fixture
 def wxdb(make_cfg):
     """A Database on the test store with the structured tables cleared. clear()
-    never touches raw_reports — tests that need it empty TRUNCATE it themselves."""
+    never touches raw_reports — tests that need it empty TRUNCATE it themselves.
+    """
     db = Database(make_cfg())
     db.clear()
     return db

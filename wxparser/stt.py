@@ -71,7 +71,8 @@ _SPECIAL_TOKEN = re.compile(r"^\[_.*_\]$")
 def _segment_confidence(tokens: list[dict]) -> tuple[float, int]:
     """Mean token probability over real (non-special) tokens, and their count.
     Returns (0.0, 0) when the JSON has no usable per-token probabilities — e.g.
-    an older whisper build, or output produced without -ojf."""
+    an older whisper build, or output produced without -ojf.
+    """
     probs = [
         t["p"]
         for t in tokens
@@ -160,14 +161,16 @@ def transcribe_samples(samples: np.ndarray, cfg: Config) -> Transcript:
 # whisper hallucinates these stock phrases on non-speech audio (silence, music,
 # tones between announcements) — they never appear in an NWR broadcast, so a
 # transcript that is *only* one of them is treated as blank and dropped.
-_HALLUCINATIONS = {
+# Public: the data audit (deploy/audit_data.py) reuses these sets so its idea
+# of "junk transcript" can never drift from the pipeline's.
+HALLUCINATIONS = {
     "i hate it", "thank you", "thanks for watching", "please subscribe",
     "subscribe", "bye", "you",
 }
 # whisper's literal non-speech markers (matched whole, plus any "[blank..."
-# prefix in is_blank) — kept beside _HALLUCINATIONS so all known junk
+# prefix in is_blank) — kept beside HALLUCINATIONS so all known junk
 # transcripts live in one place.
-_NON_SPEECH_MARKERS = {"[blank_audio]", "(dramatic music)"}
+NON_SPEECH_MARKERS = {"[blank_audio]", "(dramatic music)"}
 
 # Repetition-loop defaults. The greedy decoder occasionally wedges into a
 # degenerate loop on noisy/near-silent audio and emits a token or short phrase
@@ -191,7 +194,8 @@ def is_repetitive(
     """True for a degenerate decoder repetition loop. Two signals, either fires:
     a long run of one identical token (single-word loop), or very low lexical
     diversity over a long transcript (short-phrase loop). Real NWR narration —
-    even templated multi-day forecasts — stays well clear of both."""
+    even templated multi-day forecasts — stays well clear of both.
+    """
     words = text.split()
     n = len(words)
     if n < 3:
@@ -211,14 +215,15 @@ def is_repetitive(
 
 def is_blank(transcript: Transcript, cfg: Config | None = None) -> bool:
     """True for non-speech windows: whisper's '[BLANK_AUDIO]', a punctuation-only
-    transcript, a lone known hallucination phrase, or a decoder repetition loop."""
+    transcript, a lone known hallucination phrase, or a decoder repetition loop.
+    """
     t = transcript.text.strip().lower()
     if not t:
         return True
-    if t in _NON_SPEECH_MARKERS or t.startswith("[blank"):
+    if t in NON_SPEECH_MARKERS or t.startswith("[blank"):
         return True
     core = re.sub(r"[^a-z0-9 ]", "", t).strip()
-    if not core or core in _HALLUCINATIONS:
+    if not core or core in HALLUCINATIONS:
         return True
     if cfg is not None:
         return is_repetitive(

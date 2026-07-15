@@ -64,7 +64,8 @@ PLACES = ({c.lower() for c in _CORRECTIONS}
 
 def temp_label(tok: str) -> str | None:
     """Whether a temp-band garble rhymes with 'highs' or 'lows' (the slot itself is
-    ambiguous; the vowel sound disambiguates)."""
+    ambiguous; the vowel sound disambiguates).
+    """
     t = tok.lower()
     if re.search(r"ow|ose|oes|oze", t):
         return "Lows"

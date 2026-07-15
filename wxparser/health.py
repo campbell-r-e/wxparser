@@ -50,7 +50,7 @@ class Heartbeat:
             "last_segment_at": None,    # audio alive — a segment was produced
             "last_novel_at": None,      # novel content reached the STT queue
             "last_stt_ok_at": None,     # a transcription succeeded
-            "last_extraction_at": None, # a reading/forecast was written
+            "last_extraction_at": None,  # a reading/forecast was written
             "segments": 0, "novel": 0, "repeat": 0,
             "stt_errors": 0, "capture_restarts": 0,
             "queue_depth": 0,

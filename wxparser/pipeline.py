@@ -37,7 +37,8 @@ class PipelineState:
     `db` and `hb` stay deliberately untyped (anything with the writer /
     heartbeat methods; None disables that leg) so this use-case module never
     imports the gateway or the heartbeat. `deduper` is None on the replay
-    path — reprocess replays an already-deduped store."""
+    path — reprocess replays an already-deduped store.
+    """
     aggregator: CityConditionsAggregator
     forecast: ForecastAggregator
     almanac: AlmanacAggregator
@@ -59,7 +60,8 @@ def apply_readings(text: str, captured_at, state: PipelineState, *,
     exactly 0.0 means "unmeasured" (pre -ojf transcripts) and is never gated, so
     replaying old history through reprocess isn't wiped. Both the live worker and
     reprocess pass the same (confidence, floor), keeping the DB a faithful
-    projection of the transcript store."""
+    projection of the transcript store.
+    """
     if (confidence is not None and confidence_floor > 0.0
             and 0.0 < confidence < confidence_floor):
         return {"readings": [], "forecast": False, "almanac": [],
@@ -94,7 +96,8 @@ def write_alert_detail_if_any(text: str, captured_at, report_id: str,
                               product_type: str | None, db) -> dict | None:
     """Structure the spoken narrative of a warning/statement and persist it keyed by
     report_id (so it can be linked to the SAME header at query time). Returns the
-    parsed details when written, else None."""
+    parsed details when written, else None.
+    """
     if db is None:
         return None
     details = extract_alert_details(text)

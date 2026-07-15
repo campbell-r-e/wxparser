@@ -42,9 +42,11 @@ BOOST = "Front Mic Boost"    # coarse, 0-3, ~+10 dB/step
 # -35. Peak-driven: the radio swings ~18 dB by product (a loud announcement vs
 # normal speech), so we lower ONLY when peaks approach clipping — chasing content
 # loudness would just under-gain the quiet speech we need above the VAD floor.
-PEAK_CLIP = float(os.environ.get("WX_AGC_PEAK_CLIP", "-2.0"))        # peak here -> lower (clipping)
+# peak here -> lower (clipping)
+PEAK_CLIP = float(os.environ.get("WX_AGC_PEAK_CLIP", "-2.0"))
 RMS_LOW = float(os.environ.get("WX_AGC_RMS_LOW", "-30.0"))          # speech this quiet -> raise
-PEAK_HEADROOM = float(os.environ.get("WX_AGC_PEAK_HEADROOM", "-14.0"))  # ...if peaks have this much room
+# ...if peaks have this much room
+PEAK_HEADROOM = float(os.environ.get("WX_AGC_PEAK_HEADROOM", "-14.0"))
 SILENT_MIN = float(os.environ.get("WX_AGC_SILENT_MIN", "5.0"))  # no segment -> deaf
 STALE_MIN = float(os.environ.get("WX_AGC_STALE_MIN", "5.0"))    # health.json too old
 
@@ -117,7 +119,8 @@ def read_health(path: Path) -> dict | None:
 
 def collect_levels(path: Path, window_s: float, poll_s: float) -> list[tuple[float, float]]:
     """Sample distinct segment levels over a short window so one quiet/loud segment
-    can't swing the gain. Keyed by last_segment_at so repeats aren't double-counted."""
+    can't swing the gain. Keyed by last_segment_at so repeats aren't double-counted.
+    """
     samples: dict[str, tuple[float, float]] = {}
     end = time.monotonic() + window_s
     while True:

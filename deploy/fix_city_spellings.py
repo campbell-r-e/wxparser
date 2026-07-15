@@ -130,10 +130,14 @@ def _merge_table(conn, table: str, keys: list[str], good: str, bad: str) -> int:
             "  sightings  = g.sightings + b.sightings,"
             "  first_seen = LEAST(g.first_seen, b.first_seen),"
             "  last_seen  = GREATEST(g.last_seen, b.last_seen),"
-            "  value_num  = CASE WHEN b.last_seen > g.last_seen THEN b.value_num  ELSE g.value_num  END,"
-            "  value_text = CASE WHEN b.last_seen > g.last_seen THEN b.value_text ELSE g.value_text END,"
-            "  votes      = CASE WHEN b.last_seen > g.last_seen THEN b.votes      ELSE g.votes      END,"
-            "  total      = CASE WHEN b.last_seen > g.last_seen THEN b.total      ELSE g.total      END "
+            "  value_num  = CASE WHEN b.last_seen > g.last_seen "
+            "THEN b.value_num  ELSE g.value_num  END,"
+            "  value_text = CASE WHEN b.last_seen > g.last_seen "
+            "THEN b.value_text ELSE g.value_text END,"
+            "  votes      = CASE WHEN b.last_seen > g.last_seen "
+            "THEN b.votes      ELSE g.votes      END,"
+            "  total      = CASE WHEN b.last_seen > g.last_seen "
+            "THEN b.total      ELSE g.total      END "
             "FROM city_conditions b "
             f"WHERE g.city=:good AND LOWER(b.city)=LOWER(:bad) AND b.city<>:good AND {key_match}",
             good=good, bad=bad,

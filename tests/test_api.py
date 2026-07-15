@@ -110,7 +110,8 @@ def test_all_json_and_text_endpoints(make_cfg):
 
 def test_health_prefers_db_heartbeat(make_cfg):
     """A pipeline on ANOTHER machine publishes through the DB; the API must read
-    that row and ignore the local health.json (which the fixture also wrote)."""
+    that row and ignore the local health.json (which the fixture also wrote).
+    """
     srv, H = _server(make_cfg)
     try:
         api._Handler.db.write_heartbeat(
@@ -152,7 +153,8 @@ def test_almanac_uses_longer_stale_window(make_cfg):
     """Almanac/climate fields air a few times a day and stay valid until the next
     recap, so they get a longer staleness window than current conditions — the
     same-age reading is 'stale' as a condition but fresh as an almanac field, and
-    an explicit ?stale_after= still overrides the almanac default."""
+    an explicit ?stale_after= still overrides the almanac default.
+    """
     # window wide enough to clear the (weeks-old) seeded 2026-06-24 almanac rows
     srv, H = _server(make_cfg, almanac_stale_after_min=99_999_999)
     try:

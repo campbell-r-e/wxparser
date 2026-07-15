@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from .config import Config
 from .timefmt import parse_iso_utc
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # the gateway is injected — a use case never imports it live
     from .db import Database
@@ -82,7 +82,8 @@ def _stats(errs: list[float]) -> dict:
 def daily_rain(db: Database, tz: ZoneInfo) -> dict[date, float]:
     """Daily rainfall recovered from consecutive-day YTD-precip diffs. A day
     without a prior-day reading can't be differenced; a negative diff is an
-    STT mishear and is dropped."""
+    STT mishear and is dropped.
+    """
     ytd: dict[date, float] = {}
     for r in db.almanac_since("1970-01-01T00:00:00Z", _EVERYTHING):
         if r["field"] == "precip_year_in":

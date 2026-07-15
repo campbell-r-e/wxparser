@@ -37,7 +37,8 @@ from wxparser.db import Database  # noqa: E402
 def _correct_record(rec: dict) -> bool:
     """Apply correct_terms to rec['text'] and each segment's text in place. Returns
     True if anything changed. Matches the write-time invariant (stt.transcribe):
-    a fixed record's joined "text" and per-segment "text" stay consistent."""
+    a fixed record's joined "text" and per-segment "text" stay consistent.
+    """
     dirty = False
     text = rec.get("text")
     if isinstance(text, str):

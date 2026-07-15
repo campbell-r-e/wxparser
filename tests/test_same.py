@@ -70,7 +70,8 @@ def test_same_monitor_fires_on_burst():
     for i in range(0, len(audio), n):       # burst frames
         mon.feed(audio[i:i + n], t); t += cfg.frame_seconds
     silence = np.zeros(n, dtype=np.float64)
-    for _ in range(int((cfg.same_silence_s + 0.5) / cfg.frame_seconds)):  # trailing silence -> flush
+    # trailing silence -> flush
+    for _ in range(int((cfg.same_silence_s + 0.5) / cfg.frame_seconds)):
         mon.feed(silence, t); t += cfg.frame_seconds
     assert got and got[0].event == "TOR"
     # duplicate raw header is not re-fired

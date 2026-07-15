@@ -346,8 +346,6 @@ def test_forecast_3_to_7_day_is_not_skipped_as_outlook():
     assert s["Sunday"]["high_f"] == 85
     assert "high_f" not in s["Saturday Night"]
 
-
-
 def test_forecast_aggregator_builds_periods():
     fc = ForecastAggregator()
     for seg in [
@@ -479,7 +477,8 @@ def test_recap_it_was_n_degrees_extracts_temp():
     assert extract_observation("it was 76 degrees with partly sunny skies")["temperature_f"] == 76
     assert "temperature_f" not in extract_observation("it was mostly sunny.")
     out = CityConditionsAggregator().update("Once again, it Muncie, it was 76 degrees.")
-    assert {(r["city"], r["condition"]): r["value"] for r in out}[("Muncie", "temperature_f")] == 76
+    assert ({(r["city"], r["condition"]): r["value"] for r in out}[("Muncie", "temperature_f")]
+            == 76)
 
 
 def test_conditions_wind_direction_extracted():
@@ -644,7 +643,8 @@ def test_roundup_reported_form():
 def test_roundup_temperature_of_form():
     # number AFTER the city; "at"/"Ed" (STT for "at") both work
     assert _temps("Ed Lima, Ohio, it was clear with a temperature of 71.") == {"Lima": 71}
-    assert _temps("At Cincinnati, rain was falling with a temperature of 72.") == {"Cincinnati": 72}
+    assert (_temps("At Cincinnati, rain was falling with a temperature of 72.")
+            == {"Cincinnati": 72})
     # and the home city's sky is NOT polluted by the roundup city's "it was ..."
     out = CityConditionsAggregator(primary_city="Muncie").update(
         "Ed Lima, Ohio, it was partly cloudy, with a temperature of 71.")

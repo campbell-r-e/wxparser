@@ -86,7 +86,8 @@ def _num(s: str) -> int | None:
 
 def _drop_out_of_range(out: dict, ranges: dict) -> None:
     """Drop extracted fields whose value falls outside its plausible range
-    (an STT mishear like "999 degrees"), leaving the rest of `out` intact."""
+    (an STT mishear like "999 degrees"), leaving the rest of `out` intact.
+    """
     for k, (lo, hi) in ranges.items():
         if k in out and not (lo <= out[k] <= hi):
             del out[k]
@@ -279,7 +280,8 @@ _NEAR_TERM_PRED = {
 def _period_predecessor(name: str) -> str | None:
     """The period that immediately precedes `name` in a zone forecast, or None if
     `name` opens the forecast. Used to tell a genuine carry-over continuation from
-    a stale one when a pre-header tail is followed by a header."""
+    a stale one when a pre-header tail is followed by a header.
+    """
     n = name.lower()
     parts = n.split(" ")
     if len(parts) == 2 and parts[0] in _WEEKDAYS and parts[1] == "night":
@@ -343,7 +345,8 @@ class ForecastAggregator:
     def _fresh(self, period: str, field: str) -> bool:
         """This (period, field) was aired within the last `stale_passes` readouts —
         else it's a superseded period or a field the broadcast has stopped stating
-        (e.g. a chance of rain that dropped to nil), and must not be served."""
+        (e.g. a chance of rain that dropped to nil), and must not be served.
+        """
         return self._pass - self._last_pass.get((period, field), self._pass) <= self.stale_passes
 
     def _has(self, period: str, field: str) -> bool:
@@ -353,7 +356,8 @@ class ForecastAggregator:
     def prime(self, periods: list[dict]) -> None:
         """Restore periods from a stored forecast so a restart keeps /forecast.
         The stored consensus seeds each voter as one sample; live airings vote on
-        top of it."""
+        top of it.
+        """
         for p in periods:
             name = p.get("period")
             if not name:
@@ -406,7 +410,8 @@ class ForecastAggregator:
 
         Returns (spans, first_header, has_tail): has_tail is True when carry-over
         text precedes the first header (it exists only when that header isn't at
-        the segment start). Advances self._current to the last header seen."""
+        the segment start). Advances self._current to the last header seen.
+        """
         matches = list(RE_PERIOD_HDR.finditer(text))
         if not matches:
             return [(self._current, text)], None, False
@@ -449,7 +454,8 @@ class ForecastAggregator:
 
     def _values(self) -> dict:
         """The voted value of each (period, field) — no confidence/tallies, for
-        change detection."""
+        change detection.
+        """
         return {(name, k): self.voters[(name, k)].best().value
                 for name in self.order for k in self._FIELDS
                 if self._has(name, k) and self._fresh(name, k)}
@@ -496,7 +502,8 @@ _RE_CITY_HEADER = re.compile(
 # matcher can't swallow a leading lowercase word ("and Shelbyville"). Keyword case
 # is handled explicitly instead.
 _RE_NEARBY = re.compile(rf"(-?\d{{2,3}})\s+(?:degrees?\s+)?at\s+({_CITY})")      # "63 at Portland"
-_RE_REPORTED = re.compile(rf"\b({_CITY})\s+reported\s+(?:at\s+)?(-?\d{{1,3}})\b")  # "Portland reported 75"
+# "Portland reported 75"
+_RE_REPORTED = re.compile(rf"\b({_CITY})\s+reported\s+(?:at\s+)?(-?\d{{1,3}})\b")
 # "at/Ed Lima, Ohio ... temperature of 71" / "At Cincinnati ... temperature of 72"
 # (number AFTER the city). "temperature OF" marks a roundup city; the home ob uses
 # "temperature WAS N degrees", so this never grabs the primary observation.
@@ -533,7 +540,8 @@ def _nearby_temps(text: str, peer_min: int = _PEER_MIN,
     order. Each city is first folded through the alias map (_norm_city); any that
     is STILL unknown is then recovered from its slot when possible — e.g. the
     entry right after "Champaign, Illinois" is Lima — so novel mis-hearings land
-    under the right city without needing a catalogued spelling."""
+    under the right city without needing a catalogued spelling.
+    """
     # (pos, city_raw, temp) for every phrasing, merged into one ordered stream.
     raw: list[tuple[int, str, int]] = []
     for m in _RE_NEARBY.finditer(text):
@@ -571,7 +579,8 @@ _RE_ROUNDUP_LEADIN = re.compile(
 def _roundup_start(text: str) -> int:
     """Index where the regional roundup begins, so the home-station observation
     before it can be parsed in isolation. Earliest of a roundup lead-in phrase or
-    the first 'NN at <City>' nearby temperature; len(text) if neither is present."""
+    the first 'NN at <City>' nearby temperature; len(text) if neither is present.
+    """
     idx = len(text)
     for rx in (_RE_ROUNDUP_LEADIN, _RE_NEARBY, _RE_REPORTED, _RE_AT_TEMP):
         if m := rx.search(text):
@@ -582,7 +591,8 @@ def _roundup_start(text: str) -> int:
 def _wind_speed_from_phrase(phrase: str) -> int:
     """Speed implied by a voted wind phrase: 'west at 8' -> 8, 'calm' (or any
     phrase without a trailing '... at N') -> 0. Keeps wind_speed_mph locked to
-    the winning wind direction instead of voting it as an independent field."""
+    the winning wind direction instead of voting it as an independent field.
+    """
     m = re.search(r" at (\d{1,3})$", phrase)
     return int(m.group(1)) if m else 0
 
@@ -624,7 +634,8 @@ class CityConditionsAggregator:
 
     def update(self, text: str) -> list[dict]:
         """Returns every (city, condition) reading heard in this text, with the
-        current voted value/votes/total. Each is a 'sighting' the store counts."""
+        current voted value/votes/total. Each is a 'sighting' the store counts.
+        """
         self._tick += 1
         readings: list[dict] = []
         # Regional-roundup temps belong to the named cities (all three phrasings:
@@ -691,7 +702,8 @@ class CityConditionsAggregator:
 
     def prime(self, readings: list[dict]) -> None:
         """Seed voters from stored latest readings so a restart keeps state. Seeded
-        at the current tick so the primed value serves until fresh airings arrive."""
+        at the current tick so the primed value serves until fresh airings arrive.
+        """
         for r in readings:
             self._voter(r["city"], r["condition"]).add(r["value"], self._tick)
 
@@ -711,7 +723,8 @@ class _FieldVoter:
     infrequently (humidity, wind) otherwise keeps hours-old sightings in its
     fixed-length window and lets a morning value out-vote the current one; the
     stale window bounds the vote to recent airings instead. Callers that pass no
-    clock (default 0) and no `stale` get the plain mode — unchanged behavior."""
+    clock (default 0) and no `stale` get the plain mode — unchanged behavior.
+    """
 
     def __init__(self, maxlen: int, stale: int | None = None):
         self.samples: deque = deque(maxlen=maxlen)  # (value, clock)
@@ -888,7 +901,8 @@ _RE_ALERT_WIND = re.compile(
     re.I)
 # "near Yorktown", "over the Muncie area", "approaching Albany" — place after a
 # locator preposition. STT may garble the name, but capturing it is still useful.
-_RE_NEAR = re.compile(rf"\b(?:near|over|approaching|just (?:north|south|east|west) of)\s+(?:the\s+)?({_CITY})")
+_RE_NEAR = re.compile(
+    rf"\b(?:near|over|approaching|just (?:north|south|east|west) of)\s+(?:the\s+)?({_CITY})")
 _RE_SPOTTER = re.compile(
     r"spotter activation|weather spotters?|spotters?\s+(?:are\s+|should\s+be\s+)?"
     r"(?:needed|activated|encouraged|in the area|on alert)|report(?:ing)? (?:any )?severe weather",

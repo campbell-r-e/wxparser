@@ -86,8 +86,9 @@ def test_run_live_once(tmp_path, monkeypatch, make_cfg):
     db._run("TRUNCATE raw_reports")
     db.write_forecast([{"period": "Tonight", "low_f": 60}], "2026-06-24T18:00:00Z")
     db.close()
-    monkeypatch.setattr(main, "stream_frames",
-                        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
+    monkeypatch.setattr(
+        main, "stream_frames",
+        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
     monkeypatch.setattr(main, "transcribe_samples", lambda samples, c: _t("Highs around 80."))
     # covers the producer loop + worker wiring; the save itself is racy on shutdown
     # (the poison pill out-prioritises a 1-segment backlog by design) and is covered
@@ -150,9 +151,12 @@ def test_stt_worker_full_paths(tmp_path, monkeypatch, make_cfg):
     db = Database(cfg)
     db.clear()
     texts = iter([
-        "At Muncie, the temperature was 80 degrees. Tonight, lows in the lower 60s.",  # OBS + forecast
-        "At Muncie, the temperature was 81 degrees. Tonight, lows in the lower 60s with showers.",  # update (supersedes)
-        "Tornado warning for Delaware County until 630 PM. Take cover now spotter activation.",  # alert detail
+        # OBS + forecast
+        "At Muncie, the temperature was 80 degrees. Tonight, lows in the lower 60s.",
+        # update (supersedes)
+        "At Muncie, the temperature was 81 degrees. Tonight, lows in the lower 60s with showers.",
+        # alert detail
+        "Tornado warning for Delaware County until 630 PM. Take cover now spotter activation.",
         "Sunrise today is at 6.13 AM and sunset is at 9.15 PM.",                       # almanac
         "[BLANK_AUDIO]",                                                               # blank
     ])
@@ -325,13 +329,17 @@ def test_stt_worker_handles_empty_queue():
     main._STOP.clear()
 
     class _Q:
-        def __init__(self): self.n = 0
+        def __init__(self):
+            self.n = 0
+
         def get(self, timeout=None):
             self.n += 1
             if self.n == 1:
-                raise _q.Empty                            # first call: queue empty -> continue
-            return (0, 0, None)                            # then poison -> break
-        def task_done(self): pass
+                raise _q.Empty              # first call: queue empty -> continue
+            return (0, 0, None)             # then poison -> break
+
+        def task_done(self):
+            pass
     main._stt_worker(_Q(), Config(), False, PipelineState(
         CityConditionsAggregator(), ForecastAggregator(), AlmanacAggregator(),
         deduper=TextDeduper(Config())))

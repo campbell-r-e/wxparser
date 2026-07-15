@@ -51,12 +51,15 @@ def _lowpass(sig: np.ndarray, fc: float, sr: int, q: float = 0.707) -> np.ndarra
     c, s = np.cos(w0), np.sin(w0)
     a = s / (2 * q)
     a0 = 1 + a
-    return _biquad(sig, (1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - a) / a0)
+    return _biquad(sig, (1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0,
+                   -2 * c / a0, (1 - a) / a0)
 
 
-def _spectral_subtract(sig: np.ndarray, noise_mag: np.ndarray, alpha: float, floor: float) -> np.ndarray:
+def _spectral_subtract(sig: np.ndarray, noise_mag: np.ndarray,
+                       alpha: float, floor: float) -> np.ndarray:
     """STFT spectral subtraction: knock the estimated noise magnitude out of each
-    frame, keeping a spectral floor so speech isn't gated into 'musical noise'."""
+    frame, keeping a spectral floor so speech isn't gated into 'musical noise'.
+    """
     win = np.hanning(_NFFT)
     out = np.zeros(len(sig) + _NFFT)
     nrm = np.zeros(len(sig) + _NFFT)
@@ -72,7 +75,8 @@ def _spectral_subtract(sig: np.ndarray, noise_mag: np.ndarray, alpha: float, flo
 
 def _hum_harmonics(mains_hz: float, sr: int) -> list[float]:
     """Harmonics of the mains tone that fall in/just below the speech band. The
-    fundamental (50/60 Hz) sits under speech, so notch the 2nd..6th harmonics."""
+    fundamental (50/60 Hz) sits under speech, so notch the 2nd..6th harmonics.
+    """
     nyq = sr / 2
     return [mains_hz * k for k in range(2, 7) if mains_hz * k < nyq]
 
@@ -99,7 +103,8 @@ def enhance(samples: np.ndarray, cfg: Config) -> np.ndarray:
     rms = np.sqrt((fr ** 2).mean(1))
     quiet = np.where(rms <= np.percentile(rms, 25))[0]
     win = np.hanning(_NFFT)
-    noise_mag = np.mean([np.abs(np.fft.rfft(x[j * fl:j * fl + _NFFT] * win)) for j in quiet], axis=0)
+    noise_mag = np.mean(
+        [np.abs(np.fft.rfft(x[j * fl:j * fl + _NFFT] * win)) for j in quiet], axis=0)
 
     y = x.copy()
     for f0 in _hum_harmonics(cfg.stt_enhance_mains_hz, cfg.sample_rate):

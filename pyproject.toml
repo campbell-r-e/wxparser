@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wxparser"
-version = "1.0.2"
+version = "1.0.3"
 description = "Fully-offline local weather server: NOAA Weather Radio capture, whisper.cpp transcription, SAME/EAS alert decoding, and a structured weather query API"
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,9 +33,19 @@ packages = ["wxparser", "wxparser.data"]
 wxparser = ["profiles/*.json", "profiles/README.md"]
 "wxparser.data" = ["*.json"]
 
+[tool.ruff]
+# The written line-length policy (PEP 8's sanctioned team allowance is "up to
+# 99"). Comments are deliberately NOT held to PEP 8's 72-char proviso: the
+# dated field-evidence annotation style is this project's documentation of
+# record and rewrapping it buys nothing.
+line-length = 99
+
 [tool.ruff.lint]
-# Gate on fatal errors only (syntax, undefined names) — the 100% line+branch
-# test gate does the heavy lifting. The E702/E402-style compound statements
-# and grouped imports a default ruff run flags are accepted house style, not
-# regressions; this config makes a plain `ruff check .` say so.
-select = ["E9", "F63", "F7", "F82"]
+# Full pycodestyle E/W plus the fatal F-classes; the 100% line+branch test
+# gate still does the correctness heavy lifting. Two deviations are accepted
+# house style, not regressions:
+#   E702 — the paired `where += ...; params[...] = ...` build-clause/bind-param
+#          idiom (db.py) and similar one-logical-move compounds
+#   E402 — deploy scripts must bootstrap sys.path before importing the package
+select = ["E", "W", "F63", "F7", "F82"]
+ignore = ["E702", "E402"]

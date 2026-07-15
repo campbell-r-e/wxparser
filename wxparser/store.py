@@ -71,6 +71,9 @@ ALERT_PRODUCTS = frozenset({
 
 
 def classify(text: str) -> str:
+    """Product type for a transcript: explicit title > conditions signals >
+    almanac > forecast structure/phrasing > unknown.
+    """
     low = text.lower()
     # 1) explicit product name wins (warnings / statements / outlook).
     for product_type, keywords in _PRODUCT_KEYWORDS:
@@ -105,6 +108,9 @@ def build_report(
     supersedes: str | None = None,
     captured_at: str | None = None,
 ) -> dict:
+    """The self-contained raw-report doc for one transcript (id, stamps,
+    product type, segments, STT provenance).
+    """
     captured_at = captured_at or _utc_now_iso()
     short = hashlib.sha1(transcript.text.encode("utf-8")).hexdigest()[:6]
     return {

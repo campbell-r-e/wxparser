@@ -32,7 +32,8 @@ def reprocess(cfg: Config, db: Database, source_db: Database | None = None) -> d
     """Clear `db`'s structured tables and rebuild them by replaying the raw
     transcript store in capture order. Raw is read from `source_db` (defaults to
     `db`), so `--into` can project a fresh DB from the configured DB's raw store.
-    Returns a stats counter."""
+    Returns a stats counter.
+    """
     records = (source_db or db).iter_raw_reports()
     records.sort(key=lambda r: r.get("captured_at", ""))  # capture order = vote order
 

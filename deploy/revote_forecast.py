@@ -69,7 +69,8 @@ for city in cities:
                       "WHERE city=:c AND period=:p AND issued_at=:i",
                       v=consensus, c=city, p=period, i=latest)
                 flag = " UNCERTAIN" if agreement is not None and agreement < 0.6 else ""
-                print(f"  {city} {period:16} {f:10} {cur} -> {consensus}  (agree {agreement}){flag}")
+                print(f"  {city} {period:16} {f:10} {cur} -> {consensus}"
+                      f"  (agree {agreement}){flag}")
                 changes += 1
         c.run("UPDATE forecasts SET confidence=CAST(:cf AS jsonb) "
               "WHERE city=:c AND period=:p AND issued_at=:i",

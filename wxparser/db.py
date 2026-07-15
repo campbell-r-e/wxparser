@@ -223,7 +223,8 @@ def _value(row: dict):
 def _reading(row: dict, *ident: str, ts: str = "captured_at") -> dict:
     """The reading shape every conditions/almanac reader serves: identity
     columns, the voted value, the capture stamp, and vote provenance
-    (sightings when the query selected it)."""
+    (sightings when the query selected it).
+    """
     out = {k: row[k] for k in ident}
     out["value"] = _value(row)
     out["captured_at"] = _ts(row[ts])
@@ -235,6 +236,9 @@ def _reading(row: dict, *ident: str, ts: str = "captured_at") -> dict:
 
 
 def period_window(period: str, issued: datetime) -> tuple[str | None, str | None]:
+    """Derived (valid_from, valid_to) for a forecast period — a pure function
+    of (period name, issued_at); computed on read, never stored.
+    """
     p = period.lower().strip()
     day = issued.replace(hour=0, minute=0, second=0, microsecond=0)
     if p in ("today", "this afternoon", "this morning", "rest of today"):
@@ -247,12 +251,16 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
         delta = (_WEEKDAYS.index(name) - issued.weekday()) % 7
         target = day + timedelta(days=delta or 7)
         if night:
-            return _iso(target.replace(hour=18)), _iso((target + timedelta(days=1)).replace(hour=6))
+            return (_iso(target.replace(hour=18)),
+                    _iso((target + timedelta(days=1)).replace(hour=6)))
         return _iso(target.replace(hour=6)), _iso(target.replace(hour=18))
     return None, None
 
 
 class Database:
+    """The one persistence gateway: owns the schema, a single locked pg8000
+    connection, and every reader/writer the pipeline and API use.
+    """
     def __init__(self, cfg: Config, database: str | None = None):
         self._cfg = cfg
         self._database = database or cfg.pg_database
@@ -308,7 +316,8 @@ class Database:
     def record_reading(self, reading: dict, captured_at: str) -> None:
         """Record one heard reading: bump the (city,condition) sightings counter and
         append a history row. Sightings let the read endpoints suppress one-off
-        STT-garbage city names."""
+        STT-garbage city names.
+        """
         ca = _parse_iso(captured_at)
         cond = reading["condition"]
         num, txt = _split_value(reading["value"], cond in _NUMERIC_CONDITIONS)
@@ -332,6 +341,7 @@ class Database:
         )
 
     def write_forecast(self, periods: list[dict], issued_at: str, city: str | None = None) -> None:
+        """Store one voted forecast issuance (a row per period), keyed by issued_at."""
         city = city or self._cfg.primary_city   # no hard-coded station city
         issued_dt = _parse_iso(issued_at)
         for p in periods:
@@ -351,6 +361,7 @@ class Database:
             )
 
     def write_alert(self, record: dict) -> None:
+        """Store a decoded SAME alert envelope; upserts by alert id."""
         a = record["alert"]
         captured = _parse_iso(record["captured_at"])
         expires = captured + timedelta(minutes=a.get("purge_minutes") or 0)  # tolerate None
@@ -389,7 +400,8 @@ class Database:
 
     def record_almanac(self, reading: dict, captured_at: str) -> None:
         """Record one heard almanac field: bump its sightings/latest value and
-        append a history row. Mirrors record_reading without a city key."""
+        append a history row. Mirrors record_reading without a city key.
+        """
         ca = _parse_iso(captured_at)
         field = reading["field"]
         num, txt = _split_value(reading["value"], field in ALMANAC_NUMERIC)
@@ -417,7 +429,8 @@ class Database:
         """Land one raw report in the immutable transcript store, keyed by its id.
         Denormalizes the query columns out of the doc and keeps the whole doc in
         `payload`. Upserts so a term-fix / supersede rewrite of the same id updates
-        in place (and a replayed backfill is idempotent)."""
+        in place (and a replayed backfill is idempotent).
+        """
         self._run(
             "INSERT INTO raw_reports"
             "(id,captured_at,type,product_type,station,text,payload,fingerprint,supersedes) "
@@ -436,7 +449,8 @@ class Database:
 
     def write_heartbeat(self, station: str, payload: dict) -> None:
         """Publish the pipeline heartbeat (health.py flushes one per segment).
-        One row per station, upserted in place — tiny and bounded."""
+        One row per station, upserted in place — tiny and bounded.
+        """
         self._run(
             "INSERT INTO pipeline_health (station, updated_at, payload) "
             "VALUES (:st, now(), CAST(:pl AS jsonb)) "
@@ -448,7 +462,8 @@ class Database:
     def read_heartbeat(self) -> dict | None:
         """The newest published heartbeat, or None if no pipeline has written one.
         One pipeline instance per database is the invariant (multi-transmitter
-        runs one DB per instance), so newest-row is the instance's heartbeat."""
+        runs one DB per instance), so newest-row is the instance's heartbeat.
+        """
         rows = self._run(
             "SELECT payload FROM pipeline_health ORDER BY updated_at DESC LIMIT 1")
         return _as_obj(rows[0][0]) if rows else None
@@ -462,13 +477,15 @@ class Database:
         return where, params
 
     def count_raw_reports(self, frm=None, to=None, q=None, product=None) -> int:
+        """Row count matching the /transcripts filters (pagination totals)."""
         where, params = self._raw_where(frm, to, q, product)
         return self._count("raw_reports", where, params)
 
     def query_raw_reports(self, limit: int = 100, frm=None, to=None, q=None,
                           product=None, offset: int = 0) -> list[dict]:
         """Raw report docs matching the filters, most-recent-first (the /transcripts
-        feed). Ties on captured_at break on id so paging is stable."""
+        feed). Ties on captured_at break on id so paging is stable.
+        """
         where, params = self._raw_where(frm, to, q, product)
         rows = self._query(
             f"SELECT payload FROM raw_reports {where} "
@@ -478,7 +495,8 @@ class Database:
 
     def raw_reports_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
         """Raw report docs with captured_at strictly after `since`, OLDEST-first —
-        the watermark order /export pages losslessly."""
+        the watermark order /export pages losslessly.
+        """
         rows = self._query(
             "SELECT payload FROM raw_reports WHERE captured_at > :s "
             "ORDER BY captured_at, id LIMIT :lim OFFSET :off",
@@ -488,7 +506,8 @@ class Database:
     def last_product_airing(self, product_type: str) -> str | None:
         """captured_at of the newest raw report of this product type — the last
         time the broadcast aired it, counting unchanged repeats that write no
-        new structured row."""
+        new structured row.
+        """
         rows = self._query(
             "SELECT MAX(captured_at) AS at FROM raw_reports "
             "WHERE product_type = :p", p=product_type)
@@ -496,7 +515,8 @@ class Database:
 
     def recent_raw_reports(self, n: int) -> list[dict]:
         """The last n raw docs, returned OLDEST-first — for priming text-dedup on
-        restart."""
+        restart.
+        """
         rows = self._query(
             "SELECT payload FROM (SELECT payload, captured_at, id FROM raw_reports "
             "ORDER BY captured_at DESC, id DESC LIMIT :n) t ORDER BY captured_at, id",
@@ -505,7 +525,8 @@ class Database:
 
     def iter_raw_reports(self) -> list[dict]:
         """Every raw doc in capture (vote) order — the full replay feed reprocess
-        projects the structured tables from."""
+        projects the structured tables from.
+        """
         rows = self._query("SELECT payload FROM raw_reports ORDER BY captured_at, id")
         return [_as_obj(r["payload"]) for r in rows]
 
@@ -522,6 +543,7 @@ class Database:
         return [{"field": r["field"], "value": _value(r)} for r in rows]
 
     def almanac_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """Almanac observations captured after `since`, oldest first (sync feed)."""
         rows = self._query(
             "SELECT captured_at,field,value_num,value_text,votes,total "
             "FROM almanac_observations WHERE captured_at > :s "
@@ -550,6 +572,7 @@ class Database:
 
     # --- readers: conditions --------------------------------------------- #
     def list_conditions(self, min_sightings: int = 1) -> list[dict]:
+        """Distinct condition names with data (the /conditions index)."""
         rows = self._query(
             "SELECT condition, COUNT(*) AS cities, MAX(last_seen) AS latest "
             "FROM city_conditions WHERE sightings >= :m GROUP BY condition ORDER BY condition",
@@ -559,6 +582,7 @@ class Database:
                 for r in rows]
 
     def latest_for_condition(self, condition: str, min_sightings: int = 1) -> list[dict]:
+        """Every city's latest voted value for one condition (sightings-gated)."""
         rows = self._query(
             "SELECT city, value_num, value_text, last_seen, votes, total, sightings "
             "FROM city_conditions WHERE condition=:c AND sightings >= :m "
@@ -576,12 +600,14 @@ class Database:
 
     def condition_history_count(self, condition: str, city: str | None,
                                 frm: str | None, to: str | None) -> int:
+        """Row count matching a conditions-history query (pagination totals)."""
         where, params = self._obs_where(condition, city, frm, to)
         return self._count("city_observations", where, params)
 
     def condition_history(self, condition: str, city: str | None,
                           frm: str | None, to: str | None,
                           limit: int = 1000, offset: int = 0) -> list[dict]:
+        """Historical readings for a condition (optionally one city), newest first."""
         where, params = self._obs_where(condition, city, frm, to)
         rows = self._query(
             f"SELECT city,condition,value_num,value_text,captured_at,votes,total "
@@ -593,7 +619,8 @@ class Database:
     @staticmethod
     def _with_window(row: dict, issued: datetime) -> dict:
         """Attach the derived (valid_from, valid_to) period window — computed from
-        (period, issued), never stored (see the forecasts schema note)."""
+        (period, issued), never stored (see the forecasts schema note).
+        """
         vf, vt = period_window(row["period"], issued.astimezone(timezone.utc))
         row["valid_from"], row["valid_to"] = vf, vt
         return row
@@ -608,7 +635,8 @@ class Database:
 
     def latest_forecasts(self) -> list[dict]:
         """Each city's most recent issuance with its period rows (one query, not
-        one per city — the correlated subquery picks the max issued_at per city)."""
+        one per city — the correlated subquery picks the max issued_at per city).
+        """
         rows = self._query(
             "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,source,confidence "
             "FROM forecasts f WHERE issued_at="
@@ -633,11 +661,13 @@ class Database:
         return where, params
 
     def forecast_history_count(self, frm: str | None, to: str | None, city: str | None) -> int:
+        """Issuance-row count matching a forecast-history query."""
         where, params = self._fc_where(frm, to, city)
         return self._count("forecasts", where, params)
 
     def forecast_history(self, frm: str | None, to: str | None, city: str | None,
                          limit: int = 1000, offset: int = 0) -> list[dict]:
+        """Historical forecast rows with derived valid windows, newest first."""
         where, params = self._fc_where(frm, to, city)
         rows = self._query(
             f"SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
@@ -649,7 +679,8 @@ class Database:
     @staticmethod
     def _hydrate_alert(d: dict) -> dict:
         """Decode the JSONB area/county lists, stamp timestamps, and resolve the
-        derived event_label from `event` (the label is looked up, never stored)."""
+        derived event_label from `event` (the label is looked up, never stored).
+        """
         d["event_label"] = event_label(d["event"])
         d["areas"] = _as_obj(d["areas"]) or []
         d["counties"] = _as_obj(d["counties"]) or []
@@ -658,6 +689,7 @@ class Database:
         return d
 
     def get_active_alerts(self, now: str | None = None) -> list[dict]:
+        """SAME alerts whose expires_at is still in the future."""
         now_dt = _parse_iso(now) or datetime.now(timezone.utc)
         rows = self._query(
             "SELECT * FROM alerts WHERE expires_at > :now ORDER BY captured_at DESC", now=now_dt,
@@ -673,6 +705,7 @@ class Database:
 
     def alerts_history_count(self, frm: str | None, to: str | None,
                              event: str | None) -> int:
+        """Alert count matching the history filters (pagination totals)."""
         where, params = self._alert_where(frm, to, event)
         return self._count("alerts", where, params)
 
@@ -690,7 +723,8 @@ class Database:
         """Every current condition for one city (the full local observation)."""
         rows = self._query(
             "SELECT condition, value_num, value_text, last_seen, votes, total, sightings "
-            "FROM city_conditions WHERE LOWER(city)=LOWER(:c) AND sightings >= :m ORDER BY condition",
+            "FROM city_conditions WHERE LOWER(city)=LOWER(:c) AND sightings >= :m "
+            "ORDER BY condition",
             c=city, m=min_sightings)
         return [_reading(r, "condition", ts="last_seen") for r in rows]
 
@@ -706,6 +740,7 @@ class Database:
 
     # --- readers: incremental export (watermark sync) -------------------- #
     def observations_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """City observations captured after `since`, oldest first (sync feed)."""
         rows = self._query(
             "SELECT city,condition,value_num,value_text,captured_at,votes,total "
             "FROM city_observations WHERE captured_at > :s "
@@ -714,6 +749,7 @@ class Database:
         return [_reading(r, "city", "condition") for r in rows]
 
     def forecasts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """Forecast rows issued after `since`, oldest first (sync feed)."""
         rows = self._query(
             "SELECT issued_at,city,period,high_f,low_f,precip_pct,sky,confidence "
             "FROM forecasts WHERE issued_at > :s ORDER BY issued_at LIMIT :lim OFFSET :off",
@@ -721,12 +757,15 @@ class Database:
         return [self._hydrate_forecast(r) for r in rows]
 
     def alerts_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """SAME alerts captured after `since`, oldest first (sync feed)."""
         rows = self._query(
-            "SELECT * FROM alerts WHERE captured_at > :s ORDER BY captured_at LIMIT :lim OFFSET :off",
+            "SELECT * FROM alerts WHERE captured_at > :s "
+            "ORDER BY captured_at LIMIT :lim OFFSET :off",
             s=_parse_iso(since), lim=limit, off=offset)
         return [self._hydrate_alert(d) for d in rows]
 
     def alert_details_since(self, since: str, limit: int, offset: int = 0) -> list[dict]:
+        """Spoken-alert details captured after `since`, oldest first (sync feed)."""
         rows = self._query(
             "SELECT report_id,captured_at,product_type,until_text,motion,threats,"
             "locations,spotter_activation,text FROM alert_details WHERE captured_at > :s "
@@ -740,9 +779,13 @@ class Database:
         return [{"city": r["city"], "condition": r["condition"], "value": _value(r)} for r in rows]
 
     def clear(self) -> None:
+        """Wipe the STRUCTURED tables only — never raw_reports, so a reprocess
+        can always rebuild what this removed.
+        """
         self._run("TRUNCATE city_observations, city_conditions, forecasts, alerts, "
                   "alert_details, almanac, almanac_observations, pipeline_health")
 
     def close(self) -> None:
+        """Close the underlying connection (idempotent)."""
         with self._lock:
             self._conn.close()

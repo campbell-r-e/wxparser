@@ -29,7 +29,8 @@ _REQUIRED = ("station", "frequency_mhz", "primary_city", "stt_prompt", "place_co
 
 def profile_path(name: str) -> Path:
     """A bundled profile name maps to profiles/<name>.json; an explicit .json path
-    is used as-is."""
+    is used as-is.
+    """
     p = Path(name)
     if p.suffix == ".json":
         return p
@@ -53,7 +54,8 @@ def get_profile() -> dict:
     does no disk I/O and reads no env vars; WX_PROFILE is honored up to the
     moment the first Config() is built (or the first place-name lookup runs),
     and a missing/invalid profile fails there instead of at import time in
-    whatever module happened to load first."""
+    whatever module happened to load first.
+    """
     global _cache
     if _cache is None:
         _cache = load()

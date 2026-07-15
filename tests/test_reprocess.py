@@ -8,7 +8,8 @@ from wxparser.reprocess import reprocess
 
 def _fresh(cfg) -> Database:
     """A test DB with the raw transcript store emptied so each reprocess starts
-    from a known state (clear() is structured-only and never touches raw_reports)."""
+    from a known state (clear() is structured-only and never touches raw_reports).
+    """
     db = Database(cfg)
     db._run("TRUNCATE raw_reports")
     return db

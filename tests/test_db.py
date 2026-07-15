@@ -28,7 +28,8 @@ def test_min_sightings_filter(wxdb):
     surfaced = {r["city"] for r in db.latest_for_condition("temperature_f", min_sightings=2)}
     assert "Anderson" in surfaced and "Lulule" not in surfaced
     # raw history still has both
-    assert any(h["city"] == "Lulule" for h in db.condition_history("temperature_f", None, None, None))
+    assert any(h["city"] == "Lulule"
+               for h in db.condition_history("temperature_f", None, None, None))
 
 
 def test_text_condition_roundtrip(wxdb):
@@ -52,7 +53,8 @@ def test_condition_history_between_times(wxdb):
 
 def test_forecast_city_and_latest(wxdb):
     db = wxdb
-    db.write_forecast([{"period": "Tonight", "low_f": 61, "precip_pct": 70, "sky": "partly cloudy"}],
+    db.write_forecast([{"period": "Tonight", "low_f": 61, "precip_pct": 70,
+                        "sky": "partly cloudy"}],
                       "2026-06-24T12:00:00Z", city="Muncie")
     fcs = db.latest_forecasts()
     assert fcs[0]["city"] == "Muncie"
@@ -181,7 +183,8 @@ def test_almanac_roundtrip_min_sightings_and_since(wxdb):
     # text field heard once
     db.record_almanac({"field": "sunrise", "value": "6:14 AM"}, "2026-06-24T06:00:00Z")
     latest = {r["field"]: r for r in db.latest_almanac()}
-    assert latest["precip_year_in"]["value"] == 17.39 and latest["precip_year_in"]["sightings"] == 2
+    assert (latest["precip_year_in"]["value"] == 17.39
+            and latest["precip_year_in"]["sightings"] == 2)
     assert latest["sunrise"]["value"] == "6:14 AM"            # text round-trips
     # min_sightings gates the once-heard field out
     gated = {r["field"] for r in db.latest_almanac(min_sightings=2)}

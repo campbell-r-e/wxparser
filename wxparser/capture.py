@@ -48,7 +48,8 @@ def _sleep_unless(seconds: float, should_stop) -> None:
     """Sleep up to `seconds`, waking early (<=0.2s slices) if should_stop() goes
     true — so a shutdown during the retry backoff isn't blocked for the full delay
     (which previously let SIGTERM time out and the process get SIGABRT-killed
-    mid-arecord, resetting the sound card)."""
+    mid-arecord, resetting the sound card).
+    """
     slept = 0.0
     while slept < seconds and not should_stop():
         step = min(0.2, seconds - slept)

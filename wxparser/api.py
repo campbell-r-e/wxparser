@@ -119,7 +119,8 @@ class _Handler(BaseHTTPRequestHandler):
         """One boolean query-param convention for every endpoint: 1/true/yes on,
         0/false/no off, anything else (or absent) -> the endpoint's default.
         (Before this, /alerts/active and /alerts/history parsed details= with
-        opposite semantics — ?details=false ENABLED linking on one of them.)"""
+        opposite semantics — ?details=false ENABLED linking on one of them.)
+        """
         value = str(q.get(name, "")).lower()
         if value in ("1", "true", "yes"):
             return True
@@ -137,7 +138,8 @@ class _Handler(BaseHTTPRequestHandler):
         """Minutes-until-stale for a view: an explicit ?stale_after= wins, else the
         per-view default (`default`), else the current-conditions window. Almanac
         views pass their own longer default so slow-cadence climate fields aren't
-        flagged stale within an hour of every airing."""
+        flagged stale within an hour of every airing.
+        """
         fallback = self.cfg.condition_stale_after_min if default is None else default
         try:
             return max(1, int(q.get("stale_after", fallback)))
@@ -149,7 +151,8 @@ class _Handler(BaseHTTPRequestHandler):
         drops the stale ones. `default_stale` overrides the current-conditions
         staleness window for slow-cadence views (almanac). (Conditions already
         carry an agreement/confidence trust block via trust.mark; forecasts get
-        theirs in _annotate_forecast_age.)"""
+        theirs in _annotate_forecast_age.)
+        """
         threshold = self._stale_after(q, default_stale)
         now = datetime.now(timezone.utc)
         out = []
@@ -171,7 +174,8 @@ class _Handler(BaseHTTPRequestHandler):
                  default_stale: int | None = None) -> list:
         """Trust-mark + age-annotate a reading list. Index/snapshot views keep
         stale rows (?fresh= suppressed); pass drop_stale=True to honor it.
-        `default_stale` carries a per-view staleness window (almanac)."""
+        `default_stale` carries a per-view staleness window (almanac).
+        """
         return mark_trust(
             self._annotate_age(rows, q if drop_stale else dict(q, fresh=""), default_stale),
             sightings_full=self.cfg.trust_sightings_full,
@@ -203,7 +207,8 @@ class _Handler(BaseHTTPRequestHandler):
     def _serve_sse(self, since: str | None) -> None:
         """Server-Sent Events live feed (LAN-safe push — consumers connect *in*,
         nothing is sent outbound). Polls the since-readers and emits new alerts,
-        observations, and forecasts as they land, ordered by capture time."""
+        observations, and forecasts as they land, ordered by capture time.
+        """
         watermark = since or _now_iso()
         try:  # validate before committing a 200 event-stream (else a bad since
             parse_iso_utc(watermark)  # would error mid-stream)
@@ -251,7 +256,8 @@ class _Handler(BaseHTTPRequestHandler):
         issuance), so judging staleness by it alone would flag a perfectly current
         forecast for most of the day. Staleness is instead judged by
         last_confirmed_at — the newest zone_forecast airing, changed or not —
-        falling back to issued_at when no airing is on record."""
+        falling back to issued_at when no airing is on record.
+        """
         threshold = self._stale_after(q)
         now = datetime.now(timezone.utc)
         aired = self.db.last_product_airing("zone_forecast")
@@ -281,7 +287,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _link_details(self, alert: dict) -> dict:
         """Attach the spoken-detail transcripts that fall in this alert's window
-        (a heads-up may precede the SAME burst; the narrative runs to expiry)."""
+        (a heads-up may precede the SAME burst; the narrative runs to expiry).
+        """
         alert = self._authoritative(alert)
         try:
             ca = parse_iso_utc(alert["captured_at"])
@@ -312,7 +319,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _snapshot(self, q: dict) -> dict:
         """The /now data — current ob + roundup + forecast + active alerts — reused
-        by the human/RF format endpoints."""
+        by the human/RF format endpoints.
+        """
         city = q.get("city", self.cfg.primary_city)
         conds = self._trusted(self.db.all_conditions_for_city(city, self._min(q)), q)
         roundup = self._trusted(
@@ -499,7 +507,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _ep_verify(self, q: dict) -> None:
         """Forecast verification over the WHOLE stored record. Heavier than the
-        other reads (scans every stored issuance on each request) — poll gently."""
+        other reads (scans every stored issuance on each request) — poll gently.
+        """
         doc = verify_forecasts(self.db, self.cfg)
         doc["generated_at"] = _now_iso()
         self._send(doc)

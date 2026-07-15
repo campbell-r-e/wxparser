@@ -28,7 +28,8 @@ def test_new_then_duplicate_then_update():
     b = d.consider(_rep("2", "Tonight mostly cloudy lows in the lower 60s chance of rain 40%"))
     assert b.kind == "duplicate" and b.supersedes == "1"
     # changed-but-similar (0.75 <= sim < 0.97), same product -> update
-    c = d.consider(_rep("3", "Tonight mostly cloudy lows in the lower 60s chance of rain 40% gusty winds"))
+    c = d.consider(
+        _rep("3", "Tonight mostly cloudy lows in the lower 60s chance of rain 40% gusty winds"))
     assert c.kind == "update" and c.supersedes is not None
 
 
