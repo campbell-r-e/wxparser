@@ -20,3 +20,7 @@ demo/.env
 
 # OS
 .DS_Store
+
+# packaging build artifacts
+build/
+dist/
