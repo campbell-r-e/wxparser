@@ -288,6 +288,9 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STALE_AFTER_MIN` | `60` | conditions reading older than this is flagged `stale` |
 | `WX_VAD_DBFS` | `-35` | VAD speech threshold |
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
+| `WX_TRUST_SIGHTINGS_FULL` | `6` | sightings before trust's "seen enough" factor saturates |
+| `WX_TRUST_HIGH` / `WX_TRUST_LOW` | `0.66` / `0.33` | trust values at which the confidence label reads high / medium |
+| `WX_PEER_MIN_CITIES` / `WX_PEER_MAX_DEV_F` | `3` / `30` | roundup peer-outlier band: with a quorum of cities, drop temps this far off the median (lost-leading-digit mishears) |
 | `WX_PG_HOST/PORT/DATABASE/USER` | `127.0.0.1/5432/wxparser/wxparser` | Postgres (local trust) |
 | `WX_API_HOST` / `WX_API_PORT` | `0.0.0.0` / `8080` | API bind |
 | `WX_HEALTH_AUDIO_SILENT_MIN` | `5` | `/health` flags `degraded` after this many minutes of no audio (deaf radio) |
@@ -375,13 +378,14 @@ needed:
 
 ```bash
 pip install -e '.[test]'         # pytest + coverage
-createdb wxparser_test           # once
-coverage run -m pytest           # whole suite, branch mode via .coveragerc
+coverage run -m pytest           # whole suite; creates wxparser_test itself on first run
 coverage report                  # fails under 100%
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs the suite on every push/PR across Python 3.11–3.12
-with a Postgres service container, ruff error-lint, and **gates on 100% line + branch coverage**.
+with a Postgres service container, a full `ruff check .` (pycodestyle E/W at the codified
+99-char line length, deviations documented in `pyproject.toml`), and **gates on 100% line +
+branch coverage**.
 **CD** is pull-based (the box has no inbound access): `deploy/wxparser-deploy.timer` runs
 `deploy/auto_deploy.sh` every 10 min, which fast-forwards `main`, re-runs the gated suite, and
 restarts the services only if green — rolling back on failure.

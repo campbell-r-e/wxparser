@@ -99,8 +99,10 @@ when a branch is truly unreachable or pure I/O glue, and say why in the comment.
 `.github/workflows/ci.yml` runs on every push and PR to `main`:
 
 - matrix **Python 3.11 / 3.12**, with a **PostgreSQL 16 service container** (local-trust),
-- creates `wxparser_test`,
-- **ruff** error-lint (`E9,F63,F7,F82` — real errors, not style),
+- creates `wxparser_test` (locally the test suite creates it itself on first run),
+- **ruff** `check .` — full pycodestyle **E/W at line-length 99** plus the fatal F-classes;
+  the two accepted house-style deviations (E702 compound statements, E402 deploy-script
+  bootstraps) are documented ignores in `pyproject.toml`, so a plain ruff run is the gate,
 - `coverage run -m pytest` then `coverage report` — **gated at 100% line + branch**.
 
 A red build means a test failed or coverage dropped below 100%.
