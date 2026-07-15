@@ -1,11 +1,14 @@
-# wxparser — Project Plan
+# wxparser — Original design record
 
-Continuously listen to the NOAA Weather Radio (NWR) broadcast from **KJY93 Muncie, IN
-(162.425 MHz)**, transcribe it to text, and persist **only new/updated reports** — no
-duplicates from the repeating broadcast loop.
+> **Historical document.** This was the working plan the project was built from; the code
+> has long since superseded it (see the README for the current architecture). It is kept
+> because code comments cite its design decisions by section — "PLAN §2.2" refers to this
+> file — and because the rationale recorded here (licensing boundaries, offline constraint,
+> dedup strategy) still explains *why* things are the way they are.
 
-This document is the working plan. It is the source of truth for scope, architecture, and
-phasing until code supersedes it.
+Continuously listen to the local NOAA Weather Radio (NWR) broadcast, transcribe it to
+text, and persist **only new/updated reports** — no duplicates from the repeating
+broadcast loop.
 
 > **Implementation status (Phases 0–6 built):** capture → novelty-gated whisper.cpp STT →
 > text dedup → timestamped JSONL is running as a restart-safe `systemd` service on the
