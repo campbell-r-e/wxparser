@@ -52,10 +52,10 @@ jobs:
           c.run("CREATE DATABASE wxparser_test")
           PY
 
-      - name: Lint (errors only)
+      - name: Lint (ruff E/W @ 99 per pyproject)
         run: ruff check .  # rules + line-length come from pyproject [tool.ruff]
 
-      - name: Tests + 100% coverage gate
+      - name: Tests + package coverage gate
         run: |
           coverage run -m pytest -q
           coverage report      # fails the build if total < fail_under (100) per .coveragerc

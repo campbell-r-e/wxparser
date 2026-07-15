@@ -6,7 +6,7 @@ system see [`USAGE.md`](USAGE.md); for standing up a node from scratch see
 
 - [1. Local setup](#1-local-setup)
 - [2. Running the tests](#2-running-the-tests)
-- [3. Coverage policy (100% line + branch)](#3-coverage-policy)
+- [3. Coverage policy (package-scoped, 100% gate)](#3-coverage-policy)
 - [4. Test layout](#4-test-layout)
 - [5. CI](#5-ci)
 - [6. CD — pull-based auto-deploy](#6-cd--pull-based-auto-deploy)
@@ -25,7 +25,7 @@ don't need them to run the suite — only PostgreSQL.
 git clone https://github.com/campbell-r-e/wxparser && cd wxparser
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[test]'          # numpy, pg8000 + pytest, coverage
-createdb wxparser wxparser_test   # the store DB + the throwaway test DB (local trust)
+createdb wxparser                 # the store DB (the test DB is auto-created on first pytest run)
 ```
 
 The DB connection honours `WX_PG_*` env vars (default `127.0.0.1:5432`, user
@@ -36,7 +36,7 @@ The DB connection honours `WX_PG_*` env vars (default `127.0.0.1:5432`, user
 ## 2. Running the tests
 
 ```bash
-coverage run -m pytest            # whole suite (244 tests); branch mode via .coveragerc
+coverage run -m pytest            # whole suite; branch mode via .coveragerc
 coverage report -m                # per-file table; fails under 100%
 coverage html && open htmlcov/index.html   # annotated source
 pytest tests/test_extract.py -q   # a single module
@@ -50,9 +50,24 @@ fixture that resets the capture loop's `_STOP` global around each test so a
 
 ## 3. Coverage policy
 
-**100% line *and* branch coverage is enforced** (`.coveragerc`: `branch = True`,
-`fail_under = 100`). Both sides of every conditional must be exercised — the CI
-and the box's self-deploy both fail the build otherwise.
+**Every line and branch of the `wxparser/` package must be exercised**
+(`.coveragerc`: `branch = True`, `fail_under = 100`, `source = wxparser`). Both
+sides of every conditional need a test — the CI and the box's self-deploy both
+fail the build otherwise.
+
+**What the gate does NOT cover — say so rather than let the number imply it:**
+
+- the `deploy/` operational scripts (~1,000 lines of timer-driven Python that
+  mutate the production DB) sit outside `source = wxparser` and have no tests;
+- the suite runs single-threaded — the DB lock, the ThreadingHTTPServer, and
+  the SSE poll loop are never exercised by concurrent callers;
+- `arecord` and `whisper-cli` are mocked at the subprocess boundary, so no test
+  hears real audio end-to-end;
+- ~19 inline pragmas exclude glue and defensive branches (table below).
+
+So the gate proves branch reach in the package; the *confidence* comes from what
+the tests are made of (real-broadcast fixtures, dated live regressions, a real
+PostgreSQL and a real HTTP server), not from the number itself.
 
 The only excluded code is genuine glue/defensive branches, each marked inline:
 
@@ -103,9 +118,9 @@ when a branch is truly unreachable or pure I/O glue, and say why in the comment.
 - **ruff** `check .` — full pycodestyle **E/W at line-length 99** plus the fatal F-classes;
   the two accepted house-style deviations (E702 compound statements, E402 deploy-script
   bootstraps) are documented ignores in `pyproject.toml`, so a plain ruff run is the gate,
-- `coverage run -m pytest` then `coverage report` — **gated at 100% line + branch**.
+- `coverage run -m pytest` then `coverage report` — **the package coverage gate** (§3).
 
-A red build means a test failed or coverage dropped below 100%.
+A red build means a test failed or package coverage dropped below the gate.
 
 ---
 
@@ -117,7 +132,7 @@ every 10 minutes, which:
 
 1. `git fetch` — if `origin/main` is unchanged, exits (no-op);
 2. fast-forwards `main` and ensures `wxparser_test` exists;
-3. re-runs the **full suite with the 100% gate** in a persistent venv
+3. re-runs the **full suite with the package coverage gate** in a persistent venv
    (`~/wxparser-testenv`);
 4. on green → `systemctl restart wxparser wxparser-api`; on red → `git reset --hard`
    back to the previous commit and **leaves the running services untouched**.

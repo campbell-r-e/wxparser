@@ -271,7 +271,7 @@ nudges the ALSA mixer one small step at a time, and persists the result.
 If the box can't be reached by cloud CI runners (LAN-only), deployment can be
 pull-based: `wxparser-deploy.timer` runs `deploy/auto_deploy.sh` every 10
 minutes, which fetches `origin/main`, re-runs the **full test suite with the
-100% coverage gate** in a persistent venv (`~/wxparser-testenv`, created on
+package coverage gate** (100% of `wxparser/`, see DEVELOPMENT.md §3) in a persistent venv (`~/wxparser-testenv`, created on
 first run), and only on green restarts the services — rolling the tree back on
 red, so a bad push never takes the node down. Changes confined to
 `wxparser/api.py`/`verify.py`, tests, and docs restart only the API, leaving

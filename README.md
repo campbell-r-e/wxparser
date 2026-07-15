@@ -372,9 +372,14 @@ systemd units per instance (`wxparser@.service`) or just set the env block per u
 
 > **Developer guide (setup, test layout, coverage policy, CI/CD): [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)**
 
-**100% line *and branch* coverage**, enforced. Tests run against the `wxparser_test`
-PostgreSQL database; subprocesses (`arecord`, `whisper-cli`) are mocked, so only PostgreSQL is
-needed:
+**Coverage gate:** every line and branch of the `wxparser/` package must be exercised by the
+suite (`.coveragerc`: `fail_under = 100`, branch mode) or CI and the box's self-deploy reject
+the change. Stated honestly, that gate proves **branch reach in the package, nothing more**:
+the `deploy/` operational scripts are not under test, ~19 documented pragmas exclude I/O glue,
+and the suite runs single-threaded with the audio subprocesses (`arecord`, `whisper-cli`)
+mocked — so it says nothing about concurrency or real-hardware behavior. What earns the trust
+is the *kind* of tests behind the number: real-broadcast transcript fixtures, dated live
+regressions, and a real PostgreSQL + real HTTP server (only PostgreSQL is needed to run them):
 
 ```bash
 pip install -e '.[test]'         # pytest + coverage
@@ -384,8 +389,8 @@ coverage report                  # fails under 100%
 
 **CI** (`.github/workflows/ci.yml`) runs the suite on every push/PR across Python 3.11–3.12
 with a Postgres service container, a full `ruff check .` (pycodestyle E/W at the codified
-99-char line length, deviations documented in `pyproject.toml`), and **gates on 100% line +
-branch coverage**.
+99-char line length, deviations documented in `pyproject.toml`), and enforces the package
+coverage gate described above.
 **CD** is pull-based (the box has no inbound access): `deploy/wxparser-deploy.timer` runs
 `deploy/auto_deploy.sh` every 10 min, which fast-forwards `main`, re-runs the gated suite, and
 restarts the services only if green — rolling back on failure.
