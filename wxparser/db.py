@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo
 
 import pg8000.exceptions
 import pg8000.native
@@ -235,12 +236,23 @@ def _reading(row: dict, *ident: str, ts: str = "captured_at") -> dict:
     return out
 
 
-def period_window(period: str, issued: datetime) -> tuple[str | None, str | None]:
+def period_window(period: str, issued: datetime,
+                  tz: tzinfo | None = None) -> tuple[str | None, str | None]:
     """Derived (valid_from, valid_to) for a forecast period — a pure function
     of (period name, issued_at); computed on read, never stored.
+
+    Periods are named against the station's local calendar day, so `tz` (the
+    station zone) is what anchors them: the loop airing at 10pm Wednesday is
+    stamped 02:00Z *Thursday*, and reading "Thursday" off the UTC day resolves
+    tomorrow's forecast to a week out (and "tonight" to the wrong night).
+
+    Only the *day* is resolved locally here. The 06:00/18:00 window hours are
+    still emitted as UTC-of-that-day, so they sit ~4h off the wall-clock periods
+    NWS publishes; /verify builds its own local windows rather than trust these.
     """
     p = period.lower().strip()
-    day = issued.replace(hour=0, minute=0, second=0, microsecond=0)
+    local = issued.astimezone(tz) if tz else issued
+    day = datetime(local.year, local.month, local.day, tzinfo=timezone.utc)
     if p in ("today", "this afternoon", "this morning", "rest of today"):
         return _iso(day.replace(hour=6)), _iso(day.replace(hour=18))
     if p in ("tonight", "this evening", "overnight", "rest of tonight"):
@@ -248,7 +260,7 @@ def period_window(period: str, issued: datetime) -> tuple[str | None, str | None
     night = p.endswith(" night")
     name = p[:-6].strip() if night else p
     if name in _WEEKDAYS:
-        delta = (_WEEKDAYS.index(name) - issued.weekday()) % 7
+        delta = (_WEEKDAYS.index(name) - local.weekday()) % 7
         target = day + timedelta(days=delta or 7)
         if night:
             return (_iso(target.replace(hour=18)),
@@ -263,6 +275,7 @@ class Database:
     """
     def __init__(self, cfg: Config, database: str | None = None):
         self._cfg = cfg
+        self._tz = ZoneInfo(cfg.station_tz)
         self._database = database or cfg.pg_database
         self._lock = threading.Lock()
         self._conn = self._connect()
@@ -616,19 +629,18 @@ class Database:
         return [_reading(r, "city", "condition") for r in rows]
 
     # --- readers: forecast ----------------------------------------------- #
-    @staticmethod
-    def _with_window(row: dict, issued: datetime) -> dict:
+    def _with_window(self, row: dict, issued: datetime) -> dict:
         """Attach the derived (valid_from, valid_to) period window — computed from
         (period, issued), never stored (see the forecasts schema note).
         """
-        vf, vt = period_window(row["period"], issued.astimezone(timezone.utc))
+        vf, vt = period_window(row["period"], issued.astimezone(timezone.utc),
+                               self._tz)
         row["valid_from"], row["valid_to"] = vf, vt
         return row
 
-    @classmethod
-    def _hydrate_forecast(cls, r: dict) -> dict:
+    def _hydrate_forecast(self, r: dict) -> dict:
         """Window + decoded issued_at/confidence on a full forecasts row."""
-        cls._with_window(r, r["issued_at"])
+        self._with_window(r, r["issued_at"])
         r["issued_at"] = _ts(r["issued_at"])
         r["confidence"] = _as_obj(r["confidence"])
         return r

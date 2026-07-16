@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from statistics import median
 
 from .data.place_names import correct_place, is_known_city, resolve_slot
+from .timefmt import parse_iso_utc
 
 # --- small spoken-number parser (whisper sometimes spells numbers out) ------- #
 _UNITS = {
@@ -524,6 +525,20 @@ _RE_AT_TEMP = re.compile(
 _PEER_MIN = 3
 _PEER_MAX_DEV = 30
 
+# Vote window for the current-conditions fields, in seconds of broadcast time.
+# NWR re-reads the same hourly ob several times before the ob updates, so ~45min
+# holds every repeat of the ob on air now while dropping the one before it.
+_VOTE_STALE_SEC = 45 * 60
+
+
+def _clock_sec(captured_at: str | None) -> int:
+    """The vote clock: a transcript's ISO stamp as epoch seconds. Unstamped
+    callers get 0, which reads as "one instant" and leaves the vote depth-only.
+    """
+    if not captured_at:
+        return 0
+    return int(parse_iso_utc(captured_at).timestamp())
+
 
 def _drop_peer_outliers(pairs: list[tuple[str, int]],
                         peer_min: int = _PEER_MIN,
@@ -609,8 +624,9 @@ class CityConditionsAggregator:
     # A field aired every cycle (temperature) stays current in a 15-deep window,
     # but humidity/wind/pressure air only in the periodic full-ob readout, so their
     # window spans hours and a morning value out-votes the current one. Bound each
-    # field's vote to sightings from the last `stale_ticks` transcripts (one tick
-    # per update); ~60 keeps roughly the last 1-2h of airings.
+    # field's vote to the airings heard in the last `stale_sec` seconds of
+    # broadcast time (from the transcript's captured_at, so a reprocess replay
+    # votes identically to the live run).
     # Temperature is a live reading that legitimately changes hour to hour, and it
     # airs ~2x per cycle (the full ob plus the "once again ... it was N degrees"
     # recap), so the default 15-deep window spans ~7h and the voted value trails the
@@ -619,24 +635,31 @@ class CityConditionsAggregator:
     # diurnal curve, still deep enough that a lone STT mishear ("97" for "67") is
     # outvoted by its neighbours. Slow fields (sky, humidity, pressure trend) keep
     # the long window, where re-hearing the same value is what buys robustness.
+    # The depth bound alone is not enough: the novelty gate drops repeated audio,
+    # so five temperature sightings can still span a whole night (seen 2026-07-16:
+    # a pool of [88,84,80,75,75] reaching back 9h voted 88 while the station was
+    # reading 80). Only a wall-clock bound keeps the vote on the current ob.
     _FIELD_MAXLEN = {"temperature_f": 5}
 
     def __init__(self, maxlen: int = 15, primary_city: str = "Muncie",
-                 stale_ticks: int = 60, peer_min: int = _PEER_MIN,
+                 stale_sec: int = _VOTE_STALE_SEC, peer_min: int = _PEER_MIN,
                  peer_max_dev: int = _PEER_MAX_DEV):
         self.maxlen = maxlen
         self.primary_city = primary_city
-        self.stale_ticks = stale_ticks
+        self.stale_sec = stale_sec
         self.peer_min = peer_min
         self.peer_max_dev = peer_max_dev
-        self._tick = 0
+        self._clock = 0
         self.voters: dict[tuple[str, str], _FieldVoter] = {}
 
-    def update(self, text: str) -> list[dict]:
+    def update(self, text: str, captured_at: str | None = None) -> list[dict]:
         """Returns every (city, condition) reading heard in this text, with the
         current voted value/votes/total. Each is a 'sighting' the store counts.
+
+        `captured_at` (the transcript's ISO stamp) is the vote clock, bounding
+        each field's pool to the airings within `stale_sec` of it.
         """
-        self._tick += 1
+        self._clock = _clock_sec(captured_at)
         readings: list[dict] = []
         # Regional-roundup temps belong to the named cities (all three phrasings:
         # "74 at Marion", "Marion reported 74", "at Marion ... temperature of 74").
@@ -690,22 +713,23 @@ class CityConditionsAggregator:
         key = (city, condition)
         if key not in self.voters:
             maxlen = self._FIELD_MAXLEN.get(condition, self.maxlen)
-            self.voters[key] = _FieldVoter(maxlen, stale=self.stale_ticks)
+            self.voters[key] = _FieldVoter(maxlen, stale=self.stale_sec)
         return self.voters[key]
 
     def _reading(self, city: str, condition: str, value) -> dict:
         voter = self._voter(city, condition)
-        voter.add(value, self._tick)
+        voter.add(value, self._clock)
         best = voter.best()
         return {"city": city, "condition": condition,
                 "value": best.value, "votes": best.votes, "total": best.total}
 
     def prime(self, readings: list[dict]) -> None:
         """Seed voters from stored latest readings so a restart keeps state. Seeded
-        at the current tick so the primed value serves until fresh airings arrive.
+        at the pre-broadcast clock (0), so a primed value serves alone until that
+        field airs again and then drops straight out of the vote as stale.
         """
         for r in readings:
-            self._voter(r["city"], r["condition"]).add(r["value"], self._tick)
+            self._voter(r["city"], r["condition"]).add(r["value"], self._clock)
 
 
 @dataclass
@@ -719,11 +743,12 @@ class _FieldVoter:
     """Majority vote over a rolling window of recent sightings.
 
     Optionally recency-aware: with `stale` set, `best()` counts only samples whose
-    monotonic clock is within `stale` of the newest sample. A field aired
-    infrequently (humidity, wind) otherwise keeps hours-old sightings in its
-    fixed-length window and lets a morning value out-vote the current one; the
-    stale window bounds the vote to recent airings instead. Callers that pass no
-    clock (default 0) and no `stale` get the plain mode — unchanged behavior.
+    clock (epoch seconds of broadcast time) is within `stale` seconds of the
+    newest sample. A field aired infrequently (humidity, wind) otherwise keeps
+    hours-old sightings in its fixed-length window and lets a morning value
+    out-vote the current one; the stale window bounds the vote to recent airings
+    instead. Callers that pass no clock (default 0) and no `stale` get the plain
+    mode — unchanged behavior.
     """
 
     def __init__(self, maxlen: int, stale: int | None = None):

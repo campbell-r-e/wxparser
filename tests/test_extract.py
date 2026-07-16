@@ -505,18 +505,58 @@ def test_field_voter_stale_window_excludes_old_samples():
     assert v2.best().value == 93
 
 
+def _ob(temp: int) -> str:
+    return f"At Muncie, it was clear. The temperature was {temp} degrees."
+
+
+def test_conditions_vote_follows_the_ob_on_air_now():
+    # Live 2026-07-16 regression: the novelty gate drops repeated audio, so five
+    # temperature sightings reached back 9h and the overnight 88 kept out-voting
+    # the ob actually on air (/now read 88 while the station read 80; NWS had
+    # 78.8). The vote clock is the transcript stamp, so bound it in broadcast
+    # time, not in transcript count.
+    agg = CityConditionsAggregator(primary_city="Muncie", stale_sec=45 * 60)
+    for ca, temp in (("2026-07-15T23:11:13Z", 88), ("2026-07-15T23:31:35Z", 88),
+                     ("2026-07-16T00:09:43Z", 88), ("2026-07-16T02:08:51Z", 84)):
+        agg.update(_ob(temp), ca)
+    voted = {r["condition"]: r for r in agg.update(_ob(80), "2026-07-16T03:11:24Z")}
+    assert voted["temperature_f"]["value"] == 80
+
+
+def test_conditions_vote_still_outvotes_a_mishear_inside_one_ob():
+    # the window must not cost the repeat-vote its day job: a lone "97" for "75"
+    # among one ob's repeats is still outvoted by its neighbours.
+    agg = CityConditionsAggregator(primary_city="Muncie", stale_sec=45 * 60)
+    for ca, temp in (("2026-07-16T14:02:00Z", 75), ("2026-07-16T14:11:00Z", 97),
+                     ("2026-07-16T14:20:00Z", 75)):
+        agg.update(_ob(temp), ca)
+    voted = {r["condition"]: r for r in agg.update(_ob(75), "2026-07-16T14:31:00Z")}
+    assert voted["temperature_f"]["value"] == 75
+
+
+def test_conditions_vote_unstamped_is_depth_only():
+    # callers that pass no stamp (the extraction unit tests) read as one instant,
+    # leaving the plain depth-bounded vote rather than pruning everything.
+    agg = CityConditionsAggregator(primary_city="Muncie", stale_sec=45 * 60)
+    agg.update(_ob(70))
+    agg.update(_ob(70))
+    voted = {r["condition"]: r for r in agg.update(_ob(90))}
+    assert voted["temperature_f"]["value"] == 70
+    assert voted["temperature_f"]["total"] == 3
+
+
 def test_conditions_low_frequency_field_ages_out():
-    # humidity aired several times in the morning (93), then a long run of temp-only
-    # airings advances the tick, then the current 64 airs once. The stale morning
-    # value must not out-vote the fresh one (the "humidity 93% at 2pm" bug).
-    agg = CityConditionsAggregator(stale_ticks=3)
-    for _ in range(4):
+    # humidity aired several times in the morning (93), then hours pass with it not
+    # restated, then the current 64 airs once. The stale morning value must not
+    # out-vote the fresh one (the "humidity 93% at 2pm" bug). The morning run ages
+    # out on broadcast time alone — it must not depend on how many other transcripts
+    # happened to arrive in between, which is what the novelty gate makes unreliable.
+    agg = CityConditionsAggregator(stale_sec=45 * 60)
+    for minute in range(4):
         agg.update("At Muncie, it was sunny. The temperature was 80 degrees "
-                   "and the relative humidity 93%.")
-    for _ in range(5):   # temp-only airings; humidity not restated
-        agg.update("At Muncie, it was 80 degrees.")
+                   "and the relative humidity 93%.", f"2026-07-16T09:0{minute}:00Z")
     agg.update("At Muncie, it was sunny. The temperature was 80 degrees "
-               "and the relative humidity 64%.")
+               "and the relative humidity 64%.", "2026-07-16T14:00:00Z")
     assert agg.voters[("Muncie", "humidity_pct")].best().value == 64
 
 

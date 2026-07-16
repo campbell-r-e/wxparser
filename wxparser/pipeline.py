@@ -68,7 +68,7 @@ def apply_readings(text: str, captured_at, state: PipelineState, *,
                 "low_confidence": True}
     db, hb = state.db, state.hb
     readings = []
-    for r in state.aggregator.update(text):
+    for r in state.aggregator.update(text, captured_at):
         if db is not None:
             db.record_reading(r, captured_at)
         if hb is not None:

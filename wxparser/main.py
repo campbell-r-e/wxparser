@@ -250,6 +250,7 @@ def run_live(cfg: Config, once: bool = False) -> int:
     gate = NoveltyGate(cfg)
     deduper = TextDeduper(cfg)
     aggregator = CityConditionsAggregator(primary_city=cfg.primary_city,
+                                          stale_sec=cfg.vote_stale_min * 60,
                                           peer_min=cfg.peer_min_cities,
                                           peer_max_dev=cfg.peer_max_dev_f)
     forecast = ForecastAggregator()

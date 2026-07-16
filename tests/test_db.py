@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from wxparser.db import period_window
 
@@ -116,6 +117,20 @@ def test_period_window_weekday_night():
     issued = datetime(2026, 6, 24, 12, 0, 0, tzinfo=timezone.utc)
     vf, vt = period_window("Saturday Night", issued)
     assert vf is not None and vt is not None and vf < vt
+
+
+def test_period_window_resolves_periods_in_the_station_local_day():
+    # Live 2026-07-16 regression: the loop aired at 10:13pm Wednesday local, which
+    # stamps 02:13Z *Thursday*. Read off the UTC day, "For Thursday" (tomorrow)
+    # scored delta 0 and was filed a week out, and "Tonight" landed on the wrong
+    # night. Periods are named against the station's local day, so resolve there.
+    tz = ZoneInfo("America/Indiana/Indianapolis")
+    issued = datetime(2026, 7, 16, 2, 13, 57, tzinfo=timezone.utc)
+    assert period_window("Thursday", issued, tz)[0] == "2026-07-16T06:00:00Z"
+    assert period_window("Thursday", issued)[0] == "2026-07-23T06:00:00Z"   # pre-fix
+    assert period_window("Tonight", issued, tz)[0] == "2026-07-15T18:00:00Z"
+    # a weekday naming the local day itself is the 7-day tail, not today
+    assert period_window("Wednesday", issued, tz)[0] == "2026-07-22T06:00:00Z"
 
 
 def test_all_conditions_for_city_and_cities_index(wxdb):

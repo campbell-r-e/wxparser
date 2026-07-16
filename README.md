@@ -286,6 +286,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
 | `WX_ALERT_PRIORITY_WINDOW` | `120` | seconds after a SAME burst that captured segments jump the STT queue (warning narrative transcribes ahead of routine backlog) |
 | `WX_STALE_AFTER_MIN` | `60` | conditions reading older than this is flagged `stale` |
+| `WX_VOTE_STALE_MIN` | `45` | minutes of **broadcast time** a conditions field's repeat-vote looks back over — wide enough to hold the repeats of the ob on air now, short enough to drop the one before it |
 | `WX_VAD_DBFS` | `-35` | VAD speech threshold |
 | `WX_MIN_SIGHTINGS` | `2` | API: min times a city is heard before surfacing |
 | `WX_TRUST_SIGHTINGS_FULL` | `6` | sightings before trust's "seen enough" factor saturates |

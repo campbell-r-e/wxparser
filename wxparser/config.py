@@ -165,6 +165,15 @@ class Config:
     stt_confidence_floor: float = field(
         default_factory=lambda: float(_env("WX_STT_CONF_FLOOR", "0.5")))
 
+    # Minutes of broadcast time a current-conditions field's repeat-vote looks
+    # back over. NWR re-reads one hourly ob several times before it updates, so
+    # this wants to span the repeats of the ob on air now and stop short of the
+    # one before it — too wide and a value from hours ago out-votes the current
+    # reading (the vote is bounded by wall clock, not by transcript count,
+    # because the novelty gate makes transcripts arrive in bursts).
+    vote_stale_min: int = field(
+        default_factory=lambda: int(_env("WX_VOTE_STALE_MIN", "45")))
+
     # --- Phase 3: text dedup (second-line guard) ---
     # High, so only near-exact repeats are dropped. On short templated forecasts a
     # changed number ("80"->"82") only drops similarity to ~0.95, and must survive
