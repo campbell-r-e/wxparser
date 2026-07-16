@@ -82,6 +82,14 @@ class Config:
     fp_similarity_threshold: float = field(
         default_factory=lambda: float(_env("WX_FP_SIMILARITY", "0.97")))
     gate_history: int = field(default_factory=lambda: int(_env("WX_GATE_HISTORY", "400")))
+    # Diagnostic, off unless set: append every segment's fingerprint to this file
+    # for offline gate tuning. The gate's similarity metric can only be judged
+    # against REAL repeats, and those need several loop cycles of live audio
+    # (~13.5 min each on KJY93) -- a short recording contains no repeat at all and
+    # will happily "prove" whatever you hoped. Costs one ~4KB append per segment.
+    fp_dump_path: Path | None = field(
+        default_factory=lambda: Path(_env("WX_FP_DUMP", "")) or None
+        if _env("WX_FP_DUMP", "") else None)
     # How long a remembered fingerprint keeps suppressing look-alikes. The depth
     # bound alone can't do this: the gate only remembers what it let through, so
     # 400 entries span more than a day and a product whose numbers change but

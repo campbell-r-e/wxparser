@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wxparser"
-version = "1.0.7"
+version = "1.0.8"
 description = "Fully-offline local weather server: NOAA Weather Radio capture, whisper.cpp transcription, SAME/EAS alert decoding, and a structured weather query API"
 readme = "README.md"
 license = { text = "MIT" }

@@ -61,6 +61,33 @@ def test_novelty_gate_history_expires_so_a_re_read_reaches_stt():
     assert g.best_similarity(v, now=46 * 60) == 0.0        # past it: novel again
 
 
+def test_fingerprint_dump_roundtrip(tmp_path):
+    # the gate's metric can only be judged against real repeats, which need hours
+    # of live audio (the KJY93 loop is ~13.5 min), so segments are dumped from the
+    # running pipeline and tuned offline. Fixed-width records because a float32
+    # vector's bytes contain newlines and commas -- any delimiter would corrupt.
+    from wxparser.fingerprint import dump_vector, read_dump
+    cfg = Config()
+    fp = Fingerprinter(cfg)
+    path = tmp_path / "fp.bin"
+    v1, _ = fp.compute(_audio(1))
+    v2, _ = fp.compute(_audio(2))
+    dump_vector(path, "2026-07-16T20:00:00Z", v1)
+    dump_vector(path, "2026-07-16T20:00:28Z", v2)
+    stamps, mat = read_dump(path, v1.size)
+    assert stamps == ["2026-07-16T20:00:00Z", "2026-07-16T20:00:28Z"]
+    assert mat.shape == (2, v1.size)
+    assert np.allclose(mat[0], v1, atol=1e-6) and np.allclose(mat[1], v2, atol=1e-6)
+
+
+def test_read_dump_empty_file(tmp_path):
+    from wxparser.fingerprint import read_dump
+    path = tmp_path / "empty.bin"
+    path.write_bytes(b"")
+    stamps, mat = read_dump(path, 1024)
+    assert stamps == [] and mat.shape == (0, 1024)
+
+
 def test_novelty_gate_ttl_zero_disables_expiry():
     cfg = dataclasses.replace(Config(), gate_ttl_min=0)
     fp = Fingerprinter(cfg)

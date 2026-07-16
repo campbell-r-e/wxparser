@@ -92,6 +92,34 @@ def _pool_time(mel: np.ndarray, time_bins: int) -> np.ndarray:
     return out
 
 
+_DUMP_STAMP = 24   # bytes; an ISO second-stamp is 20, padded for headroom
+
+
+def dump_vector(path, stamp: str, vec: np.ndarray) -> None:
+    """Append one (stamp, fingerprint) record for offline gate tuning.
+
+    Fixed-width records, not delimited ones: a float32 vector's bytes can contain
+    any value including newlines and commas, so any delimiter would corrupt on
+    read. The vector is stored L2-normalised as the gate sees it -- centring a
+    normalised vector and centring-then-normalising the raw one give the same
+    direction, so the variants worth testing are all recoverable from this.
+    """
+    rec = stamp.encode()[:_DUMP_STAMP].ljust(_DUMP_STAMP, b" ")
+    with open(path, "ab") as fh:
+        fh.write(rec + vec.astype(np.float32).tobytes())
+
+
+def read_dump(path, dim: int) -> tuple[list[str], np.ndarray]:
+    """Read back what dump_vector wrote: (stamps, (n x dim) float32 matrix)."""
+    rec_len = _DUMP_STAMP + dim * 4
+    raw = open(path, "rb").read()
+    stamps, rows = [], []
+    for off in range(0, len(raw) - rec_len + 1, rec_len):
+        stamps.append(raw[off:off + _DUMP_STAMP].decode().strip())
+        rows.append(np.frombuffer(raw[off + _DUMP_STAMP:off + rec_len], dtype=np.float32))
+    return stamps, (np.array(rows) if rows else np.zeros((0, dim), dtype=np.float32))
+
+
 class NoveltyGate:
     """Keeps recent fingerprints; the caller compares best_similarity() to the
     configured threshold to decide novelty (main.py's repeat/novel branch).

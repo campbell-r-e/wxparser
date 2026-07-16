@@ -40,7 +40,7 @@ from .extract import (
     CityConditionsAggregator,
     ForecastAggregator,
 )
-from .fingerprint import Fingerprinter, NoveltyGate
+from .fingerprint import dump_vector, Fingerprinter, NoveltyGate
 from .health import Heartbeat
 from .notify import post_webhook
 from .pipeline import PipelineState, apply_readings, write_alert_detail_if_any
@@ -323,6 +323,8 @@ def run_live(cfg: Config, once: bool = False) -> int:
             rms_db, peak_db = segment_level_dbfs(seg.samples)
             hb.set(last_segment_dbfs=rms_db, last_segment_peak_dbfs=peak_db)
             vec, digest = fp.compute(seg.samples)
+            if cfg.fp_dump_path:   # diagnostic; records every segment, gated or not
+                dump_vector(cfg.fp_dump_path, _utc_now_iso(), vec)
             seen_at = time.monotonic()
             sim = gate.best_similarity(vec, seen_at)
             if sim >= cfg.fp_similarity_threshold:

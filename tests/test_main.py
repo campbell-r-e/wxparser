@@ -97,6 +97,26 @@ def test_run_live_once(tmp_path, monkeypatch, make_cfg):
     main._STOP.clear()
 
 
+def test_run_live_dumps_fingerprints_when_configured(tmp_path, monkeypatch, make_cfg):
+    # the diagnostic dump must record every segment the producer sees, gated or
+    # not: tuning the gate needs the repeats it currently throws away
+    from wxparser.db import Database
+    from wxparser.fingerprint import read_dump
+    dump = tmp_path / "fp.bin"
+    cfg = make_cfg(same_enabled=False, fp_dump_path=dump)
+    main._STOP.clear()
+    db = Database(cfg); db.clear(); db._run("TRUNCATE raw_reports"); db.close()
+    monkeypatch.setattr(
+        main, "stream_frames",
+        lambda c, on_retry=None, should_stop=None: _frames("s" + "S" * 70 + "s" * 60, c))
+    monkeypatch.setattr(main, "transcribe_samples", lambda samples, c: _t("Highs around 80."))
+    assert main.run_live(cfg, once=True) == 0
+    main._STOP.clear()
+    stamps, mat = read_dump(dump, cfg.fp_n_mels * cfg.fp_time_bins)
+    assert len(stamps) >= 1 and mat.shape[1] == cfg.fp_n_mels * cfg.fp_time_bins
+    assert stamps[0].endswith("Z")
+
+
 def test_emit_alert_no_db_is_noop(tmp_path):
     # db None + webhook unset -> the skip-persistence branch; must not raise
     cfg = Config(out_dir=tmp_path)
