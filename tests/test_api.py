@@ -55,11 +55,18 @@ def _server(make_cfg, **cfg_overrides):
 
 
 def _get(url):
-    # /health answers non-200 by design ("fail loud: non-200 so a monitor can alarm
-    # on HTTP status alone"), so read the body rather than raising on it -- otherwise
-    # every degraded/down case is unfetchable and the status assertions below are dead
-    # letters. The fixture seeds readings dated 2026-06-24, which /health rightly
-    # calls stale, so this path is the normal one for /health here.
+    # stays strict: test_error_codes detects status by catching the raise
+    with urllib.request.urlopen(url, timeout=5) as r:
+        body = r.read().decode()
+    return (json.loads(body) if body[:1] in "{[" else body)
+
+
+def _get_any(url):
+    """Fetch tolerating a fail-loud non-200. /health answers 503 when degraded by
+    design, so reading its body needs this; the fixture seeds readings dated
+    2026-06-24 against a heartbeat touched now -- fresh plumbing, stale product --
+    which /health rightly calls degraded.
+    """
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
             body = r.read().decode()
@@ -109,7 +116,7 @@ def test_all_json_and_text_endpoints(make_cfg):
         assert _get(H + "/alerts/history")["total"] == 1
         assert _get(H + "/alerts/history?details=1")["alerts"][0]["source"] == "same"
         assert "details" in _get(H + "/alerts/details")
-        health = _get(H + "/health")
+        health = _get_any(H + "/health")
         assert health["status"] in ("ok", "degraded", "down")
         assert health["almanac_fields"] >= 2
     finally:
