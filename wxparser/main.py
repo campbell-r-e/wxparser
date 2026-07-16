@@ -323,12 +323,13 @@ def run_live(cfg: Config, once: bool = False) -> int:
             rms_db, peak_db = segment_level_dbfs(seg.samples)
             hb.set(last_segment_dbfs=rms_db, last_segment_peak_dbfs=peak_db)
             vec, digest = fp.compute(seg.samples)
-            sim = gate.best_similarity(vec)
+            seen_at = time.monotonic()
+            sim = gate.best_similarity(vec, seen_at)
             if sim >= cfg.fp_similarity_threshold:
                 n_repeat += 1
                 _publish(". repeat")
                 continue
-            gate.add(vec)
+            gate.add(vec, seen_at)
             n_new += 1
             hb.touch("last_novel_at")
             prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL

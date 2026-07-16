@@ -283,6 +283,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STT_ENHANCE` | `0` (off) | pre-STT speech-enhancement DSP chain (`enhance.py`) — A/B it on a new deployment before trusting it |
 | `WX_STT_CONF_FLOOR` | `0.5` | transcripts below this mean token-confidence are stored but never voted into conditions/forecast/almanac |
 | `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
+| `WX_GATE_TTL_MIN` | `45` | how long a remembered fingerprint keeps suppressing look-alikes. The gate only remembers what it let through, so depth alone reaches back a day and a product whose numbers change but whose audio doesn't is never re-read — this is what keeps the hourly ob refreshing. `0` disables expiry |
 | `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
 | `WX_ALERT_PRIORITY_WINDOW` | `120` | seconds after a SAME burst that captured segments jump the STT queue (warning narrative transcribes ahead of routine backlog) |
 | `WX_STALE_AFTER_MIN` | `60` | conditions reading older than this is flagged `stale` |

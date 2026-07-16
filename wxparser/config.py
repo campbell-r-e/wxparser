@@ -82,6 +82,13 @@ class Config:
     fp_similarity_threshold: float = field(
         default_factory=lambda: float(_env("WX_FP_SIMILARITY", "0.97")))
     gate_history: int = field(default_factory=lambda: int(_env("WX_GATE_HISTORY", "400")))
+    # How long a remembered fingerprint keeps suppressing look-alikes. The depth
+    # bound alone can't do this: the gate only remembers what it let through, so
+    # 400 entries span more than a day and a product whose numbers change but
+    # whose audio doesn't never gets re-read. Sized to the hourly ob it has to
+    # catch — each product reaches STT once a window, so ~12 extra transcriptions
+    # an hour. 0 disables expiry (the pre-2026-07-16 behavior).
+    gate_ttl_min: int = field(default_factory=lambda: int(_env("WX_GATE_TTL_MIN", "45")))
 
     # --- STT (whisper.cpp via whisper-cli subprocess) ---
     whisper_bin: Path = field(default_factory=lambda: Path(

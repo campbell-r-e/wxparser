@@ -95,16 +95,31 @@ def _pool_time(mel: np.ndarray, time_bins: int) -> np.ndarray:
 class NoveltyGate:
     """Keeps recent fingerprints; the caller compares best_similarity() to the
     configured threshold to decide novelty (main.py's repeat/novel branch).
+
+    The history expires in wall-clock time, not just depth. Only segments the
+    gate *let through* are remembered and only ~12/h do, so a 400-deep history
+    reaches back more than a day — and NWR re-reads the same product all day with
+    only the numbers changed, which still scores ~0.98 against the morning's
+    airing. Without a time bound the gate suppresses that product forever and its
+    numbers freeze (seen 2026-07-16: no conditions transcript for 8h while the
+    temperature climbed 75F -> 88F). Expiring the history lets each product reach
+    STT once per window, which is what refreshes the ob.
     """
 
     def __init__(self, cfg: Config):
-        self.history: deque[np.ndarray] = deque(maxlen=cfg.gate_history)
+        self.history: deque[tuple[np.ndarray, float]] = deque(maxlen=cfg.gate_history)
+        self.ttl = cfg.gate_ttl_min * 60
 
-    def best_similarity(self, vec: np.ndarray) -> float:
-        if not self.history:
+    def _live(self, now: float) -> list[np.ndarray]:
+        """Fingerprints still inside the expiry window (ttl 0 disables expiry)."""
+        return [v for v, seen in self.history if not self.ttl or now - seen <= self.ttl]
+
+    def best_similarity(self, vec: np.ndarray, now: float = 0.0) -> float:
+        live = self._live(now)
+        if not live:
             return 0.0
-        mat = np.stack(self.history)          # (h x d), rows already unit-norm
+        mat = np.stack(live)                  # (h x d), rows already unit-norm
         return float(np.max(mat @ vec))       # cosine == dot for unit vectors
 
-    def add(self, vec: np.ndarray) -> None:
-        self.history.append(vec)
+    def add(self, vec: np.ndarray, now: float = 0.0) -> None:
+        self.history.append((vec, now))

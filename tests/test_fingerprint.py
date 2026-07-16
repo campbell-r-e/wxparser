@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 
 from wxparser.config import Config
@@ -42,3 +44,27 @@ def test_novelty_gate_history():
     assert g.best_similarity(v) == 0.0                     # empty history
     g.add(v)
     assert g.best_similarity(v) > 0.99
+
+
+def test_novelty_gate_history_expires_so_a_re_read_reaches_stt():
+    # Live 2026-07-16 regression: the gate only remembers what it let through, so
+    # its 400-deep history reached back a day and NWR's hourly conditions re-read
+    # (same audio, new numbers, ~0.98 similar) was suppressed forever — 8h with no
+    # conditions transcript while the real temperature climbed 75F -> 88F. Past the
+    # window the same audio must read as novel again.
+    cfg = dataclasses.replace(Config(), gate_ttl_min=45)
+    fp = Fingerprinter(cfg)
+    g = NoveltyGate(cfg)
+    v, _ = fp.compute(_audio(3))
+    g.add(v, now=0.0)
+    assert g.best_similarity(v, now=10 * 60) > 0.99        # inside the window: repeat
+    assert g.best_similarity(v, now=46 * 60) == 0.0        # past it: novel again
+
+
+def test_novelty_gate_ttl_zero_disables_expiry():
+    cfg = dataclasses.replace(Config(), gate_ttl_min=0)
+    fp = Fingerprinter(cfg)
+    g = NoveltyGate(cfg)
+    v, _ = fp.compute(_audio(3))
+    g.add(v, now=0.0)
+    assert g.best_similarity(v, now=10 * 86400) > 0.99     # never expires
