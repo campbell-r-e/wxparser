@@ -55,8 +55,16 @@ def _server(make_cfg, **cfg_overrides):
 
 
 def _get(url):
-    with urllib.request.urlopen(url, timeout=5) as r:
-        body = r.read().decode()
+    # /health answers non-200 by design ("fail loud: non-200 so a monitor can alarm
+    # on HTTP status alone"), so read the body rather than raising on it -- otherwise
+    # every degraded/down case is unfetchable and the status assertions below are dead
+    # letters. The fixture seeds readings dated 2026-06-24, which /health rightly
+    # calls stale, so this path is the normal one for /health here.
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            body = r.read().decode()
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
     return (json.loads(body) if body[:1] in "{[" else body)
 
 
