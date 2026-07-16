@@ -296,6 +296,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_PG_HOST/PORT/DATABASE/USER` | `127.0.0.1/5432/wxparser/wxparser` | Postgres (local trust) |
 | `WX_API_HOST` / `WX_API_PORT` | `0.0.0.0` / `8080` | API bind |
 | `WX_HEALTH_AUDIO_SILENT_MIN` | `5` | `/health` flags `degraded` after this many minutes of no audio (deaf radio) |
+| `WX_HEALTH_READINGS_STALE_MIN` | `180` | `/health` flags `degraded` when conditions haven't reached the store in this long. The other health signals watch the **plumbing** (audio, STT, queue); this one watches the **product** — the pipeline can look perfect while the store goes hours stale |
 | `WX_HEALTH_HEARTBEAT_STALE_MIN` | `3` | `/health` flags `down` if the pipeline heartbeat is older than this |
 | `WX_HEALTH_NOVEL_STALE_MIN` | `60` | `/health` flags `degraded` after this many minutes with no novel segment (static/dead carrier) |
 | `WX_WEBHOOK_URL` | `""` (off) | when set, POST each new SAME alert here (opt-in outbound push) |

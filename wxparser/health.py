@@ -96,13 +96,20 @@ class Heartbeat:
             return None
 
 
-def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
-    """Derive a fail-loud status from the heartbeat.
+def assess(hb: dict | None, cfg: Config, now: datetime | None = None,
+           reading_at: str | None = None) -> dict:
+    """Derive a fail-loud status from the heartbeat and the freshness of the data.
 
     down     — no/stale heartbeat: the capture process isn't flushing (likely dead).
     degraded — heartbeat fresh but audio silent (deaf radio), nothing novel in a
-               long time (static/dead carrier), or STT worker wedged.
-    ok       — segments flowing, novel content arriving, worker draining.
+               long time (static/dead carrier), STT worker wedged, or conditions
+               no longer reaching the store.
+    ok       — segments flowing, novel content arriving, worker draining, and the
+               store still being written.
+
+    `reading_at` is when conditions last landed in the store. Every other signal
+    here describes the *plumbing*; this one describes the *product*, and the
+    plumbing can be immaculate while the product rots (see the check below).
     """
     now = now or datetime.now(timezone.utc)
     if hb is None:
@@ -146,7 +153,22 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None) -> dict:
         checks.append(f"STT worker may be wedged (q={hb.get('queue_depth')}, "
                       f"last ok {_fmt(stt_age)}m ago)")
 
+    # Extraction flatlined: every signal above can read nominal while nothing
+    # reaches the store, because they all watch the plumbing and none watch the
+    # product. Seen 2026-07-16: /now served a 10.5h-old 75F while it was actually
+    # 89.6F, and /health answered "all signals nominal" for three hours straight --
+    # audio was flowing and STT was draining, but the novelty gate was dropping
+    # every conditions re-read before STT, so nothing was ever extracted. The
+    # station re-reads the ob roughly hourly, so a multi-hour gap is broken, not
+    # quiet. reading_at None means nothing is stored yet (fresh box) -- not a fault.
+    reading_age = _age_min(reading_at, now)
+    if reading_age is not None and reading_age > cfg.health_readings_stale_min:
+        status = "degraded" if status == "ok" else status
+        checks.append(f"conditions not updating ({_fmt(reading_age)}m > "
+                      f"{cfg.health_readings_stale_min}m) — extraction flatlined?")
+
     return {"status": status, "checks": checks or ["all signals nominal"],
+            "readings_stale_min": _round(reading_age),
             "heartbeat_age_min": _round(hb_age), "audio_silent_min": _round(audio_age),
             "last_stt_ok_min": _round(stt_age), "last_novel_min": _round(novel_age),
             "pipeline": hb}

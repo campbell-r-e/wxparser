@@ -225,6 +225,14 @@ class Config:
     # real broadcast the changing time announcements alone yield novel segments
     # every few minutes, so a full hour with nothing passing the novelty gate
     # means noise, not programming.
+    # How long conditions may go without reaching the store before /health calls it
+    # degraded. Every other health signal watches the plumbing (audio, STT, queue);
+    # this one watches the product, and the plumbing can be perfect while the store
+    # goes hours stale. The station re-reads the ob about hourly, so a few hours of
+    # nothing means extraction is broken rather than the broadcast being quiet.
+    health_readings_stale_min: int = field(
+        default_factory=lambda: int(_env("WX_HEALTH_READINGS_STALE_MIN", "180")))
+
     health_novel_stale_min: int = field(
         default_factory=lambda: int(_env("WX_HEALTH_NOVEL_STALE_MIN", "60")))
     # Outbound push. OFF by default so the box stays fully offline; set a

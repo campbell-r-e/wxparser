@@ -40,6 +40,42 @@ def test_ok_when_signals_fresh():
     assert assess(hb, CONFIG, _NOW)["status"] == "ok"
 
 
+def _healthy_hb():
+    return {"updated_at": _ago(0.2), "last_segment_at": _ago(0.3),
+            "last_novel_at": _ago(2), "last_stt_ok_at": _ago(1), "queue_depth": 0}
+
+
+def test_degraded_when_conditions_stop_reaching_the_store():
+    # Live 2026-07-16: audio flowing, STT draining, queue empty -- every plumbing
+    # signal nominal -- while the novelty gate dropped each conditions re-read
+    # before STT, so nothing was extracted for 10.5h. /now served 75F against an
+    # actual 89.6F and /health still answered "all signals nominal". Stale DATA is
+    # its own fault, independent of the pipeline looking healthy.
+    out = assess(_healthy_hb(), CONFIG, _NOW, reading_at=_ago(10.5 * 60))
+    assert out["status"] == "degraded"
+    assert any("conditions not updating" in c for c in out["checks"])
+    assert out["readings_stale_min"] == 630.0
+
+
+def test_fresh_readings_keep_status_ok():
+    out = assess(_healthy_hb(), CONFIG, _NOW, reading_at=_ago(20))
+    assert out["status"] == "ok"
+    assert out["readings_stale_min"] == 20.0
+
+
+def test_no_readings_yet_is_not_a_fault():
+    # a freshly installed box has an empty store; that is not extraction failing
+    out = assess(_healthy_hb(), CONFIG, _NOW, reading_at=None)
+    assert out["status"] == "ok"
+    assert out["readings_stale_min"] is None
+
+
+def test_stale_readings_do_not_soften_down_to_degraded():
+    hb = {"updated_at": _ago(99), "last_segment_at": _ago(99),
+          "last_novel_at": _ago(99), "last_stt_ok_at": _ago(99), "queue_depth": 0}
+    assert assess(hb, CONFIG, _NOW, reading_at=_ago(600))["status"] == "down"
+
+
 def test_down_when_no_heartbeat_file():
     assert assess(None, CONFIG, _NOW)["status"] == "down"
 

@@ -516,10 +516,14 @@ class _Handler(BaseHTTPRequestHandler):
     def _ep_health(self, q: dict) -> None:
         # DB first (works across machines), health.json as the same-box fallback
         hb = self.db.read_heartbeat() or Heartbeat.read(self.cfg)
-        health = assess(hb, self.cfg)
+        conditions = self.db.list_conditions()
+        # freshest condition in the store — the signal that says extraction is still
+        # landing, which the heartbeat alone cannot tell you
+        newest = max((c["latest"] for c in conditions if c["latest"]), default=None)
+        health = assess(hb, self.cfg, reading_at=newest)
         health.update({"generated_at": _now_iso(),
                        "station": self.cfg.station,
-                       "conditions": len(self.db.list_conditions()),
+                       "conditions": len(conditions),
                        "cities": len(self.db.cities()),
                        "active_alerts": len(self.db.get_active_alerts()),
                        "total_alerts": self.db.alerts_history_count(None, None, None),
