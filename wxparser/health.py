@@ -107,9 +107,10 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None,
     ok       — segments flowing, novel content arriving, worker draining, and the
                store still being written.
 
-    `reading_at` is when conditions last landed in the store. Every other signal
-    here describes the *plumbing*; this one describes the *product*, and the
-    plumbing can be immaculate while the product rots (see the check below).
+    `reading_at` is when the station's own temperature last landed in the store —
+    the ob's canary, since it airs every cycle. Every other signal here describes
+    the *plumbing*; this one describes the *product*, and the plumbing can be
+    immaculate while the product rots (see the check below).
     """
     now = now or datetime.now(timezone.utc)
     if hb is None:
@@ -161,6 +162,9 @@ def assess(hb: dict | None, cfg: Config, now: datetime | None = None,
     # every conditions re-read before STT, so nothing was ever extracted. The
     # station re-reads the ob roughly hourly, so a multi-hour gap is broken, not
     # quiet. reading_at None means nothing is stored yet (fresh box) -- not a fault.
+    # The caller passes the primary city's temperature specifically: aggregating
+    # over all conditions masks this, because one rarely-aired field landing resets
+    # the clock while the ob itself stays hours dead.
     reading_age = _age_min(reading_at, now)
     if reading_age is not None and reading_age > cfg.health_readings_stale_min:
         status = "degraded" if status == "ok" else status

@@ -517,10 +517,15 @@ class _Handler(BaseHTTPRequestHandler):
         # DB first (works across machines), health.json as the same-box fallback
         hb = self.db.read_heartbeat() or Heartbeat.read(self.cfg)
         conditions = self.db.list_conditions()
-        # freshest condition in the store — the signal that says extraction is still
-        # landing, which the heartbeat alone cannot tell you
-        newest = max((c["latest"] for c in conditions if c["latest"]), default=None)
-        health = assess(hb, self.cfg, reading_at=newest)
+        # The ob's canary: the primary city's temperature airs every cycle, so its
+        # age is the truest read on whether extraction is still landing. Do NOT
+        # aggregate across conditions — the max hides exactly the failure worth
+        # catching (2026-07-16: one sky reading landed and reset the clock to 104m
+        # while temperature sat 642m stale and /health called it nominal), and the
+        # min just tracks whichever field airs most rarely.
+        primary = self.db.all_conditions_for_city(self.cfg.primary_city)
+        temp = next((c for c in primary if c["condition"] == "temperature_f"), None)
+        health = assess(hb, self.cfg, reading_at=temp["captured_at"] if temp else None)
         health.update({"generated_at": _now_iso(),
                        "station": self.cfg.station,
                        "conditions": len(conditions),
