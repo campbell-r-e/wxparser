@@ -282,7 +282,7 @@ All settings live in `wxparser/config.py` and are env-overridable. Common ones:
 | `WX_STT_PROMPT` | place names from profile (on) | whisper vocabulary-bias prompt; **must be `""` if you point `WX_WHISPER_MODEL` at `tiny.en`**, which degenerates with any prompt |
 | `WX_STT_ENHANCE` | `0` (off) | pre-STT speech-enhancement DSP chain (`enhance.py`) — A/B it on a new deployment before trusting it |
 | `WX_STT_CONF_FLOOR` | `0.5` | transcripts below this mean token-confidence are stored but never voted into conditions/forecast/almanac |
-| `WX_FP_SIMILARITY` | `0.97` | novelty-gate repeat threshold |
+| `WX_FP_SIMILARITY` | `0.995` | novelty-gate repeat threshold. The mel-spectral fingerprint can't tell NWR content apart (a real re-air and an adjacent different segment both score ~0.988), so this only sets a **pass rate**, not a repeat/novel boundary. STT has ~8x headroom, so pass generously (~44%) and let text dedup drop the true duplicates; 0.97 passed only ~9% and froze `/now` for hours. Proper fix is STT backpressure |
 | `WX_GATE_TTL_MIN` | `45` | how long a remembered fingerprint keeps suppressing look-alikes. The gate only remembers what it let through, so depth alone reaches back a day and a product whose numbers change but whose audio doesn't is never re-read — this is what keeps the hourly ob refreshing. `0` disables expiry |
 | `WX_VAD_MIN_SILENCE` / `WX_VAD_MAX_SEGMENT` | `1.0` / `28` | coalesce to product-level segments (fewer STT calls amortize model-load overhead) |
 | `WX_ALERT_PRIORITY_WINDOW` | `120` | seconds after a SAME burst that captured segments jump the STT queue (warning narrative transcribes ahead of routine backlog) |

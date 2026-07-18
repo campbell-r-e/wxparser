@@ -76,11 +76,24 @@ class Config:
     # --- Phase 2: audio fingerprint + novelty gate ---
     fp_n_mels: int = 32
     fp_time_bins: int = 32
-    # Conservative: only near-identical audio is a "repeat", so novel content is
-    # never wrongly dropped. Repeats that slip through are caught by Phase 3 text
-    # dedup (PLAN §5 "second-line guard"). Distinct sentences top out ~0.96.
+    # The comment here used to claim "distinct sentences top out ~0.96". A dump of
+    # 3661 real repeat pairs across 28.7h (WX_FP_DUMP, 2026-07-17) disproved it: a
+    # true re-air one loop back (~13.5min) scores 0.988, and an ADJACENT different
+    # segment also scores 0.988 -- separation +0.000. The mel-spectral fingerprint
+    # cannot tell NWR content apart; it only measures "same TTS voice". So the
+    # threshold does not separate repeat from novel, it just sets a PASS RATE out of
+    # the noise band everything sits in, and 0.97 passed only ~9% -- catching the
+    # conditions ob by luck, which is why /now froze for 10h at a time.
+    #
+    # The gate's only real job is capping STT load, and STT has ~8x headroom here
+    # (9% pass kept the queue at 0). So pass far more and let the content-aware
+    # Phase 3 text dedup (PLAN §5 "second-line guard") drop the actual duplicate
+    # transcripts: 0.995 passes ~44% (~57 STT/hr vs ~93/hr capacity), giving the ob
+    # roughly a coin-flip per 13.5min loop instead of 1-in-11 -- ~30min latency, not
+    # hours. The proper fix is to replace this content-blind gate with STT
+    # backpressure; this raises the floor in one value until then.
     fp_similarity_threshold: float = field(
-        default_factory=lambda: float(_env("WX_FP_SIMILARITY", "0.97")))
+        default_factory=lambda: float(_env("WX_FP_SIMILARITY", "0.995")))
     gate_history: int = field(default_factory=lambda: int(_env("WX_GATE_HISTORY", "400")))
     # Diagnostic, off unless set: append every segment's fingerprint to this file
     # for offline gate tuning. The gate's similarity metric can only be judged
