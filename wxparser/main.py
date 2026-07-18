@@ -302,14 +302,15 @@ def run_live(cfg: Config, once: bool = False) -> int:
 
     frames = stream_frames(cfg, on_retry=lambda: hb.incr("capture_restarts"),
                            should_stop=_STOP.is_set)
-    n_seg = n_new = n_repeat = 0
+    n_seg = n_new = n_repeat = n_shed = 0
     seg = sim = None  # bound per segment below; _publish reads the current ones
 
     def _publish(label: str, tail: str = "") -> None:
         """Flush the segment counters to the heartbeat and print the status line
-        both novelty branches share.
+        the novelty branches share.
         """
-        hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, queue_depth=q.qsize())
+        hb.set(segments=n_seg, novel=n_new, repeat=n_repeat, shed=n_shed,
+               queue_depth=q.qsize())
         hb.flush()
         print(f"  {label} {seg.duration_s:5.1f}s sim={sim:.3f}{tail} "
               f"[{n_new} new / {n_repeat} repeat, q={q.qsize()}]", flush=True)
@@ -331,10 +332,24 @@ def run_live(cfg: Config, once: bool = False) -> int:
                 n_repeat += 1
                 _publish(". repeat")
                 continue
+            prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL
+            # STT backpressure: the audio fingerprint can't tell NWR content apart
+            # (a real re-air and an adjacent different segment both score ~0.988 --
+            # measured on 3661 real pairs), so it cannot be trusted to cap STT load
+            # by dropping "repeats". Cap it directly instead: when the queue is
+            # saturated, shed the routine segment -- the loop re-airs it in ~13.5min
+            # and the content-aware text dedup drops whatever duplicates do land.
+            # Alert narratives (life safety) never shed; they hold priority and jump
+            # the queue. This is what keeps conditions fresh without the runaway a
+            # high similarity threshold caused (2026-07-18: 0.995 passed ~100% and
+            # the queue climbed unbounded).
+            if prio != _PRIO_ALERT and q.qsize() >= cfg.stt_max_queue:
+                n_shed += 1
+                _publish(". shed", " (STT saturated)")
+                continue
             gate.add(vec, seen_at)
             n_new += 1
             hb.touch("last_novel_at")
-            prio = _PRIO_ALERT if time.monotonic() < alert_until[0] else _PRIO_NORMAL
             q.put((prio, next(seq), (seg, digest)))
             _publish("+ novel ",
                      " -> queued" + (" PRIORITY" if prio == _PRIO_ALERT else ""))

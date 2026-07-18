@@ -117,6 +117,59 @@ def test_run_live_dumps_fingerprints_when_configured(tmp_path, monkeypatch, make
     assert stamps[0].endswith("Z")
 
 
+def test_run_live_sheds_when_stt_queue_saturated(tmp_path, monkeypatch, make_cfg):
+    # Backpressure is the real STT load cap (the fingerprint can't be -- it scores
+    # 0.988 on both repeats and distinct segments). With the worker not draining and
+    # the cap at 1, the first novel queues and every later novel sheds instead of
+    # growing the queue unbounded (2026-07-18: 0.995 passed ~100% and the queue ran
+    # away). Distinct per-segment amplitudes keep each segment novel so the shed
+    # path -- not the repeat path -- is what's exercised.
+    cfg = make_cfg(same_enabled=False, stt_max_queue=1)
+    main._STOP.clear()
+    from wxparser.db import Database
+    db = Database(cfg); db.clear(); db._run("TRUNCATE raw_reports"); db.close()
+
+    def frames(c, on_retry=None, should_stop=None):
+        # min_silence and min_speech are both 1.0s = 50 frames at 20ms, so each block
+        # needs >=50 speech frames and >=50 silence between to segment cleanly.
+        # Independent per-block NOISE (not constant amplitude -- a DC block has no
+        # spectral content and would fingerprint identically -> read as a repeat):
+        # decorrelated spectra score low similarity, so every segment is novel and
+        # the shed branch, not the repeat branch, is what gets exercised.
+        n = int(c.frame_seconds * c.sample_rate)
+        t = 0.0
+        for seed in range(5):                            # 5 distinct -> 5 novel segments
+            for _ in range(60):                          # silence closes the prior segment
+                yield np.zeros(n, dtype=np.int16), t; t += c.frame_seconds
+            rng = np.random.RandomState(seed)
+            for _ in range(70):                          # 1.4s speech > min_speech 1.0s
+                yield (rng.uniform(-9000, 9000, n)).astype(np.int16), t
+                t += c.frame_seconds
+        for _ in range(60):
+            yield np.zeros(n, dtype=np.int16), t; t += c.frame_seconds
+
+    # worker that never drains: the queue can only fill, so backpressure must cap it
+    monkeypatch.setattr(main, "_stt_worker", lambda *a, **k: main._STOP.wait())
+    monkeypatch.setattr(main, "stream_frames", frames)
+    # stop the producer once it has seen enough segments to have queued then shed
+    orig = main.Heartbeat.set
+    seen = {"n": 0}
+
+    def counting_set(self, **kw):
+        if "segments" in kw:
+            seen["n"] = kw["segments"]
+            if kw["segments"] >= 5:
+                main._STOP.set()
+        return orig(self, **kw)
+    monkeypatch.setattr(main.Heartbeat, "set", counting_set)
+
+    assert main.run_live(cfg, once=False) == 0
+    hb = main.Heartbeat.read(cfg)
+    assert hb["shed"] >= 1              # queue hit the cap and routine segments shed
+    assert hb["novel"] <= cfg.stt_max_queue + 1   # only cap-worth queued before shedding
+    main._STOP.clear()
+
+
 def test_emit_alert_no_db_is_noop(tmp_path):
     # db None + webhook unset -> the skip-persistence branch; must not raise
     cfg = Config(out_dir=tmp_path)

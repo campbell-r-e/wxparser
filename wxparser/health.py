@@ -51,7 +51,7 @@ class Heartbeat:
             "last_novel_at": None,      # novel content reached the STT queue
             "last_stt_ok_at": None,     # a transcription succeeded
             "last_extraction_at": None,  # a reading/forecast was written
-            "segments": 0, "novel": 0, "repeat": 0,
+            "segments": 0, "novel": 0, "repeat": 0, "shed": 0,
             "stt_errors": 0, "capture_restarts": 0,
             "queue_depth": 0,
             "last_segment_dbfs": None,       # speech RMS level of the last segment

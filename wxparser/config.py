@@ -95,6 +95,12 @@ class Config:
     fp_similarity_threshold: float = field(
         default_factory=lambda: float(_env("WX_FP_SIMILARITY", "0.995")))
     gate_history: int = field(default_factory=lambda: int(_env("WX_GATE_HISTORY", "400")))
+    # STT backpressure cap: the producer sheds a routine segment once the STT queue
+    # holds this many. It is the real load limit, since the content-blind
+    # fingerprint above cannot be. Sized so STT (~1.4x real time per 28s segment on
+    # the reference box) stays a few segments behind without the queue growing
+    # unbounded; alert narratives ignore it. 0 would shed everything -- min 1.
+    stt_max_queue: int = field(default_factory=lambda: max(1, int(_env("WX_STT_MAX_QUEUE", "4"))))
     # Diagnostic, off unless set: append every segment's fingerprint to this file
     # for offline gate tuning. The gate's similarity metric can only be judged
     # against REAL repeats, and those need several loop cycles of live audio
