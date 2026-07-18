@@ -1,7 +1,12 @@
 [Unit]
 Description=wxparser — capture AGC (keep the input level in the decoder's sweet spot)
+# After= for boot ordering only. NOT Wants=wxparser.service: this runs every 3min,
+# so a Wants would resurrect a deliberately-stopped pipeline within one cycle and
+# make maintenance stops impossible (`systemctl stop wxparser` would silently come
+# back, then thrash against a manual arecord). The pipeline keeps itself up on its
+# own (Restart=always + enabled); the AGC only reads its health.json and, when that
+# heartbeat is stale (capture down), correctly makes no gain change.
 After=wxparser.service
-Wants=wxparser.service
 
 [Service]
 Type=oneshot

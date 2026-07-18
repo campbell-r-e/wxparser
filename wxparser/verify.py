@@ -5,7 +5,9 @@ subsequently observed, from the first stored reading to now:
 
   - highs/lows: each stored issuance's high_f/low_f vs the observed extreme in
     the period's local-time window (day 06:00-21:00, night 18:00-08:30 next
-    morning — local wall-clock, sidestepping the UTC-hour period_window quirk)
+    morning — local wall-clock). This is deliberately wider than period_window's
+    forecast-validity window (06:00-18:00): it's the span the day's extreme can
+    actually fall in, not when the forecast is "valid", so it's kept independent.
   - sky: forecast wording vs the modal observed wording, both folded onto a
     4-step cloudiness ladder (clear -> partly -> mostly -> cloudy)
   - chance of rain: a daily rain series is recovered by differencing the

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
 import pg8000.exceptions
@@ -241,31 +241,36 @@ def period_window(period: str, issued: datetime,
     """Derived (valid_from, valid_to) for a forecast period — a pure function
     of (period name, issued_at); computed on read, never stored.
 
-    Periods are named against the station's local calendar day, so `tz` (the
-    station zone) is what anchors them: the loop airing at 10pm Wednesday is
-    stamped 02:00Z *Thursday*, and reading "Thursday" off the UTC day resolves
-    tomorrow's forecast to a week out (and "tonight" to the wrong night).
-
-    Only the *day* is resolved locally here. The 06:00/18:00 window hours are
-    still emitted as UTC-of-that-day, so they sit ~4h off the wall-clock periods
-    NWS publishes; /verify builds its own local windows rather than trust these.
+    Periods are named against the station's local calendar day AND local clock, so
+    `tz` (the station zone) anchors both. The day: the loop airing at 10pm Wednesday
+    is stamped 02:00Z *Thursday*, and reading "Thursday" off the UTC day resolves
+    tomorrow's forecast to a week out (and "tonight" to the wrong night). The hours:
+    a daytime period runs 06:00-18:00 *local* wall-clock (10:00Z-22:00Z in EDT),
+    matching what NWS publishes -- not 06:00Z-18:00Z, which is ~4h early and expires
+    "Today" before the afternoon it describes. Without `tz` the boundaries stay UTC
+    (the plain callers and their tests are unchanged).
     """
     p = period.lower().strip()
     local = issued.astimezone(tz) if tz else issued
-    day = datetime(local.year, local.month, local.day, tzinfo=timezone.utc)
+    base = local.date()
+
+    def bound(d: date, hour: int) -> str:
+        """Wall-clock `hour` on local day `d`, expressed as a UTC ISO stamp."""
+        dt = datetime(d.year, d.month, d.day, hour, tzinfo=tz or timezone.utc)
+        return _iso(dt.astimezone(timezone.utc))
+
     if p in ("today", "this afternoon", "this morning", "rest of today"):
-        return _iso(day.replace(hour=6)), _iso(day.replace(hour=18))
+        return bound(base, 6), bound(base, 18)
     if p in ("tonight", "this evening", "overnight", "rest of tonight"):
-        return _iso(day.replace(hour=18)), _iso((day + timedelta(days=1)).replace(hour=6))
+        return bound(base, 18), bound(base + timedelta(days=1), 6)
     night = p.endswith(" night")
     name = p[:-6].strip() if night else p
     if name in _WEEKDAYS:
         delta = (_WEEKDAYS.index(name) - local.weekday()) % 7
-        target = day + timedelta(days=delta or 7)
+        target = base + timedelta(days=delta or 7)
         if night:
-            return (_iso(target.replace(hour=18)),
-                    _iso((target + timedelta(days=1)).replace(hour=6)))
-        return _iso(target.replace(hour=6)), _iso(target.replace(hour=18))
+            return bound(target, 18), bound(target + timedelta(days=1), 6)
+        return bound(target, 6), bound(target, 18)
     return None, None
 
 

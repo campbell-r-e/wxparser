@@ -124,13 +124,17 @@ def test_period_window_resolves_periods_in_the_station_local_day():
     # stamps 02:13Z *Thursday*. Read off the UTC day, "For Thursday" (tomorrow)
     # scored delta 0 and was filed a week out, and "Tonight" landed on the wrong
     # night. Periods are named against the station's local day, so resolve there.
-    tz = ZoneInfo("America/Indiana/Indianapolis")
+    tz = ZoneInfo("America/Indiana/Indianapolis")           # EDT (UTC-4) in July
     issued = datetime(2026, 7, 16, 2, 13, 57, tzinfo=timezone.utc)
-    assert period_window("Thursday", issued, tz)[0] == "2026-07-16T06:00:00Z"
-    assert period_window("Thursday", issued)[0] == "2026-07-23T06:00:00Z"   # pre-fix
-    assert period_window("Tonight", issued, tz)[0] == "2026-07-15T18:00:00Z"
+    # the day resolves to the local calendar day (07-16, not the 7-days-out 07-23)
+    assert period_window("Thursday", issued, tz) == (
+        "2026-07-16T10:00:00Z", "2026-07-16T22:00:00Z")     # 06:00-18:00 EDT
+    assert period_window("Thursday", issued)[0] == "2026-07-23T06:00:00Z"   # no tz: UTC day + hours
+    # and the HOURS are local wall-clock: tonight is Wed 18:00 -> Thu 06:00 local
+    assert period_window("Tonight", issued, tz) == (
+        "2026-07-15T22:00:00Z", "2026-07-16T10:00:00Z")
     # a weekday naming the local day itself is the 7-day tail, not today
-    assert period_window("Wednesday", issued, tz)[0] == "2026-07-22T06:00:00Z"
+    assert period_window("Wednesday", issued, tz)[0] == "2026-07-22T10:00:00Z"
 
 
 def test_all_conditions_for_city_and_cities_index(wxdb):
