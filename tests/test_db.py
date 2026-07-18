@@ -129,7 +129,7 @@ def test_period_window_resolves_periods_in_the_station_local_day():
     # the day resolves to the local calendar day (07-16, not the 7-days-out 07-23)
     assert period_window("Thursday", issued, tz) == (
         "2026-07-16T10:00:00Z", "2026-07-16T22:00:00Z")     # 06:00-18:00 EDT
-    assert period_window("Thursday", issued)[0] == "2026-07-23T06:00:00Z"   # no tz: UTC day + hours
+    assert period_window("Thursday", issued)[0] == "2026-07-23T06:00:00Z"   # no tz -> UTC
     # and the HOURS are local wall-clock: tonight is Wed 18:00 -> Thu 06:00 local
     assert period_window("Tonight", issued, tz) == (
         "2026-07-15T22:00:00Z", "2026-07-16T10:00:00Z")
