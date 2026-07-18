@@ -85,6 +85,10 @@ JUNK_CITIES: list[str] = [
     # "Fairhope reported 74" / "Long reported 64" sit in roster-city "X
     # reported" slots but could be several cities; "Illinois" is a state name.
     "Fairhope", "Long", "Illinois",
+    # 2026-07-18: "Lima, Ohio" heard as "Line Ohio" (comma dropped, state welded
+    # on) — extraction now strips the trailing state at write time so new rows
+    # collapse to the already-junked "Line", but retro-clean the stuck row here.
+    "Line Ohio",
 ]
 
 # (table, [key columns other than city]) — the non-city half of each PK, used

@@ -300,10 +300,35 @@ _CITY = r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?"
 _RE_FC_AREA = re.compile(rf"[Ff]orecast for (?:the )?({_CITY})\s+area")
 
 
+# Roundup cities are read "<City>, <State>" and STT routinely drops the comma
+# ("Lima, Ohio" -> "Line Ohio" / "Lima Ohio"), welding the state on as a bogus
+# second word that matches neither the alias map nor the roster — so the garble
+# sails past both write-time correction and the nightly cleanup. Strip a trailing
+# single-word state so the city folds normally: a real city keeps its reading
+# ("Lima Ohio" -> "Lima") and a garble collapses to the bare token the existing
+# alias/junk handling already covers ("Line Ohio" -> "Line"). Only single-word
+# states can be welded in — _CITY captures at most two words, so a two-word state
+# ("New York") can never fit behind a city. Region-agnostic by design.
+_US_STATES = frozenset({
+    "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
+    "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho",
+    "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine",
+    "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi",
+    "Missouri", "Montana", "Nebraska", "Nevada", "Ohio", "Oklahoma", "Oregon",
+    "Pennsylvania", "Tennessee", "Texas", "Utah", "Vermont", "Virginia",
+    "Washington", "Wisconsin", "Wyoming",
+})
+
+
 def _norm_city(name: str) -> str:
-    # title-case, then fold known STT mis-hearings to the canonical spelling so
-    # the store only ever sees correct city names (no nightly cleanup needed).
-    return correct_place(name.strip().title())
+    # title-case, drop a trailing state word the STT welded on when it lost the
+    # "<City>, <State>" comma, then fold known STT mis-hearings to the canonical
+    # spelling so the store only ever sees correct city names.
+    titled = name.strip().title()
+    head, _, tail = titled.rpartition(" ")
+    if head and tail in _US_STATES:
+        titled = head
+    return correct_place(titled)
 
 
 class ForecastAggregator:

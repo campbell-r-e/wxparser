@@ -663,6 +663,20 @@ def test_norm_city_autocorrects_stt_mishearings():
     assert _norm_city("anderson") == "Anderson"
 
 
+def test_norm_city_strips_welded_state_suffix():
+    # STT drops the comma in "<City>, <State>" and welds the state onto the city
+    # as a bogus second word. Stripping it lets a real city keep its reading and
+    # a garble collapse to the bare token the alias/junk handling already covers.
+    from wxparser.extract import _norm_city
+    assert _norm_city("Lima Ohio") == "Lima"          # real city survives
+    assert _norm_city("Line Ohio") == "Line"          # garble -> bare junk token
+    assert _norm_city("Cincinnati Ohio") == "Cincinnati"
+    assert _norm_city("Louisville Kentucky") == "Louisville"
+    # a genuine two-word city whose second word is NOT a state is untouched
+    assert _norm_city("South Bend") == "South Bend"
+    assert _norm_city("New Castle") == "New Castle"
+
+
 def test_nearby_list_corrected_before_store():
     agg = CityConditionsAggregator()
     out = agg.update("Nearby, 64 at Deepan, 73 at Terrell, 55 at Monthsy.")
