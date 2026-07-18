@@ -22,6 +22,9 @@ no outbound calls.) Every dependency is permissively licensed — notably the
 Postgres driver is `pg8000` (pure-Python, **BSD**) rather than the LGPL `psycopg`, and audio
 capture is the `arecord` subprocess (a GPL tool used across a process boundary, never linked).
 
+Release history and per-version notes are in [`CHANGELOG.md`](CHANGELOG.md) (and
+on [GitHub Releases](https://github.com/campbell-r-e/wxparser/releases)).
+
 ## How it works
 
 NWR replays the same loop of products every few minutes until NWS updates content, and the
