@@ -70,3 +70,11 @@ def test_resolve_slot_without_leadins_returns_none(monkeypatch):
     pn._ensure_loaded()  # load first, so the lazy init can't overwrite the patch
     monkeypatch.setattr(pn, "ROUNDUP_LEADINS", {})
     assert pn.resolve_slot(None, "an unknown roundup city here", 12) is None
+
+
+def test_default_profile_carries_station_term_corrections():
+    # the callsign correction is station-specific, so it must live in the profile
+    # (keeping "port to a new region = drop-in profile"), not in stt_terms code.
+    from wxparser.data import stt_terms
+    assert profile.load()["term_corrections"]["KJY93"] == ["KJ193"]
+    assert "KJY93" not in stt_terms.TERM_CORRECTIONS

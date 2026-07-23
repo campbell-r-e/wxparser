@@ -853,15 +853,87 @@ def test_correct_terms_eased_is_context_scoped():
 
 
 def test_correct_terms_failed_is_context_scoped():
-    # "fell" in the almanac precip recap mis-heard as "failed" ("no precipitation
-    # failed yesterday") -> corrected only right after "precipitation".
+    # "fell" in the almanac precip recap mis-heard as "failed"/"trail" ("no
+    # precipitation failed yesterday") -> corrected only right after
+    # "precipitation".
     from wxparser.data.stt_terms import correct_terms
     assert correct_terms("No precipitation failed yesterday.") == \
         "No precipitation fell yesterday."
     assert correct_terms("precipitation failed") == "precipitation fell"
-    # must NOT corrupt legitimate uses of "failed"
+    assert correct_terms("No precipitation trail yesterday.") == \
+        "No precipitation fell yesterday."
+    # must NOT corrupt legitimate uses of "failed"/"trail"
     assert correct_terms("the warning failed to clear") == "the warning failed to clear"
     assert correct_terms("the system failed overnight") == "the system failed overnight"
+    assert correct_terms("the storm trail moved east") == "the storm trail moved east"
+
+
+def test_correct_terms_mined_2026_07_23_safe_folds():
+    # second mining pass (20,584 transcripts): tokens the proposer rated SAFE —
+    # none is a real word in a weather context, so each folds globally.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Hines in the upper 70s.") == "Highs in the upper 70s."
+    assert correct_terms("Clearwood knows in the mid 70s.") == \
+        "Clearwood lows in the mid 70s."
+    assert correct_terms("Ponds in the upper 70s.") == "Lows in the upper 70s."
+    assert correct_terms("clearwood mows in the lower 70s") == \
+        "clearwood lows in the lower 70s"
+    assert correct_terms("Chans of rain 30%.") == "Chance of rain 30%."
+
+
+def test_correct_terms_temp_slot_is_context_scoped():
+    # "those"/"goes"/"pines" are real words, so they fold to Highs/Lows ONLY in
+    # the temperature slot — nothing legitimately precedes a temperature band.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Not as cool if those in the lower 60s.") == \
+        "Not as cool if lows in the lower 60s."
+    assert correct_terms("clear what goes in the lower 70s") == \
+        "clear what lows in the lower 70s"
+    assert correct_terms("Pines in the lower 80s.") == "Highs in the lower 80s."
+    assert correct_terms("Those around 70") == "Lows around 70"
+    # must NOT corrupt legitimate uses outside the slot
+    assert correct_terms("those storms will move east") == "those storms will move east"
+    assert correct_terms("the warning goes into effect") == "the warning goes into effect"
+    assert correct_terms("the pines were damaged") == "the pines were damaged"
+
+
+def test_correct_terms_chances_is_context_scoped():
+    # "Chances of rain 50%" -> the extractor's literal "chance"; the bare plural
+    # is a real word and must survive outside the precip slot.
+    from wxparser.data.stt_terms import correct_terms
+    assert correct_terms("Chances of rain 20%.") == "Chance of rain 20%."
+    assert correct_terms("chances of showers") == "chance of showers"
+    assert correct_terms("chances are good") == "chances are good"
+
+
+def test_correct_terms_false_positives_never_fold():
+    # the proposer flags "inches"/"trace" before "of precipitation" as garbled
+    # "chance" — they are the almanac's REAL vocabulary. Folding them would
+    # destroy the precip recap, so they must pass through untouched.
+    from wxparser.data.stt_terms import correct_terms
+    for legit in ("0.12 inches of precipitation has fallen",
+                  "A trace of precipitation has fallen",
+                  "the low is 66",
+                  "temperatures close to normal"):
+        assert correct_terms(legit) == legit
+
+
+def test_correct_terms_station_callsign_from_profile(monkeypatch):
+    # the callsign is station-specific, so the correction rides in the PROFILE
+    # (term_corrections), not in the shared code table: KJY93 is decoded "KJ193"
+    # in 1,088 of 20,612 stored transcripts and never once correctly.
+    from wxparser.data import stt_terms
+    monkeypatch.setattr(stt_terms, "_profile_patterns", None)
+    assert stt_terms.correct_terms("This is NOAA All Hazards, Radio KJ193 in Muncie.") == \
+        "This is NOAA All Hazards, Radio KJY93 in Muncie."
+    # a profile that defines none (or an empty variant list) is a clean no-op
+    monkeypatch.setattr(stt_terms, "_profile_patterns", None)
+    monkeypatch.setattr(stt_terms, "get_profile", lambda: {})
+    assert stt_terms._ensure_loaded() == []
+    monkeypatch.setattr(stt_terms, "_profile_patterns", None)
+    monkeypatch.setattr(stt_terms, "get_profile", lambda: {"term_corrections": {"X": []}})
+    assert stt_terms._ensure_loaded() == []
+    assert stt_terms.correct_terms("KJ193") == "KJ193"   # patterns now empty
 
 
 # --- almanac / climate recap extraction ------------------------------------ #

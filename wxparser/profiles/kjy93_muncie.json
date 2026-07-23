@@ -52,6 +52,11 @@
  "roundup_leadins": {
   "just outside indiana": "Lima"
  },
+ "term_corrections": {
+  "KJY93": [
+   "KJ193"
+  ]
+ },
  "place_corrections": {
   "Muncie": [
    "Monthsy",

@@ -2,8 +2,14 @@
 Description=Check origin/main for new commits and auto-deploy every 10 minutes
 
 [Timer]
-OnBootSec=3min
-OnUnitActiveSec=10min
+# Wall-clock, NOT the OnBootSec+OnUnitActiveSec chain this used to be. That chain
+# silently dies if the timer is ever stopped and restarted mid-boot: OnBootSec has
+# long since elapsed, and OnUnitActiveSec needs an activation *after* the timer
+# started to chain from, so systemd computes NextElapse=infinity and CD stops
+# firing while `systemctl is-active` still cheerfully reports "active". That is
+# exactly what happened 2026-07-19..23 (stopped for an unrelated CPU-freeing pass,
+# re-enabled, never fired again). A calendar spec always has a next elapse.
+OnCalendar=*:0/10
 Persistent=true
 
 [Install]
