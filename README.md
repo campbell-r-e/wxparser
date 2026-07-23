@@ -252,8 +252,9 @@ Maintenance timers (all in `deploy/`, all idempotent — see
 [`docs/USAGE.md` §9](docs/USAGE.md) and [`docs/DEVELOPMENT.md` §7](docs/DEVELOPMENT.md)):
 `wxparser-agc` keeps the capture input level in the decoder's sweet spot every 3 minutes (an
 analog level that drifts too quiet makes the box silently go deaf); `wxparser-fixspelling`,
-`wxparser-fixterms`, and `wxparser-prune` run nightly store cleanup; `wxparser-deploy` is the
-pull-based CD.
+`wxparser-fixterms`, and `wxparser-prune` run nightly store cleanup; `wxparser-reprocess`
+rebuilds the structured tables from the raw transcripts at midnight, so a newly added
+correction retroactively fixes all history; `wxparser-deploy` is the pull-based CD.
 
 Run directly for development:
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Rebuild wxparser structured tables from transcripts nightly
+
+[Timer]
+# Midnight. Self-sufficient regardless of the other nightly cleanups: reprocess
+# re-applies correct_terms to the raw text and re-runs extraction (which folds
+# place names) as it projects, so it does not depend on fixspelling/fixterms
+# having run first. Finishes ~00:15, ahead of prune at 01:00 — which matters,
+# because a full replay can re-introduce readings the previous night's prune
+# aged out, and prune then clears them again within the hour.
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

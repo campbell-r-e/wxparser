@@ -406,6 +406,7 @@ run by hand):
 | `wxparser-agc` | every 3 min | keep the capture input level in the decoder's sweet spot — the analog level drifts, and a too-quiet feed silently goes deaf (`agc.py`; adjusts the ALSA mixer from the level the pipeline publishes, persists with `alsactl store`) |
 | `wxparser-fixspelling` | 00:00 | merge STT-misheard city names → canonical (`fix_city_spellings.py`) |
 | `wxparser-fixterms` | 00:30 | fix STT term mis-hearings in stored transcripts (`fix_stt_terms.py`) |
+| `wxparser-reprocess` | 00:00 | rebuild the structured tables by replaying every stored transcript through the current corrections + extraction (`python3 -m wxparser.reprocess`). Runs with capture LIVE — see the unit comment for why. ~15 min for ~20k transcripts |
 | `wxparser-prune` | 01:00 | drop non-home cities not heard in >`WX_STALE_PRUNE_HOURS` (24h) (`prune_stale_readings.py`) |
 
 Run one by hand:

@@ -1,0 +1,27 @@
+[Unit]
+Description=wxparser — rebuild the structured tables from the raw transcript store
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=creed
+Group=creed
+Environment=HOME=/home/creed
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/creed/wxparser
+# Runs WITH the capture service live, unlike the by-hand usage in reprocess.py's
+# docstring. The rebuild is a projection replayed in capture order and it ends on
+# the newest transcript, so a row the live pipeline writes mid-rebuild is either
+# replayed to the same value or immediately re-written by the next segment; the
+# only real exposure is small vote/sighting counter drift, which the running
+# aggregator heals on its own. Measured 2026-07-23: ~15 min for 20,585
+# transcripts, and /health returned to "all signals nominal" straight after.
+# Stopping capture instead would cost a 15-minute nightly SAME-alert blind spot,
+# which is a worse trade on a life-safety feed.
+#
+# I/O-bound (row-by-row inserts + WAL sync on the LUKS volume), and it shares two
+# cores with whisper — stay out of the capture service's way.
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/bin/python3 -m wxparser.reprocess

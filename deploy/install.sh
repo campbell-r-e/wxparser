@@ -278,7 +278,7 @@ UNITS=() TIMERS_ON=()
 if [ "$WANT_RADIO" = 1 ]; then
     install_unit wxparser.service; UNITS+=(wxparser)
     if [ "$TIMERS" = 1 ]; then
-        for t in agc fixspelling fixterms prune; do
+        for t in agc fixspelling fixterms prune reprocess; do
             install_unit "wxparser-$t.service"
             install_unit "wxparser-$t.timer"
             TIMERS_ON+=("wxparser-$t.timer")

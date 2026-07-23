@@ -52,6 +52,7 @@ systemd units in `deploy/`:
 | `wxparser-api.service` | the LAN HTTP/JSON query API on `:8080` |
 | `wxparser-agc.timer` | every 3 min — keep the capture input level in the decoder's sweet spot |
 | `wxparser-fixspelling.timer` / `wxparser-fixterms.timer` / `wxparser-prune.timer` | nightly store cleanup |
+| `wxparser-reprocess.timer` | nightly 00:00 — rebuild the structured tables from the raw transcripts |
 | `wxparser-deploy.timer` | optional pull-based CD (§12) |
 
 Everything runs as an ordinary user account; nothing needs root at runtime.
@@ -255,10 +256,11 @@ All optional but recommended; each is a `oneshot` service + timer pair, and
 every job is idempotent:
 
 ```bash
-sudo cp deploy/wxparser-{agc,fixspelling,fixterms,prune}.{service,timer} /etc/systemd/system/
+sudo cp deploy/wxparser-{agc,fixspelling,fixterms,prune,reprocess}.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now wxparser-agc.timer wxparser-fixspelling.timer \
-                            wxparser-fixterms.timer wxparser-prune.timer
+                            wxparser-fixterms.timer wxparser-prune.timer \
+                            wxparser-reprocess.timer
 ```
 
 The AGC timer is the one you really want on a long-lived box: analog input

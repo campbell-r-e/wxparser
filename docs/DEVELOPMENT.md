@@ -161,6 +161,7 @@ Everything in `deploy/` is tracked and deployable via `git pull`:
 | `wxparser-agc.{service,timer}` | every 3 min — capture AGC: keep the input level in the decoder's sweet spot (`agc.py`) |
 | `wxparser-fixspelling.{service,timer}` | nightly 00:00 — merge misheard city names (`fix_city_spellings.py`) |
 | `wxparser-fixterms.{service,timer}` | nightly 00:30 — fix STT term mis-hearings in transcripts (`fix_stt_terms.py`) |
+| `wxparser-reprocess.{service,timer}` | nightly 00:00 — re-project the structured tables from the raw transcripts, so a new correction fixes ALL history (`wxparser.reprocess`) |
 | `wxparser-prune.{service,timer}` | nightly 01:00 — age out stale out-of-state readings (`prune_stale_readings.py`) |
 | `wxparser-deploy.{service,timer}` | every 10 min — the CD auto-deploy above |
 | `reprocess.sh` | rebuild the structured DB by replaying the raw transcripts through the current pipeline |
