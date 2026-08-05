@@ -84,9 +84,20 @@ def _segment_confidence(tokens: list[dict]) -> tuple[float, int]:
     return sum(probs) / len(probs), len(probs)
 
 
+def _timeout_for(duration_s: float, cfg: Config) -> float:
+    """Wall-clock ceiling for one whisper-cli run, scaled to segment length.
+
+    Decode cost tracks audio duration (the encoder context is sized from it), so
+    a flat ceiling would either starve long segments or let short ones hang for
+    ages. See Config.whisper_timeout_* for the measured basis.
+    """
+    return max(cfg.whisper_timeout_min_s, duration_s * cfg.whisper_timeout_mult)
+
+
 def transcribe(wav_path: Path, cfg: Config) -> Transcript:
     out_base = wav_path.with_suffix("")  # whisper writes <out_base>.json
     json_path = out_base.with_suffix(".json")
+    duration_s = _wav_duration_s(wav_path)
     cmd = [
         str(cfg.whisper_bin),
         "-m", str(cfg.whisper_model),
@@ -98,7 +109,7 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
         "-of", str(out_base),
     ]
     if cfg.whisper_dynamic_audio_ctx:
-        cmd += ["-ac", str(_audio_ctx_for(_wav_duration_s(wav_path), cfg))]
+        cmd += ["-ac", str(_audio_ctx_for(duration_s, cfg))]
     if cfg.whisper_fast_decode:
         cmd += ["-bs", "1", "-bo", "1", "-nf"]
         # -mc 0 caps the repetition loop but also drops the --prompt tokens, so
@@ -106,7 +117,17 @@ def transcribe(wav_path: Path, cfg: Config) -> Transcript:
         cmd += ["-mc", str(cfg.whisper_prompt_max_ctx) if cfg.whisper_prompt else "0"]
     if cfg.whisper_prompt:
         cmd += ["--prompt", cfg.whisper_prompt]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    timeout_s = _timeout_for(duration_s, cfg)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired as e:
+        # subprocess.run has already SIGKILLed the child and reaped it, so the
+        # worker comes back clean; the caller counts this as an STT error, drops
+        # the segment and takes the next one.
+        raise STTError(
+            f"whisper-cli timed out after {timeout_s:.0f}s on {duration_s:.1f}s "
+            f"of audio — killed"
+        ) from e
     if proc.returncode != 0:
         raise STTError(f"whisper-cli failed ({proc.returncode}): {proc.stderr.strip()}")
     try:

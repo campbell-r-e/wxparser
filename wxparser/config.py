@@ -142,6 +142,23 @@ class Config:
     # decoder repetition-loop pathology that can otherwise wedge one short segment
     # for minutes. Per-segment STT errors are cleaned up by repeat-voting (§8).
     whisper_fast_decode: bool = field(default_factory=lambda: _env("WX_FAST_DECODE", "1") == "1")
+    # Hard wall-clock bound on a single whisper-cli run. Without one, a hung
+    # child blocks the STT worker forever: the process stays "running" so
+    # Restart=always never fires, the queue pins at stt_max_queue and every
+    # incoming segment is shed. Seen 2026-08-03 — whisper-cli went <defunct>
+    # while the worker sat in subprocess.run, and the pipeline transcribed
+    # nothing for 44 h while /health correctly reported "STT worker wedged".
+    # Sized off measured worst case on this CPU (small.en-q5_1, 2 threads,
+    # contending with the live pipeline): ~11x real-time — 28 s of audio at the
+    # full 1500-frame context took 265-269 s, 5 s at 318 frames took 55 s. Cost
+    # tracks duration, so the bound does too; the multiplier leaves ~3x headroom
+    # so only a genuine hang trips it, never slow-but-working decode. Killing a
+    # healthy segment loses real weather data, so bias generous: /health flags a
+    # wedge at 10 min regardless, and the timeout is the backstop, not the alarm.
+    whisper_timeout_mult: float = field(
+        default_factory=lambda: float(_env("WX_WHISPER_TIMEOUT_MULT", "30")))
+    whisper_timeout_min_s: float = field(
+        default_factory=lambda: float(_env("WX_WHISPER_TIMEOUT_MIN_S", "120")))
     # Vocabulary bias (whisper --prompt): seeds the decoder with the local place
     # names it would otherwise mangle (proper nouns — county/town names in
     # warnings). ON with base.en/small.en, which absorb the prompt cleanly.

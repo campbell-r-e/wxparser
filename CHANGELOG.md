@@ -9,6 +9,36 @@ Each release is also published on
 same notes. Every version below passed CI: full test suite, 100% line + branch
 coverage, and `ruff check .` clean.
 
+## [1.0.12] — 2026-08-04
+
+### Fixed
+
+- **A hung `whisper-cli` no longer wedges the pipeline indefinitely.** `transcribe()`
+  called `subprocess.run` with no `timeout`, so a child that never returned parked
+  the STT worker in `communicate()` forever. Observed 2026-08-03: the child went
+  `<defunct>` (exited but unreaped, because the parent was still blocked) and the
+  pipeline transcribed **nothing for 44 h** — while looking perfectly healthy from
+  outside. The process never exited, so `Restart=always` had nothing to restart;
+  `arecord` kept capturing, the heartbeat kept ticking, the API kept answering, and
+  the queue simply pinned at `stt_max_queue` with every incoming segment logged as
+  `shed (STT saturated)`. 9,588 segments were dropped. `/health` *did* call it
+  correctly (`STT worker may be wedged`) — nothing was positioned to act on it.
+
+  `subprocess.run` now gets a wall-clock `timeout`; on expiry it SIGKILLs and reaps
+  the child, and the wrapper raises `STTError`, which `_stt_worker` already handles
+  by counting `stt_errors`, dropping that one segment and taking the next. The
+  failure mode degrades from "silent multi-day outage" to "one lost segment".
+
+  The bound scales with segment length, since decode cost tracks audio duration via
+  the dynamic encoder context — a flat ceiling would either starve long segments or
+  let short ones hang for ages. Measured worst case on this CPU (small.en-q5_1, 2
+  threads, contending with the live pipeline) is ~11x real-time: 28 s of audio at
+  the full 1500-frame context took 265–269 s, 5 s at 318 frames took 55 s. Default
+  is `30x` duration with a `120 s` floor (~3x headroom), so only a genuine hang
+  trips it — killing a healthy segment loses real weather data, and `/health`
+  still flags a wedge at 10 min regardless. Tunable via `WX_WHISPER_TIMEOUT_MULT`
+  and `WX_WHISPER_TIMEOUT_MIN_S`.
+
 ## [1.0.11] — 2026-07-17
 
 ### Fixed

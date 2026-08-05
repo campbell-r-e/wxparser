@@ -37,9 +37,11 @@ def test_transcribe_with_all_flags_off(monkeypatch):
     payload = {"transcription": [{"text": " Clear.", "offsets": {"from": 0, "to": 1}}],
                "result": {"language": "en"}}
 
-    def run(cmd, capture_output=True, text=True):
+    def run(cmd, capture_output=True, text=True, timeout=None):
         # no -ac / -bs / --prompt when those flags are off
         assert "-ac" not in cmd and "-bs" not in cmd and "--prompt" not in cmd
+        # the wall-clock bound is unconditional — it does not ride on any flag
+        assert timeout == cfg.whisper_timeout_min_s
         from pathlib import Path
         Path(cmd[cmd.index("-of") + 1]).with_suffix(".json").write_text(json.dumps(payload))
         return type("P", (), {"returncode": 0, "stderr": ""})()

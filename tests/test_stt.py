@@ -11,7 +11,7 @@ import numpy as np
 import wxparser.stt as stt
 from wxparser.config import Config
 from wxparser.stt import (
-    Transcript, _audio_ctx_for, is_blank, is_repetitive,
+    Transcript, _audio_ctx_for, _timeout_for, is_blank, is_repetitive,
 )
 
 
@@ -91,8 +91,10 @@ class _Proc:
         self.stderr = "boom" if rc else ""
 
 
-def _fake_run(payload, rc=0, write=True):
-    def run(cmd, capture_output=True, text=True):
+def _fake_run(payload, rc=0, write=True, captured=None):
+    def run(cmd, capture_output=True, text=True, timeout=None):
+        if captured is not None:
+            captured["timeout"] = timeout
         if write and rc == 0:
             of = Path(cmd[cmd.index("-of") + 1])
             of.with_suffix(".json").write_text(json.dumps(payload), encoding="utf-8")
@@ -139,3 +141,39 @@ def test_transcribe_missing_json_raises(monkeypatch):
         assert False, "expected STTError"
     except stt.STTError as e:
         assert "could not read whisper JSON" in str(e)
+
+
+def test_timeout_scales_with_duration_and_floors():
+    cfg = Config()
+    # long segment: duration * multiplier dominates
+    assert _timeout_for(28.0, cfg) == 28.0 * cfg.whisper_timeout_mult
+    # short segment: the floor keeps it from being starved
+    assert _timeout_for(0.5, cfg) == cfg.whisper_timeout_min_s
+    # a tighter config still bounds a hang rather than waiting forever
+    tight = dataclasses.replace(cfg, whisper_timeout_mult=2.0, whisper_timeout_min_s=1.0)
+    assert _timeout_for(10.0, tight) == 20.0
+
+
+def test_transcribe_passes_scaled_timeout_to_subprocess(monkeypatch):
+    # 1 s of audio at 16 kHz -> the floor applies, and it reaches subprocess.run
+    seen = {}
+    payload = {"transcription": [
+        {"text": " Highs around 80.", "offsets": {"from": 0, "to": 1000}},
+    ], "result": {"language": "en"}}
+    monkeypatch.setattr(stt.subprocess, "run", _fake_run(payload, captured=seen))
+    cfg = Config()
+    stt.transcribe_samples(np.zeros(16000, dtype=np.int16), cfg)
+    assert seen["timeout"] == cfg.whisper_timeout_min_s
+
+
+def test_transcribe_timeout_raises_stterror(monkeypatch):
+    # a hung whisper-cli must surface as STTError so the worker drops the
+    # segment and keeps going, instead of blocking the pipeline forever
+    def _boom(cmd, capture_output=True, text=True, timeout=None):
+        raise stt.subprocess.TimeoutExpired(cmd, timeout)
+    monkeypatch.setattr(stt.subprocess, "run", _boom)
+    try:
+        stt.transcribe_samples(np.zeros(16000, dtype=np.int16), Config())
+        assert False, "expected STTError"
+    except stt.STTError as e:
+        assert "timed out" in str(e) and "killed" in str(e)
