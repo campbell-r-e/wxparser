@@ -31,13 +31,16 @@ coverage, and `ruff check .` clean.
 
   The bound scales with segment length, since decode cost tracks audio duration via
   the dynamic encoder context — a flat ceiling would either starve long segments or
-  let short ones hang for ages. Measured worst case on this CPU (small.en-q5_1, 2
-  threads, contending with the live pipeline) is ~11x real-time: 28 s of audio at
-  the full 1500-frame context took 265–269 s, 5 s at 318 frames took 55 s. Default
-  is `30x` duration with a `120 s` floor (~3x headroom), so only a genuine hang
-  trips it — killing a healthy segment loses real weather data, and `/health`
-  still flags a wedge at 10 min regardless. Tunable via `WX_WHISPER_TIMEOUT_MULT`
-  and `WX_WHISPER_TIMEOUT_MIN_S`.
+  let short ones hang for ages. It is sized off the **slowest supported build**, not
+  the fastest. Measured on this CPU (small.en-q5_1, 2 threads, contending with the
+  live pipeline), 28 s of audio at the full 1500-frame context took 265–269 s on the
+  plain `build/` binary that `whisper_bin` defaults to, but only 52 s on the
+  `build-blas/` binary the unit actually runs — a 5x spread. Default `30x` duration
+  with a `120 s` floor leaves ~3x headroom on the plain build and ~16x on BLAS, so
+  slow-but-working decode never trips it under either. The bias is deliberately
+  generous: killing a healthy segment loses real weather data, whereas a hang now
+  costs one segment and self-heals, and `/health` still flags a wedge at 10 min
+  regardless. Tunable via `WX_WHISPER_TIMEOUT_MULT` and `WX_WHISPER_TIMEOUT_MIN_S`.
 
 ## [1.0.11] — 2026-07-17
 

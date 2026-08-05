@@ -148,13 +148,17 @@ class Config:
     # incoming segment is shed. Seen 2026-08-03 — whisper-cli went <defunct>
     # while the worker sat in subprocess.run, and the pipeline transcribed
     # nothing for 44 h while /health correctly reported "STT worker wedged".
-    # Sized off measured worst case on this CPU (small.en-q5_1, 2 threads,
-    # contending with the live pipeline): ~11x real-time — 28 s of audio at the
-    # full 1500-frame context took 265-269 s, 5 s at 318 frames took 55 s. Cost
-    # tracks duration, so the bound does too; the multiplier leaves ~3x headroom
-    # so only a genuine hang trips it, never slow-but-working decode. Killing a
-    # healthy segment loses real weather data, so bias generous: /health flags a
-    # wedge at 10 min regardless, and the timeout is the backstop, not the alarm.
+    # Cost tracks duration (the encoder context is sized from it), so the bound
+    # does too. Sized off the SLOWEST supported build, not the fastest: measured
+    # on this CPU with small.en-q5_1, 2 threads, contending with the live
+    # pipeline, 28 s of audio at the full 1500-frame context took
+    #   build/     (plain, the whisper_bin default here)  265-269 s  (~9.6x RT)
+    #   build-blas (what the unit actually runs)           52 s      (~1.9x RT)
+    # 30x/120 s therefore leaves ~3x headroom on the plain build and ~16x on
+    # BLAS, so a slow-but-working decode never trips it under either. Bias
+    # generous on purpose: killing a healthy segment loses real weather data,
+    # while a hang costs one segment and self-heals. /health still flags a wedge
+    # at 10 min regardless — this is the backstop, not the alarm.
     whisper_timeout_mult: float = field(
         default_factory=lambda: float(_env("WX_WHISPER_TIMEOUT_MULT", "30")))
     whisper_timeout_min_s: float = field(
