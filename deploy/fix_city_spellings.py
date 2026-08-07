@@ -89,6 +89,11 @@ JUNK_CITIES: list[str] = [
     # on) — extraction now strips the trailing state at write time so new rows
     # collapse to the already-junked "Line", but retro-clean the stuck row here.
     "Line Ohio",
+    # 2026-08-06 audit: one-off temp-slot tokens, each seen exactly once,
+    # that garble no roster city with any confidence — delete rather than
+    # risk folding a reading into the wrong city. ("In" is matched against
+    # the WHOLE city string, so it cannot touch "Indianapolis".)
+    "Newham", "Eastman", "Chantine", "Woodland", "Paramount", "In",
 ]
 
 # (table, [key columns other than city]) — the non-city half of each PK, used
